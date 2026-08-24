@@ -7,6 +7,10 @@
     "icon": "./assets/images/icon.png",
     "scheme": "marchedore",
     "userInterfaceStyle": "automatic",
+    "androidStatusBar": {
+      "translucent": true,
+      "backgroundColor": "#00000000"
+    },
     "ios": {
       "supportsTablet": true
     },
@@ -32,6 +36,12 @@
           "image": "./assets/images/splash-icon.png",
           "resizeMode": "contain",
           "backgroundColor": "#ffffff"
+        }
+      ],
+      [
+        "expo-image-picker",
+        {
+          "photosPermission": "Marché Doré accède à vos photos pour les ajouter à vos avis."
         }
       ]
     ],
