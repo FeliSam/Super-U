@@ -49,14 +49,27 @@ body {
   overflow: hidden;
   -webkit-font-smoothing: antialiased;
   text-rendering: optimizeLegibility;
+  /* Avoid accidental page zoom gestures around form focus on mobile web */
+  touch-action: pan-x pan-y;
 }
 #root {
   display: flex;
   flex-direction: column;
   overflow: hidden;
 }
-input, textarea {
-  font-size: 16px;
+/* iOS Safari zooms focused fields when computed font-size < 16px.
+   RN Web inline styles win without !important — keep both CSS and RN styles ≥16. */
+input,
+textarea,
+select,
+[contenteditable="true"] {
+  font-size: 16px !important;
+  max-height: 100%;
+}
+input:focus,
+textarea:focus,
+select:focus {
+  font-size: 16px !important;
 }
 @media (prefers-color-scheme: dark) {
   body {

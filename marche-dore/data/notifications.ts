@@ -8,11 +8,15 @@ export type AppNotification = {
   title: string;
   preview: string;
   body: string;
+  /** Absolute ms — used for relative labels; optional for legacy seed rows */
+  createdAt?: number;
+  /** Legacy / display fallback when createdAt is missing */
   time: string;
   read: boolean;
   icon: NotificationIcon;
   actionLabel?: string;
-  actionHref?: '/tracking' | '/category/boissons' | '/category/fruits-legumes?filter=Fruits' | '/(tabs)/cart';
+  actionHref?: string;
+  orderId?: string;
 };
 
 export const notifications: AppNotification[] = [
@@ -26,17 +30,6 @@ export const notifications: AppNotification[] = [
     icon: 'tag',
     actionLabel: 'Voir les fruits',
     actionHref: '/category/fruits-legumes?filter=Fruits',
-  },
-  {
-    id: 'order-prep',
-    title: 'Commande en préparation',
-    preview: 'Votre panier de 4 articles est en cours de préparation.',
-    body: 'Bonne nouvelle ! Votre commande #MD-2024-0847 est en préparation au Marché Doré Ganhi. Livraison estimée aujourd’hui entre 14h et 16h à Cotonou, Ganhi.',
-    time: 'Il y a 1 h',
-    read: false,
-    icon: 'package',
-    actionLabel: 'Suivre la commande',
-    actionHref: '/tracking',
   },
   {
     id: 'boissons-promo',
@@ -70,6 +63,20 @@ export const notifications: AppNotification[] = [
     icon: 'gift',
   },
 ];
+
+export function formatNotificationTime(createdAt?: number, fallback = 'À l’instant'): string {
+  if (!createdAt || !Number.isFinite(createdAt)) return fallback;
+  const diff = Math.max(0, Date.now() - createdAt);
+  const min = Math.floor(diff / 60_000);
+  if (min < 1) return 'À l’instant';
+  if (min < 60) return `Il y a ${min} min`;
+  const h = Math.floor(min / 60);
+  if (h < 24) return `Il y a ${h} h`;
+  const d = Math.floor(h / 24);
+  if (d === 1) return 'Hier';
+  if (d < 7) return `Il y a ${d} j`;
+  return new Date(createdAt).toLocaleDateString('fr-FR', { day: 'numeric', month: 'short' });
+}
 
 export function getNotification(id: string) {
   return notifications.find((n) => n.id === id);

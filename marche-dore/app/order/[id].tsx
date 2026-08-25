@@ -10,10 +10,12 @@ import {
   statusLabel,
   useOrders,
   canCancelOrder,
-  type OrderStatus,
-} from '@/context/OrdersContext';
+  type OrderStatus } from '@/context/OrdersContext';
+import { useReviews } from '@/context/ReviewsContext';
 import { formatFcfa } from '@/lib/format';
+import { formatDistanceKm, formatDurationMin } from '@/lib/deliveryRouting';
 import { softShadow } from '@/lib/shadow';
+import { statusTone } from '@/lib/statusTone';
 import { Feather } from '@expo/vector-icons';
 import { Href, router, useLocalSearchParams } from 'expo-router';
 import { useMemo, useState } from 'react';
@@ -31,23 +33,6 @@ function Sum({ label, value, green, bold }: { label: string; value: string; gree
   );
 }
 
-function statusTone(status: OrderStatus, colors: AppColors) {
-  switch (status) {
-    case 'confirmed':
-      return { bg: '#eaf4ec', text: colors.green, dot: colors.green };
-    case 'preparing':
-      return { bg: colors.cream, text: colors.gold, dot: colors.gold };
-    case 'shipping':
-      return { bg: colors.blush, text: colors.terracotta, dot: colors.terracotta };
-    case 'delivered':
-      return { bg: '#eaf4ec', text: colors.green, dot: colors.green };
-    case 'cancelled':
-      return { bg: '#f3eeeb', text: colors.muted, dot: colors.muted };
-    default:
-      return { bg: colors.cream, text: colors.gold, dot: colors.gold };
-  }
-}
-
 function formatOrderDate(iso: string) {
   const d = new Date(iso);
   if (Number.isNaN(d.getTime())) return '';
@@ -56,15 +41,13 @@ function formatOrderDate(iso: string) {
     day: 'numeric',
     month: 'short',
     hour: '2-digit',
-    minute: '2-digit',
-  });
+    minute: '2-digit' });
 }
 
 function InfoRow({
   icon,
   title,
-  lines,
-}: {
+  lines }: {
   icon: React.ComponentProps<typeof Feather>['name'];
   title: string;
   lines: string[];
@@ -96,6 +79,7 @@ export default function OrderDetailsScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
   const { getOrder, activeOrder, orders, setStatus } = useOrders();
   const { add } = useCart();
+  const { courierReviewForOrder, hasUserReviewedProduct } = useReviews();
   const [menuOpen, setMenuOpen] = useState(false);
   const orderId = typeof id === 'string' ? id : Array.isArray(id) ? id[0] : undefined;
   const order = (orderId ? getOrder(orderId) : null) ?? activeOrder ?? orders[0] ?? null;
@@ -126,10 +110,12 @@ export default function OrderDetailsScreen() {
 
   const canTrack = order.status === 'confirmed' || order.status === 'preparing' || order.status === 'shipping';
   const canReorder = order.status === 'delivered' || order.status === 'cancelled';
+  const delivered = order.status === 'delivered';
   const cancellable = canCancelOrder(order.status);
   const tone = statusTone(order.status, colors);
   const placedAt = formatOrderDate(order.createdAt);
   const addressLine = [order.addressLine, order.addressCity].filter(Boolean).join(', ');
+  const courierReview = courierReviewForOrder(order.id);
 
   const closeMenu = () => setMenuOpen(false);
   const runMenu = (action: () => void) => {
@@ -150,8 +136,7 @@ export default function OrderDetailsScreen() {
           onPress: () => {
             setStatus(order.id, 'cancelled');
             router.replace('/orders' as Href);
-          },
-        },
+          } },
       ],
     );
   };
@@ -249,7 +234,7 @@ export default function OrderDetailsScreen() {
                   style={styles.statusTrack}
                   onPress={() => router.push(`/tracking?id=${order.id}` as Href)}
                   scaleTo={0.98}>
-                  <Feather name="navigation" size={14} color={colors.white} />
+                  <Feather name="navigation" size={14} color={colors.onAccent} />
                   <Text style={styles.statusTrackText}>Suivre en direct</Text>
                 </PressScale>
               ) : null}
@@ -263,6 +248,7 @@ export default function OrderDetailsScreen() {
                 {order.lines.map((line, i) => {
                   const product = getProduct(line.productId);
                   const lineTotal = line.unitPrice * line.qty;
+                  const reviewed = hasUserReviewedProduct(line.productId);
                   return (
                     <View key={`${line.productId}-${i}`}>
                       {i > 0 ? <View style={styles.divider} /> : null}
@@ -284,6 +270,30 @@ export default function OrderDetailsScreen() {
                             {line.unit} · {formatFcfa(line.unitPrice)}
                           </Text>
                           <Text style={styles.linePrice}>{formatFcfa(lineTotal)}</Text>
+                          {delivered ? (
+                            <Pressable
+                              style={[
+                                styles.lineReview,
+                                reviewed ? styles.lineReviewDone : styles.lineReviewCta,
+                              ]}
+                              onPress={() =>
+                                router.push(`/product/reviews/${line.productId}` as Href)
+                              }
+                              hitSlop={6}>
+                              <Feather
+                                name={reviewed ? 'check-circle' : 'edit-3'}
+                                size={14}
+                                color={reviewed ? colors.green : colors.onAccent}
+                              />
+                              <Text
+                                style={[
+                                  styles.lineReviewText,
+                                  { color: reviewed ? colors.green : colors.onAccent },
+                                ]}>
+                                {reviewed ? 'Avis publié' : 'Laisser un avis'}
+                              </Text>
+                            </Pressable>
+                          ) : null}
                         </View>
                         <View style={styles.qtyBadge}>
                           <Text style={styles.qtyText}>×{line.qty}</Text>
@@ -296,6 +306,59 @@ export default function OrderDetailsScreen() {
             </View>
           </MotionView>
 
+          {delivered ? (
+            <MotionView preset="down" delay={95}>
+              <View style={styles.section}>
+                <Text style={styles.h}>Avis livraison</Text>
+                <PressScale
+                  style={[
+                    styles.reviewCard,
+                    !courierReview && styles.reviewCardCta,
+                    softShadow({ y: 4, blur: 14, opacity: 0.05 }),
+                  ]}
+                  onPress={() => router.push(`/tracking?id=${order.id}` as Href)}
+                  scaleTo={0.98}>
+                  <View
+                    style={[
+                      styles.reviewIcon,
+                      { backgroundColor: courierReview ? colors.cream : 'rgba(255,255,255,0.2)' },
+                    ]}>
+                    <Feather
+                      name="star"
+                      size={18}
+                      color={courierReview ? colors.gold : colors.onAccent}
+                    />
+                  </View>
+                  <View style={styles.reviewBody}>
+                    <Text
+                      style={[
+                        styles.reviewTitle,
+                        !courierReview && { color: colors.onAccent },
+                      ]}>
+                      {courierReview
+                        ? `Livreur noté ${courierReview.rating}/5`
+                        : `Noter ${order.courierName}`}
+                    </Text>
+                    <Text
+                      style={[
+                        styles.reviewMeta,
+                        !courierReview && { color: 'rgba(255,255,255,0.75)' },
+                      ]}>
+                      {courierReview
+                        ? 'Merci pour votre retour'
+                        : 'Évaluez la qualité de la livraison'}
+                    </Text>
+                  </View>
+                  <Feather
+                    name="chevron-right"
+                    size={18}
+                    color={courierReview ? colors.placeholder : colors.onAccent}
+                  />
+                </PressScale>
+              </View>
+            </MotionView>
+          ) : null}
+
           <MotionView preset="down" delay={110}>
             <View style={styles.section}>
               <Text style={styles.h}>Livraison</Text>
@@ -307,6 +370,15 @@ export default function OrderDetailsScreen() {
                 />
                 <View style={styles.dividerInset} />
                 <InfoRow icon="clock" title="Créneau" lines={[`${order.dayLabel} · ${order.slotLabel}`]} />
+                <View style={styles.dividerInset} />
+                <InfoRow
+                  icon="navigation"
+                  title="Trajet estimé"
+                  lines={[
+                    `${order.storeName || 'Super U'} → ${order.addressLabel || 'Adresse'}`,
+                    `${formatDistanceKm(order.routeDistanceMeters)} · ~${formatDurationMin(order.routeDurationSeconds)} (route)`,
+                  ]}
+                />
                 {order.comment ? (
                   <>
                     <View style={styles.dividerInset} />
@@ -354,14 +426,14 @@ export default function OrderDetailsScreen() {
               style={styles.trackBtn}
               onPress={() => router.push(`/tracking?id=${order.id}` as Href)}
               scaleTo={0.98}>
-              <Feather name="truck" size={18} color={colors.white} />
+              <Feather name="truck" size={18} color={colors.onAccent} />
               <Text style={styles.trackBtnText}>Suivre la livraison</Text>
             </PressScale>
           ) : null}
 
           {canReorder ? (
             <PressScale style={styles.reorderBtn} onPress={reorder} scaleTo={0.98}>
-              <Feather name="refresh-cw" size={16} color={colors.white} />
+              <Feather name="refresh-cw" size={16} color={colors.onAccent} />
               <Text style={styles.reorderBtnText}>Commander à nouveau</Text>
             </PressScale>
           ) : null}
@@ -387,8 +459,7 @@ function createStyles(colors: AppColors) {
     justifyContent: 'space-between',
     paddingHorizontal: 20,
     paddingBottom: 8,
-    gap: 10,
-  },
+    gap: 10 },
   headerCenter: { flex: 1, alignItems: 'center' },
   headerSpacer: { width: 40 },
   title: { ...displayFont('700'), color: colors.text, fontSize: 18 },
@@ -397,11 +468,8 @@ function createStyles(colors: AppColors) {
   statusCard: {
     backgroundColor: colors.white,
     borderRadius: 22,
-    borderWidth: 1,
-    borderColor: colors.border,
     padding: 16,
-    gap: 8,
-  },
+    gap: 8 },
   statusTop: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 10 },
   statusBadge: {
     flexDirection: 'row',
@@ -409,8 +477,7 @@ function createStyles(colors: AppColors) {
     gap: 6,
     borderRadius: 999,
     paddingHorizontal: 10,
-    paddingVertical: 5,
-  },
+    paddingVertical: 5 },
   statusDot: { width: 7, height: 7, borderRadius: 4 },
   statusText: { fontSize: 12, fontWeight: '800' },
   statusTotal: { ...displayFont('700'), color: colors.text, fontSize: 18 },
@@ -425,34 +492,57 @@ function createStyles(colors: AppColors) {
     backgroundColor: colors.terracotta,
     borderRadius: 999,
     paddingHorizontal: 14,
-    paddingVertical: 10,
-  },
-  statusTrackText: { color: colors.white, fontSize: 13, fontWeight: '800' },
+    paddingVertical: 10 },
+  statusTrackText: { color: colors.onAccent, fontSize: 13, fontWeight: '800' },
   section: { gap: 10 },
   h: { ...displayFont('700'), color: colors.text, fontSize: 17 },
   card: {
     backgroundColor: colors.white,
     borderRadius: 20,
-    borderWidth: 1,
-    borderColor: colors.border,
-    overflow: 'hidden',
-  },
+    overflow: 'hidden' },
   line: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 12,
-    padding: 14,
-  },
+    padding: 14 },
   thumb: { width: 64, height: 64, borderRadius: 14, backgroundColor: colors.bg },
   thumbFallback: {
     backgroundColor: colors.cream,
     alignItems: 'center',
-    justifyContent: 'center',
-  },
+    justifyContent: 'center' },
   lineBody: { flex: 1, gap: 2 },
   lineName: { color: colors.text, fontSize: 14, fontWeight: '700' },
   lineUnit: { color: colors.muted, fontSize: 12, fontWeight: '500' },
   linePrice: { color: colors.text, fontSize: 13, fontWeight: '800', marginTop: 2 },
+  lineReview: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    marginTop: 8,
+    alignSelf: 'flex-start',
+    borderRadius: 10,
+    paddingHorizontal: 10,
+    paddingVertical: 7 },
+  lineReviewCta: { backgroundColor: colors.gold },
+  lineReviewDone: { backgroundColor: colors.successSoft },
+  lineReviewText: { fontSize: 12, fontWeight: '700' },
+  reviewCard: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+    backgroundColor: colors.white,
+    borderRadius: 20,
+    padding: 14 },
+  reviewCardCta: { backgroundColor: colors.gold },
+  reviewIcon: {
+    width: 40,
+    height: 40,
+    borderRadius: 14,
+    alignItems: 'center',
+    justifyContent: 'center' },
+  reviewBody: { flex: 1, gap: 2 },
+  reviewTitle: { color: colors.text, fontSize: 14, fontWeight: '700' },
+  reviewMeta: { color: colors.muted, fontSize: 12, fontWeight: '600' },
   qtyBadge: {
     minWidth: 36,
     height: 28,
@@ -460,8 +550,7 @@ function createStyles(colors: AppColors) {
     backgroundColor: colors.bg,
     alignItems: 'center',
     justifyContent: 'center',
-    paddingHorizontal: 8,
-  },
+    paddingHorizontal: 8 },
   qtyText: { color: colors.text, fontSize: 13, fontWeight: '800' },
   divider: { height: 1, backgroundColor: colors.border, marginLeft: 90 },
   dividerInset: { height: 1, backgroundColor: colors.border, marginLeft: 58 },
@@ -472,19 +561,15 @@ function createStyles(colors: AppColors) {
     borderRadius: 10,
     backgroundColor: colors.cream,
     alignItems: 'center',
-    justifyContent: 'center',
-  },
+    justifyContent: 'center' },
   infoText: { flex: 1, gap: 2, paddingTop: 2 },
   infoTitle: { color: colors.text, fontSize: 14, fontWeight: '700' },
   infoMeta: { color: colors.muted, fontSize: 13, lineHeight: 18, fontWeight: '500' },
   summary: {
     backgroundColor: colors.white,
     borderRadius: 20,
-    borderWidth: 1,
-    borderColor: colors.border,
     padding: 16,
-    gap: 10,
-  },
+    gap: 10 },
   sumRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
   sumLabel: { color: colors.muted, fontSize: 14, fontWeight: '600' },
   sumLabelBold: { ...displayFont('700'), color: colors.text, fontSize: 16 },
@@ -498,9 +583,8 @@ function createStyles(colors: AppColors) {
     gap: 10,
     backgroundColor: colors.gold,
     borderRadius: 16,
-    paddingVertical: 16,
-  },
-  trackBtnText: { color: colors.white, fontSize: 15, fontWeight: '800' },
+    paddingVertical: 16 },
+  trackBtnText: { color: colors.onAccent, fontSize: 15, fontWeight: '800' },
   reorderBtn: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -508,58 +592,48 @@ function createStyles(colors: AppColors) {
     gap: 10,
     backgroundColor: colors.text,
     borderRadius: 16,
-    paddingVertical: 16,
-  },
-  reorderBtnText: { color: colors.white, fontSize: 15, fontWeight: '800' },
+    paddingVertical: 16 },
+  reorderBtnText: { color: colors.onAccent, fontSize: 15, fontWeight: '800' },
   cancelBtn: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
     gap: 8,
     backgroundColor: colors.blush,
-    borderWidth: 1,
     borderColor: 'rgba(200,75,49,0.22)',
     borderRadius: 16,
-    paddingVertical: 14,
-  },
+    paddingVertical: 14 },
   cancelBtnText: { color: colors.terracotta, fontSize: 14, fontWeight: '800' },
   menuRoot: { flex: 1 },
   menuBackdrop: {
     ...StyleSheet.absoluteFillObject,
-    backgroundColor: 'rgba(28,22,19,0.28)',
-  },
+    backgroundColor: 'rgba(28,22,19,0.28)' },
   menuPanel: {
     position: 'absolute',
     minWidth: 220,
     backgroundColor: colors.white,
     borderRadius: 18,
-    borderWidth: 1,
-    borderColor: colors.border,
     paddingVertical: 6,
-    overflow: 'hidden',
-  },
+    overflow: 'hidden' },
   menuItem: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 12,
     paddingHorizontal: 16,
-    paddingVertical: 13,
-  },
+    paddingVertical: 13 },
   menuItemText: { color: colors.text, fontSize: 14, fontWeight: '700' },
   menuItemDanger: { color: colors.terracotta },
   menuDivider: {
     height: 1,
     backgroundColor: colors.border,
     marginVertical: 4,
-    marginHorizontal: 12,
-  },
+    marginHorizontal: 12 },
   empty: {
     flex: 1,
     alignItems: 'center',
     justifyContent: 'center',
     paddingHorizontal: 32,
-    gap: 10,
-  },
+    gap: 10 },
   emptyIcon: {
     width: 64,
     height: 64,
@@ -567,8 +641,7 @@ function createStyles(colors: AppColors) {
     backgroundColor: colors.cream,
     alignItems: 'center',
     justifyContent: 'center',
-    marginBottom: 6,
-  },
+    marginBottom: 6 },
   emptyTitle: { ...displayFont('700'), color: colors.text, fontSize: 18 },
   emptyText: { color: colors.muted, fontSize: 14, textAlign: 'center', lineHeight: 20 },
   emptyBtn: {
@@ -576,8 +649,6 @@ function createStyles(colors: AppColors) {
     backgroundColor: colors.gold,
     borderRadius: 14,
     paddingHorizontal: 20,
-    paddingVertical: 14,
-  },
-  emptyBtnText: { color: colors.white, fontSize: 14, fontWeight: '800' },
-});
+    paddingVertical: 14 },
+  emptyBtnText: { color: colors.onAccent, fontSize: 14, fontWeight: '800' } });
 }

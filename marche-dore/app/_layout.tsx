@@ -1,11 +1,21 @@
 import '@/lib/navigationStability';
 import { AnimatedSplash } from '@/components/AnimatedSplash';
+import { OrderNotificationBridge } from '@/components/OrderNotificationBridge';
 import { prepareApp, warmRemainingAssets } from '@/lib/bootstrap';
+import { lockWebInputZoom } from '@/lib/noZoomInput';
+import { AuthGate } from '@/components/AuthGate';
+import { AddressesProvider } from '@/context/AddressesContext';
+import { AuthProvider } from '@/context/AuthContext';
 import { CartProvider } from '@/context/CartContext';
+import { ChatProvider } from '@/context/ChatContext';
 import { CheckoutPaymentProvider } from '@/context/CheckoutPaymentContext';
 import { FavoritesProvider } from '@/context/FavoritesContext';
+import { NotificationsProvider } from '@/context/NotificationsContext';
 import { OrdersProvider } from '@/context/OrdersContext';
+import { PaymentsProvider } from '@/context/PaymentsContext';
+import { ProfileProvider } from '@/context/ProfileContext';
 import { ReviewsProvider } from '@/context/ReviewsContext';
+import { StoresProvider } from '@/context/StoresContext';
 import { ThemeProvider, useTheme } from '@/context/ThemeContext';
 import { UiStateProvider } from '@/context/UiStateContext';
 import { lightColors } from '@/constants/theme';
@@ -17,8 +27,7 @@ import { Platform, StatusBar as RNStatusBar, View } from 'react-native';
 export { ErrorBoundary } from 'expo-router';
 
 export const unstable_settings = {
-  initialRouteName: '(tabs)',
-};
+  initialRouteName: '(auth)' };
 
 function hideSystemBars() {
   StatusBar.setHidden(true, 'none');
@@ -41,9 +50,7 @@ function ThemedAppShell({ children }: { children: React.ReactNode }) {
         card: colors.bg,
         text: colors.text,
         border: colors.border,
-        notification: colors.terracotta,
-      },
-    };
+        notification: colors.terracotta } };
   }, [colors, scheme]);
 
   const stackScreenOptions = useMemo(
@@ -53,29 +60,45 @@ function ThemedAppShell({ children }: { children: React.ReactNode }) {
       animation: Platform.OS === 'web' ? ('none' as const) : Platform.OS === 'ios' ? ('default' as const) : ('fade' as const),
       freezeOnBlur: Platform.OS !== 'web',
       detachPreviousScreen: false,
-      statusBarHidden: true,
-    }),
+      statusBarHidden: true }),
     [colors.bg],
   );
 
   return (
     <NavigationThemeProvider value={navigationTheme}>
-      <CartProvider>
-        <OrdersProvider>
-          <CheckoutPaymentProvider>
-            <FavoritesProvider>
-              <UiStateProvider>
-                <ReviewsProvider>
-                  <StatusBar hidden style={scheme === 'dark' ? 'light' : 'dark'} />
-                  <Stack detachInactiveScreens={false} screenOptions={stackScreenOptions}>
-                    {children}
-                  </Stack>
-                </ReviewsProvider>
-              </UiStateProvider>
-            </FavoritesProvider>
-          </CheckoutPaymentProvider>
-        </OrdersProvider>
-      </CartProvider>
+      <AuthProvider>
+        <CartProvider>
+          <ProfileProvider>
+            <AddressesProvider>
+              <StoresProvider>
+                <OrdersProvider>
+                  <PaymentsProvider>
+                    <CheckoutPaymentProvider>
+                      <FavoritesProvider>
+                        <NotificationsProvider>
+                          <ChatProvider>
+                            <UiStateProvider>
+                              <ReviewsProvider>
+                                <OrderNotificationBridge />
+                                <StatusBar hidden style={scheme === 'dark' ? 'light' : 'dark'} />
+                                <AuthGate>
+                                  <Stack detachInactiveScreens={false} screenOptions={stackScreenOptions}>
+                                    {children}
+                                  </Stack>
+                                </AuthGate>
+                              </ReviewsProvider>
+                            </UiStateProvider>
+                          </ChatProvider>
+                        </NotificationsProvider>
+                      </FavoritesProvider>
+                    </CheckoutPaymentProvider>
+                  </PaymentsProvider>
+                </OrdersProvider>
+              </StoresProvider>
+            </AddressesProvider>
+          </ProfileProvider>
+        </CartProvider>
+      </AuthProvider>
     </NavigationThemeProvider>
   );
 }
@@ -101,6 +124,10 @@ export default function RootLayout() {
   }, []);
 
   useEffect(() => {
+    return lockWebInputZoom();
+  }, []);
+
+  useEffect(() => {
     if (!ready) return;
     hideSystemBars();
   }, [ready]);
@@ -118,14 +145,15 @@ export default function RootLayout() {
     <ThemeProvider>
       <View style={{ flex: 1, backgroundColor: lightColors.bg }}>
         <ThemedAppShell>
+          <Stack.Screen name="(auth)" options={{ headerShown: false, animation: 'fade' }} />
           <Stack.Screen name="(tabs)" options={{ animation: 'none' }} />
           <Stack.Screen
             name="search"
             options={{
-              animation: 'fade_from_bottom',
-              animationDuration: 380,
+              animation: 'slide_from_bottom',
+              animationDuration: 420,
               gestureDirection: 'vertical',
-            }}
+              presentation: 'card' }}
           />
           <Stack.Screen name="promotions" />
           <Stack.Screen name="help" />

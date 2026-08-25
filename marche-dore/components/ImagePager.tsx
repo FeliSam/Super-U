@@ -155,7 +155,11 @@ export const ImagePager = memo(
 
     if (images.length === 1) {
       return (
-        <Pressable onPress={onPress} style={[{ width, height, overflow: 'hidden' }, style]}>
+        <Pressable
+          onPress={onPress}
+          accessibilityRole="imagebutton"
+          accessibilityLabel="Agrandir les photos"
+          style={[{ width, height, overflow: 'hidden' }, style]}>
           <PagerImage
             source={images[0]}
             recyclingKey={`${recyclingKeyPrefix}-0`}
@@ -178,7 +182,12 @@ export const ImagePager = memo(
             transform: [{ translateX }],
           }}>
           {images.map((src, i) => (
-            <Pressable key={`${recyclingKeyPrefix}-${i}`} onPress={onPress} style={{ width, height }}>
+            <Pressable
+              key={`${recyclingKeyPrefix}-${i}`}
+              onPress={onPress}
+              accessibilityRole="imagebutton"
+              accessibilityLabel="Agrandir les photos"
+              style={{ width, height }}>
               <PagerImage
                 source={src}
                 recyclingKey={`${recyclingKeyPrefix}-${i}`}

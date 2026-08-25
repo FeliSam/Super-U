@@ -1,21 +1,23 @@
 import { getProduct } from '@/data/catalog';
-import { deliveryAddresses, userProfile } from '@/data/account';
+import { cotonouMap, deliverySimMs, demoTimelineMs, type LngLat } from '@/constants/map';
+import { appLocation } from '@/constants/location';
 import type { CartLine } from '@/context/CartContext';
 import type { PaymentId } from '@/context/CheckoutPaymentContext';
+import { useProfile } from '@/context/ProfileContext';
+import { findNearestSuperU, fetchDrivingRoute, getSuperUById, type RouteProfile } from '@/lib/deliveryRouting';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import React, { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
 
-const STORAGE_KEY = 'marche-dore.orders.v1';
+const STORAGE_KEY = 'marche-dore.orders.v2';
 
 export type OrderStatus = 'confirmed' | 'preparing' | 'shipping' | 'delivered' | 'cancelled';
 
-/** Demo auto-progression delays from order creation (local only). */
+/** Timeline de démo par défaut (si durée trajet inconnue). */
 export const DEMO_STATUS_TIMELINE: { status: Exclude<OrderStatus, 'cancelled'>; afterMs: number }[] = [
   { status: 'confirmed', afterMs: 0 },
-  // Keep a cancel window while still "Confirmée" (before préparation).
-  { status: 'preparing', afterMs: 45_000 },
-  { status: 'shipping', afterMs: 75_000 },
-  { status: 'delivered', afterMs: 110_000 },
+  { status: 'preparing', afterMs: deliverySimMs.preparing },
+  { status: 'shipping', afterMs: deliverySimMs.shipping },
+  { status: 'delivered', afterMs: deliverySimMs.shipping + deliverySimMs.deliveredFallback },
 ];
 
 function statusRank(status: OrderStatus) {
@@ -35,11 +37,22 @@ function statusRank(status: OrderStatus) {
   }
 }
 
-export function expectedDemoStatus(createdAt: string, now = Date.now()): OrderStatus {
+export function expectedDemoStatus(
+  createdAt: string,
+  now = Date.now(),
+  routeDurationSeconds?: number,
+): OrderStatus {
   const created = new Date(createdAt).getTime();
   const age = Number.isNaN(created) ? 0 : Math.max(0, now - created);
+  const timeline = demoTimelineMs(routeDurationSeconds);
+  const steps: { status: Exclude<OrderStatus, 'cancelled'>; afterMs: number }[] = [
+    { status: 'confirmed', afterMs: 0 },
+    { status: 'preparing', afterMs: timeline.preparing },
+    { status: 'shipping', afterMs: timeline.shipping },
+    { status: 'delivered', afterMs: timeline.delivered },
+  ];
   let status: OrderStatus = 'confirmed';
-  for (const step of DEMO_STATUS_TIMELINE) {
+  for (const step of steps) {
     if (age >= step.afterMs) status = step.status;
   }
   return status;
@@ -80,6 +93,17 @@ export type Order = {
   addressLine: string;
   addressCity: string;
   addressPhone: string;
+  /** [lng, lat] destination client */
+  addressCoordinate: LngLat;
+  /** Magasin de départ (Super U le plus proche) */
+  storeId: string;
+  storeName: string;
+  storeCoordinate: LngLat;
+  /** Itinéraire routier (OSRM) magasin → client */
+  routeCoordinates: LngLat[];
+  routeDistanceMeters: number;
+  routeDurationSeconds: number;
+  routeProfile: RouteProfile;
   comment: string;
   courierName: string;
   courierPhone: string;
@@ -100,13 +124,20 @@ export type PlaceOrderInput = {
   paymentLabel: string;
   paymentDetail: string | null;
   comment?: string;
+  addressLabel?: string;
+  addressLine?: string;
+  addressCity?: string;
+  addressPhone?: string;
+  addressCoordinate?: LngLat;
+  /** Magasin choisi par l’utilisateur (sinon le plus proche). */
+  storeId?: string;
 };
 
 type OrdersContextValue = {
   orders: Order[];
   ready: boolean;
   activeOrder: Order | null;
-  placeOrder: (input: PlaceOrderInput) => Order | null;
+  placeOrder: (input: PlaceOrderInput) => Promise<Order | null>;
   getOrder: (id: string) => Order | undefined;
   setStatus: (id: string, status: OrderStatus) => void;
 };
@@ -171,6 +202,28 @@ function sanitizeCreatedAt(raw: unknown): string {
   return new Date().toISOString();
 }
 
+function sanitizeCoordinate(raw: unknown, fallback: LngLat): LngLat {
+  if (
+    Array.isArray(raw) &&
+    raw.length === 2 &&
+    typeof raw[0] === 'number' &&
+    typeof raw[1] === 'number' &&
+    Number.isFinite(raw[0]) &&
+    Number.isFinite(raw[1])
+  ) {
+    return [raw[0], raw[1]];
+  }
+  return [...fallback];
+}
+
+function sanitizeRouteCoords(raw: unknown, fallback: LngLat[]): LngLat[] {
+  if (!Array.isArray(raw) || raw.length < 2) return fallback.map((c) => [...c] as LngLat);
+  const coords = raw
+    .map((c) => sanitizeCoordinate(c, fallback[0] ?? cotonouMap.home))
+    .filter((c, i, arr) => i === 0 || c[0] !== arr[i - 1][0] || c[1] !== arr[i - 1][1]);
+  return coords.length >= 2 ? coords : fallback.map((c) => [...c] as LngLat);
+}
+
 function sanitizeOrder(raw: unknown): Order | null {
   if (!raw || typeof raw !== 'object') return null;
   const o = raw as Partial<Order>;
@@ -188,6 +241,10 @@ function sanitizeOrder(raw: unknown): Order | null {
   const paymentId = (o.paymentId as PaymentId) || 'cod';
   const paymentLabel =
     (typeof o.paymentLabel === 'string' && o.paymentLabel.trim()) || paymentLabelFor(paymentId);
+  const addressCoordinate = sanitizeCoordinate(o.addressCoordinate, cotonouMap.home);
+  const nearest = findNearestSuperU(addressCoordinate);
+  const storeCoordinate = sanitizeCoordinate(o.storeCoordinate, nearest.store.coordinate);
+  const fallbackRoute: LngLat[] = [storeCoordinate, addressCoordinate];
   return {
     id: normalizeId(o.id),
     createdAt: sanitizeCreatedAt(o.createdAt),
@@ -207,9 +264,25 @@ function sanitizeOrder(raw: unknown): Order | null {
     paymentLabel,
     paymentDetail: typeof o.paymentDetail === 'string' ? o.paymentDetail : null,
     addressLabel: (typeof o.addressLabel === 'string' && o.addressLabel.trim()) || 'Domicile',
-    addressLine: (typeof o.addressLine === 'string' && o.addressLine.trim()) || 'Rue 12, Ganhi',
-    addressCity: (typeof o.addressCity === 'string' && o.addressCity.trim()) || 'Cotonou',
-    addressPhone: (typeof o.addressPhone === 'string' && o.addressPhone.trim()) || userProfile.phone,
+    addressLine: (typeof o.addressLine === 'string' && o.addressLine.trim()) || appLocation.defaultLine,
+    addressCity: (typeof o.addressCity === 'string' && o.addressCity.trim()) || appLocation.city,
+    addressPhone: (typeof o.addressPhone === 'string' && o.addressPhone.trim()) || appLocation.phone,
+    addressCoordinate,
+    storeId: (typeof o.storeId === 'string' && o.storeId.trim()) || nearest.store.id,
+    storeName: (typeof o.storeName === 'string' && o.storeName.trim()) || nearest.store.name,
+    storeCoordinate,
+    routeCoordinates: sanitizeRouteCoords(o.routeCoordinates, fallbackRoute),
+    routeDistanceMeters: Number(o.routeDistanceMeters) || nearest.straightMeters,
+    routeDurationSeconds: (() => {
+      const dist = Number(o.routeDistanceMeters) || nearest.straightMeters;
+      const raw = Number(o.routeDurationSeconds);
+      // Anciennes commandes / démo trop courte → re-estimer ~8,5 m/s (~30 km/h)
+      if (!Number.isFinite(raw) || raw < 60 || (dist > 1500 && raw < 120)) {
+        return Math.max(300, dist / 8.5);
+      }
+      return raw;
+    })(),
+    routeProfile: o.routeProfile === 'motorcycle' ? 'motorcycle' : 'driving',
     comment: typeof o.comment === 'string' ? o.comment : '',
     courierName: (typeof o.courierName === 'string' && o.courierName.trim()) || 'Moussa Ndiaye',
     courierPhone: (typeof o.courierPhone === 'string' && o.courierPhone.trim()) || '+229971234567',
@@ -232,6 +305,7 @@ export function statusLabel(status: OrderStatus) {
 }
 
 export function OrdersProvider({ children }: { children: React.ReactNode }) {
+  const { profile } = useProfile();
   const [orders, setOrders] = useState<Order[]>([]);
   const [ready, setReady] = useState(false);
   const hydrated = useRef(false);
@@ -281,7 +355,7 @@ export function OrdersProvider({ children }: { children: React.ReactNode }) {
         let changed = false;
         const next = prev.map((order) => {
           if (order.status === 'cancelled') return order;
-          const expected = expectedDemoStatus(order.createdAt);
+          const expected = expectedDemoStatus(order.createdAt, Date.now(), order.routeDurationSeconds);
           if (statusRank(expected) <= statusRank(order.status)) return order;
           changed = true;
           return { ...order, status: expected };
@@ -295,18 +369,21 @@ export function OrdersProvider({ children }: { children: React.ReactNode }) {
     return () => clearInterval(timer);
   }, [ready]);
 
-  const placeOrder = useCallback((input: PlaceOrderInput) => {
+  const placeOrder = useCallback(async (input: PlaceOrderInput) => {
     const lines = snapshotLines(input.lines);
     if (!lines.length) return null;
 
-    const address = deliveryAddresses.find((a) => a.default) ?? deliveryAddresses[0];
+    const addressCoordinate = sanitizeCoordinate(input.addressCoordinate, cotonouMap.home);
+    const preferred = input.storeId ? getSuperUById(input.storeId) : undefined;
+    const store = preferred ?? findNearestSuperU(addressCoordinate).store;
+    const driving = await fetchDrivingRoute(store.coordinate, addressCoordinate, 'driving');
+
     let created: Order | null = null;
 
     setOrders((prev) => {
       const order: Order = {
         id: makeOrderId(prev),
         createdAt: new Date().toISOString(),
-        // Fresh orders start confirmed so tracking mirrors checkout, not a mid-prep demo.
         status: 'confirmed',
         lines,
         itemCount: lines.reduce((s, l) => s + l.qty, 0),
@@ -322,10 +399,18 @@ export function OrdersProvider({ children }: { children: React.ReactNode }) {
         paymentId: input.paymentId,
         paymentLabel: input.paymentLabel?.trim() || paymentLabelFor(input.paymentId),
         paymentDetail: input.paymentDetail,
-        addressLabel: address?.label ?? 'Domicile',
-        addressLine: address?.line ?? 'Rue 12, Ganhi',
-        addressCity: address?.city ?? 'Cotonou',
-        addressPhone: address?.phone ?? userProfile.phone,
+        addressLabel: input.addressLabel?.trim() || 'Domicile',
+        addressLine: input.addressLine?.trim() || appLocation.defaultLine,
+        addressCity: input.addressCity?.trim() || appLocation.city,
+        addressPhone: input.addressPhone?.trim() || profile.phone,
+        addressCoordinate,
+        storeId: store.id,
+        storeName: store.name,
+        storeCoordinate: [...store.coordinate],
+        routeCoordinates: driving.coordinates,
+        routeDistanceMeters: driving.distanceMeters,
+        routeDurationSeconds: driving.durationSeconds,
+        routeProfile: driving.profile,
         comment: input.comment?.trim() ?? '',
         courierName: 'Moussa Ndiaye',
         courierPhone: '+229971234567',
@@ -335,7 +420,7 @@ export function OrdersProvider({ children }: { children: React.ReactNode }) {
     });
 
     return created;
-  }, []);
+  }, [profile.phone]);
   const getOrder = useCallback(
     (id: string) => {
       const key = normalizeId(id);

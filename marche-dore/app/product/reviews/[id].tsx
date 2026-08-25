@@ -2,9 +2,12 @@ import { CtaButton, IconCircle, Page, Screen } from '@/components/ui';
 import { StarRating } from '@/components/StarRating';
 import { type AppColors } from '@/constants/theme';
 import { useColors } from '@/context/ThemeContext';
+import { useOrders } from '@/context/OrdersContext';
+import { useProfile } from '@/context/ProfileContext';
 import { useReviews } from '@/context/ReviewsContext';
 import { getProduct } from '@/data/catalog';
 import { buildRatingSummary, catalogReviewsForProduct, type Review } from '@/data/reviews';
+import { hasPurchasedProduct } from '@/lib/purchaseGate';
 import { MAX_REVIEW_IMAGES, pickReviewImages } from '@/lib/pickReviewImages';
 import { Feather, Ionicons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
@@ -20,8 +23,7 @@ import {
   StyleSheet,
   Text,
   TextInput,
-  View,
-} from 'react-native';
+  View } from 'react-native';
 
 function ReviewImages({ images }: { images: ImageSourcePropType[] }) {
   const colors = useColors();
@@ -53,7 +55,7 @@ function ReviewCard({ review }: { review: Review }) {
             <Text style={styles.reviewAuthor}>{review.author}</Text>
             {review.verified ? (
               <View style={styles.verified}>
-                <Feather name="check" size={10} color={colors.white} />
+                <Feather name="check" size={10} color={colors.onAccent} />
               </View>
             ) : null}
           </View>
@@ -74,9 +76,14 @@ export default function ProductReviewsScreen() {
   const colors = useColors();
   const styles = useMemo(() => createStyles(colors), [colors]);
 
-  const { id } = useLocalSearchParams<{ id: string }>();
+  const { id: idParam } = useLocalSearchParams<{ id: string }>();
+  const id = typeof idParam === 'string' ? idParam : Array.isArray(idParam) ? idParam[0] : undefined;
   const product = getProduct(id);
-  const { reviewsForProduct, addReview } = useReviews();
+  const { orders } = useOrders();
+  const { profile } = useProfile();
+  const { reviewsForProduct, addReview, hasUserReviewedProduct } = useReviews();
+  const canReview = Boolean(id && hasPurchasedProduct(orders, id));
+  const alreadyReviewed = Boolean(id && hasUserReviewedProduct(id));
   const [draftRating, setDraftRating] = useState(5);
   const [draftComment, setDraftComment] = useState('');
   const [draftImages, setDraftImages] = useState<string[]>([]);
@@ -117,15 +124,15 @@ export default function ProductReviewsScreen() {
   const maxCount = Math.max(...summary.counts, 1);
 
   const submitReview = () => {
+    if (!canReview || alreadyReviewed) return;
     const comment = draftComment.trim();
     if (!comment || draftRating < 1) return;
     addReview({
       productId: product.id,
-      author: 'Amina F.',
+      author: `${profile.firstName} ${profile.lastName.charAt(0)}.`,
       rating: draftRating,
       comment,
-      images: draftImages.length ? draftImages.map((uri) => ({ uri })) : undefined,
-    });
+      images: draftImages.length ? draftImages.map((uri) => ({ uri })) : undefined });
     setDraftComment('');
     setDraftRating(5);
     setDraftImages([]);
@@ -204,22 +211,43 @@ export default function ProductReviewsScreen() {
                 </View>
               </View>
 
-              <Pressable
-                style={[styles.writeToggle, formOpen && styles.writeToggleOpen]}
-                onPress={() => setFormOpen((v) => !v)}>
-                <View style={styles.writeIcon}>
-                  <Feather name="edit-3" size={16} color={colors.gold} />
-                </View>
-                <View style={styles.writeTextBlock}>
-                  <Text style={styles.writeToggleText}>
-                    {formOpen ? 'Masquer le formulaire' : 'Écrire un avis'}
-                  </Text>
-                  <Text style={styles.writeHint}>Partagez votre expérience</Text>
-                </View>
-                <Feather name={formOpen ? 'chevron-up' : 'chevron-down'} size={18} color={colors.muted} />
-              </Pressable>
+              {canReview && !alreadyReviewed && !submitted ? (
+                <Pressable
+                  style={[styles.writeToggle, formOpen && styles.writeToggleOpen]}
+                  onPress={() => setFormOpen((v) => !v)}>
+                  <View style={styles.writeIcon}>
+                    <Feather name="edit-3" size={16} color={colors.gold} />
+                  </View>
+                  <View style={styles.writeTextBlock}>
+                    <Text style={styles.writeToggleText}>
+                      {formOpen ? 'Masquer le formulaire' : 'Écrire un avis'}
+                    </Text>
+                    <Text style={styles.writeHint}>Achat vérifié · partagez votre expérience</Text>
+                  </View>
+                  <Feather name={formOpen ? 'chevron-up' : 'chevron-down'} size={18} color={colors.muted} />
+                </Pressable>
+              ) : null}
 
-              {formOpen ? (
+              {!canReview ? (
+                <View style={styles.lockedBanner}>
+                  <Feather name="lock" size={18} color={colors.muted} />
+                  <View style={styles.lockedText}>
+                    <Text style={styles.lockedTitle}>Avis réservés aux acheteurs</Text>
+                    <Text style={styles.lockedSub}>
+                      Commandez et recevez ce produit pour pouvoir laisser un avis.
+                    </Text>
+                  </View>
+                </View>
+              ) : null}
+
+              {alreadyReviewed || submitted ? (
+                <View style={styles.successBanner}>
+                  <Feather name="check-circle" size={18} color={colors.green} />
+                  <Text style={styles.successText}>Merci ! Votre avis a été publié.</Text>
+                </View>
+              ) : null}
+
+              {formOpen && canReview && !alreadyReviewed ? (
                 <View style={styles.formCard}>
                   <Text style={styles.formLabel}>Votre note</Text>
                   <View style={styles.draftStars}>
@@ -245,7 +273,7 @@ export default function ProductReviewsScreen() {
                       <View key={`${uri}-${index}`} style={styles.draftImageWrap}>
                         <Image source={{ uri }} style={styles.draftImage} resizeMode="cover" />
                         <Pressable style={styles.removeImage} onPress={() => removeDraftImage(index)} hitSlop={8}>
-                          <Feather name="x" size={14} color={colors.white} />
+                          <Feather name="x" size={14} color={colors.onAccent} />
                         </Pressable>
                       </View>
                     ))}
@@ -260,13 +288,6 @@ export default function ProductReviewsScreen() {
                   </ScrollView>
                   <Text style={styles.photoHint}>Jusqu’à {MAX_REVIEW_IMAGES} photos par avis</Text>
                   <CtaButton label="Publier mon avis" onPress={submitReview} />
-                </View>
-              ) : null}
-
-              {submitted ? (
-                <View style={styles.successBanner}>
-                  <Feather name="check-circle" size={18} color={colors.green} />
-                  <Text style={styles.successText}>Merci ! Votre avis a été publié.</Text>
                 </View>
               ) : null}
 
@@ -302,16 +323,14 @@ function createStyles(colors: AppColors) {
   return StyleSheet.create({
   flex: { flex: 1 },
   hero: {
-    paddingBottom: 20,
-  },
+    paddingBottom: 20 },
   header: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
     paddingHorizontal: 20,
     paddingTop: 10,
-    paddingBottom: 8,
-  },
+    paddingBottom: 8 },
   headerCenter: { alignItems: 'center', gap: 2, flex: 1 },
   headerSpacer: { width: 40 },
   title: { color: colors.text, fontSize: 20, fontWeight: '800' },
@@ -324,8 +343,7 @@ function createStyles(colors: AppColors) {
     borderTopRightRadius: 28,
     paddingHorizontal: 20,
     paddingTop: 18,
-    gap: 14,
-  },
+    gap: 14 },
   missing: { flex: 1, alignItems: 'center', justifyContent: 'center', gap: 10 },
   missingTitle: { color: colors.text, fontSize: 17, fontWeight: '700' },
   missingLink: { color: colors.gold, fontSize: 14, fontWeight: '700' },
@@ -334,11 +352,8 @@ function createStyles(colors: AppColors) {
     alignItems: 'center',
     gap: 14,
     backgroundColor: colors.white,
-    borderWidth: 1,
-    borderColor: colors.border,
     borderRadius: 20,
-    padding: 16,
-  },
+    padding: 16 },
   summaryLeft: { alignItems: 'center', gap: 6, minWidth: 92 },
   avg: { color: colors.text, fontSize: 40, fontWeight: '800', lineHeight: 44 },
   totalReviews: { color: colors.muted, fontSize: 12, fontWeight: '600', textAlign: 'center' },
@@ -351,8 +366,7 @@ function createStyles(colors: AppColors) {
     height: 7,
     borderRadius: 4,
     backgroundColor: colors.border,
-    overflow: 'hidden',
-  },
+    overflow: 'hidden' },
   barFill: { height: '100%', backgroundColor: colors.gold, borderRadius: 4 },
   barCount: { color: colors.muted, fontSize: 11, width: 16, textAlign: 'right', fontWeight: '600' },
   writeToggle: {
@@ -360,45 +374,45 @@ function createStyles(colors: AppColors) {
     alignItems: 'center',
     gap: 12,
     backgroundColor: colors.white,
-    borderWidth: 1,
-    borderColor: colors.border,
     borderRadius: 18,
     paddingHorizontal: 14,
-    paddingVertical: 12,
-  },
-  writeToggleOpen: { borderColor: colors.gold, backgroundColor: '#fffdf8' },
+    paddingVertical: 12 },
+  writeToggleOpen: { borderColor: colors.gold, backgroundColor: colors.selectSoft },
   writeIcon: {
     width: 40,
     height: 40,
     borderRadius: 12,
     backgroundColor: colors.cream,
     alignItems: 'center',
-    justifyContent: 'center',
-  },
+    justifyContent: 'center' },
   writeTextBlock: { flex: 1, gap: 2 },
   writeToggleText: { color: colors.text, fontSize: 15, fontWeight: '700' },
   writeHint: { color: colors.muted, fontSize: 12 },
+  lockedBanner: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: 12,
+    backgroundColor: colors.cream,
+    borderRadius: 16,
+    padding: 14 },
+  lockedText: { flex: 1, gap: 4 },
+  lockedTitle: { color: colors.text, fontSize: 14, fontWeight: '700' },
+  lockedSub: { color: colors.muted, fontSize: 13, lineHeight: 18 },
   formCard: {
     backgroundColor: colors.white,
-    borderWidth: 1,
-    borderColor: colors.border,
     borderRadius: 20,
     padding: 16,
-    gap: 12,
-  },
+    gap: 12 },
   formLabel: { color: colors.text, fontSize: 14, fontWeight: '700' },
   draftStars: { flexDirection: 'row', alignItems: 'center', gap: 12 },
   draftRatingLabel: { color: colors.gold, fontSize: 15, fontWeight: '800' },
   input: {
     minHeight: 110,
-    borderWidth: 1,
-    borderColor: colors.border,
     borderRadius: 14,
     padding: 12,
     color: colors.text,
-    fontSize: 14,
-    backgroundColor: colors.bg,
-  },
+    fontSize: 16,
+    backgroundColor: colors.bg },
   draftImages: { gap: 10, paddingVertical: 2 },
   draftImageWrap: { position: 'relative' },
   draftImage: { width: 88, height: 88, borderRadius: 14, backgroundColor: colors.border },
@@ -411,20 +425,16 @@ function createStyles(colors: AppColors) {
     borderRadius: 11,
     backgroundColor: 'rgba(28,22,19,0.65)',
     alignItems: 'center',
-    justifyContent: 'center',
-  },
+    justifyContent: 'center' },
   addPhoto: {
     width: 88,
     height: 88,
     borderRadius: 14,
-    borderWidth: 1,
-    borderColor: colors.border,
     borderStyle: 'dashed',
     backgroundColor: colors.bg,
     alignItems: 'center',
     justifyContent: 'center',
-    gap: 4,
-  },
+    gap: 4 },
   addPhotoText: { color: colors.muted, fontSize: 11, fontWeight: '600' },
   photoHint: { color: colors.placeholder, fontSize: 12, marginTop: -4 },
   reviewImages: { gap: 8, paddingRight: 4 },
@@ -433,10 +443,9 @@ function createStyles(colors: AppColors) {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 8,
-    backgroundColor: '#edf7ef',
+    backgroundColor: colors.successSoft,
     borderRadius: 14,
-    padding: 12,
-  },
+    padding: 12 },
   successText: { color: colors.green, fontSize: 14, fontWeight: '600', flex: 1 },
   listHead: { flexDirection: 'row', alignItems: 'center', gap: 10, marginTop: 4 },
   listTitle: { color: colors.text, fontSize: 18, fontWeight: '800' },
@@ -445,44 +454,32 @@ function createStyles(colors: AppColors) {
     height: 26,
     borderRadius: 13,
     backgroundColor: colors.cream,
-    borderWidth: 1,
-    borderColor: colors.border,
     alignItems: 'center',
     justifyContent: 'center',
-    paddingHorizontal: 7,
-  },
+    paddingHorizontal: 7 },
   listBadgeText: { color: colors.gold, fontSize: 12, fontWeight: '800' },
   list: { gap: 10 },
   emptyCard: {
     alignItems: 'center',
     gap: 8,
     backgroundColor: colors.white,
-    borderWidth: 1,
-    borderColor: colors.border,
     borderRadius: 18,
-    padding: 28,
-  },
+    padding: 28 },
   emptyTitle: { color: colors.text, fontSize: 16, fontWeight: '700' },
   emptyText: { color: colors.muted, fontSize: 13, textAlign: 'center' },
   reviewCard: {
     backgroundColor: colors.white,
-    borderWidth: 1,
-    borderColor: colors.border,
     borderRadius: 18,
     padding: 14,
-    gap: 10,
-  },
+    gap: 10 },
   reviewHead: { flexDirection: 'row', gap: 10, alignItems: 'flex-start' },
   avatar: {
     width: 42,
     height: 42,
     borderRadius: 21,
     backgroundColor: colors.cream,
-    borderWidth: 1,
-    borderColor: colors.border,
     alignItems: 'center',
-    justifyContent: 'center',
-  },
+    justifyContent: 'center' },
   avatarText: { color: colors.gold, fontSize: 16, fontWeight: '800' },
   reviewMeta: { flex: 1, gap: 4 },
   reviewNameRow: { flexDirection: 'row', alignItems: 'center', gap: 6 },
@@ -493,11 +490,9 @@ function createStyles(colors: AppColors) {
     borderRadius: 8,
     backgroundColor: colors.green,
     alignItems: 'center',
-    justifyContent: 'center',
-  },
+    justifyContent: 'center' },
   reviewStarsRow: { flexDirection: 'row', alignItems: 'center', gap: 8 },
   verifiedText: { color: colors.green, fontSize: 11, fontWeight: '600' },
   reviewDate: { color: colors.placeholder, fontSize: 11, fontWeight: '500' },
-  reviewComment: { color: colors.muted, fontSize: 14, lineHeight: 21 },
-});
+  reviewComment: { color: colors.muted, fontSize: 14, lineHeight: 21 } });
 }

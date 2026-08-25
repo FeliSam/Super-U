@@ -66,8 +66,7 @@ function createStyles(colors: AppColors) {
     alignItems: 'center',
     justifyContent: 'space-between',
     paddingHorizontal: 20,
-    paddingVertical: 12,
-  },
+    paddingVertical: 12 },
   headerSpacer: { width: 40 },
   title: { color: colors.text, fontSize: 17, ...displayFont('700') },
   content: { padding: 20, gap: 14, paddingBottom: 40 },
@@ -76,8 +75,7 @@ function createStyles(colors: AppColors) {
     borderRadius: 20,
     padding: 20,
     alignItems: 'center',
-    gap: 8,
-  },
+    gap: 8 },
   brandName: { color: colors.text, fontSize: 28, fontWeight: '800' },
   brandTag: { color: colors.muted, fontSize: 14 },
   versionPill: {
@@ -85,8 +83,7 @@ function createStyles(colors: AppColors) {
     backgroundColor: colors.white,
     borderRadius: 999,
     paddingHorizontal: 12,
-    paddingVertical: 6,
-  },
+    paddingVertical: 6 },
   versionText: { color: colors.gold, fontSize: 12, fontWeight: '700' },
   body: { color: colors.muted, fontSize: 14, lineHeight: 21 },
   card: {
@@ -94,20 +91,15 @@ function createStyles(colors: AppColors) {
     gap: 12,
     backgroundColor: colors.white,
     borderRadius: 16,
-    borderWidth: 1,
-    borderColor: colors.border,
-    padding: 14,
-  },
+    padding: 14 },
   icon: {
     width: 40,
     height: 40,
     borderRadius: 12,
     backgroundColor: colors.cream,
     alignItems: 'center',
-    justifyContent: 'center',
-  },
+    justifyContent: 'center' },
   cardTitle: { color: colors.text, fontSize: 15, fontWeight: '700' },
   cardBody: { color: colors.muted, fontSize: 13, lineHeight: 18, marginTop: 2 },
-  footer: { textAlign: 'center', color: colors.placeholder, fontSize: 12, marginTop: 8 },
-});
+  footer: { textAlign: 'center', color: colors.placeholder, fontSize: 12, marginTop: 8 } });
 }

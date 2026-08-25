@@ -1,19 +1,23 @@
 import { CtaButton, IconCircle, Screen, Page } from '@/components/ui';
 import { displayFont, type AppColors } from '@/constants/theme';
+import { useNotifications } from '@/context/NotificationsContext';
 import { useColors } from '@/context/ThemeContext';
-import { getNotification } from '@/data/notifications';
 import { navigateTab } from '@/lib/navigation';
 import { Feather } from '@expo/vector-icons';
-import { router, useLocalSearchParams } from 'expo-router';
-import { useMemo } from 'react';
+import { Href, router, useLocalSearchParams } from 'expo-router';
+import { useEffect, useMemo } from 'react';
 import { ScrollView, StyleSheet, Text, View } from 'react-native';
 
 export default function NotificationDetailScreen() {
   const colors = useColors();
   const styles = useMemo(() => createStyles(colors), [colors]);
-
   const { id } = useLocalSearchParams<{ id: string }>();
-  const notification = getNotification(id ?? '');
+  const { getById, markAsRead } = useNotifications();
+  const notification = getById(id ?? '');
+
+  useEffect(() => {
+    if (id) markAsRead(id);
+  }, [id, markAsRead]);
 
   if (!notification) {
     return (
@@ -33,13 +37,24 @@ export default function NotificationDetailScreen() {
   }
 
   const onAction = () => {
-    if (!notification.actionHref) return;
-    if (notification.actionHref.startsWith('/(tabs)')) {
-      navigateTab(notification.actionHref);
+    if (notification.actionHref) {
+      const href = notification.actionHref;
+      if (href.startsWith('/(tabs)')) {
+        navigateTab(href as Href);
+        return;
+      }
+      router.push(href as Href);
       return;
     }
-    router.push(notification.actionHref as never);
+    if (notification.orderId) {
+      router.push(`/tracking?id=${notification.orderId}` as Href);
+    }
   };
+
+  const actionLabel =
+    notification.actionLabel ||
+    (notification.orderId ? 'Suivre la commande' : undefined);
+  const canAct = Boolean(notification.actionHref || notification.orderId);
 
   return (
     <Screen>
@@ -63,9 +78,7 @@ export default function NotificationDetailScreen() {
             <Text style={styles.body}>{notification.body}</Text>
           </View>
 
-          {notification.actionLabel && notification.actionHref ? (
-            <CtaButton label={notification.actionLabel} onPress={onAction} />
-          ) : null}
+          {canAct && actionLabel ? <CtaButton label={actionLabel} onPress={onAction} /> : null}
         </ScrollView>
       </Page>
     </Screen>
@@ -74,43 +87,36 @@ export default function NotificationDetailScreen() {
 
 function createStyles(colors: AppColors) {
   return StyleSheet.create({
-  flex: { flex: 1 },
-  header: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    paddingHorizontal: 20,
-    paddingVertical: 12,
-  },
-  headerSpacer: { width: 40 },
-  title: { color: colors.text, fontSize: 18, ...displayFont('700') },
-  content: { padding: 20, gap: 16, paddingBottom: 32 },
-  hero: { alignItems: 'center', gap: 10, paddingVertical: 8 },
-  iconWrap: {
-    width: 56,
-    height: 56,
-    borderRadius: 18,
-    backgroundColor: colors.cream,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  notifTitle: {
-    color: colors.text,
-    fontSize: 22,
-    fontWeight: '800',
-    textAlign: 'center',
-    paddingHorizontal: 12,
-  },
-  time: { color: colors.placeholder, fontSize: 13 },
-  card: {
-    backgroundColor: colors.white,
-    borderWidth: 1,
-    borderColor: colors.border,
-    borderRadius: 20,
-    padding: 16,
-  },
-  body: { color: colors.muted, fontSize: 15, lineHeight: 23 },
-  empty: { flex: 1, alignItems: 'center', justifyContent: 'center', padding: 20 },
-  emptyText: { color: colors.muted, fontSize: 15 },
-});
+    flex: { flex: 1 },
+    header: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'space-between',
+      paddingHorizontal: 20,
+      paddingVertical: 12 },
+    headerSpacer: { width: 40 },
+    title: { color: colors.text, fontSize: 17, ...displayFont('700') },
+    empty: { flex: 1, alignItems: 'center', justifyContent: 'center', padding: 24 },
+    emptyText: { color: colors.muted, fontSize: 14 },
+    content: { padding: 20, gap: 16, paddingBottom: 32 },
+    hero: { alignItems: 'center', gap: 8, paddingVertical: 8 },
+    iconWrap: {
+      width: 56,
+      height: 56,
+      borderRadius: 18,
+      backgroundColor: colors.cream,
+      alignItems: 'center',
+      justifyContent: 'center',
+      marginBottom: 4 },
+    notifTitle: {
+      ...displayFont('700'),
+      color: colors.text,
+      fontSize: 20,
+      textAlign: 'center' },
+    time: { color: colors.muted, fontSize: 12 },
+    card: {
+      backgroundColor: colors.white,
+      borderRadius: 18,
+      padding: 16 },
+    body: { color: colors.text, fontSize: 15, lineHeight: 22 } });
 }

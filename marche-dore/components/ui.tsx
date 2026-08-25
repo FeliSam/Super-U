@@ -6,12 +6,13 @@ import { Product, productReviewStats } from '@/data/catalog';
 import { useCart, useProductQty } from '@/context/CartContext';
 import { useFavorites } from '@/context/FavoritesContext';
 import { formatFcfa } from '@/lib/format';
+import { transferWebKeyboard, pinWebKeyboard } from '@/lib/keepKeyboard';
 import { navigateTab, tabPaths } from '@/lib/navigation';
 import { softShadow } from '@/lib/shadow';
 import { Feather, Ionicons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
-import { router } from 'expo-router';
-import { memo, useMemo, useRef } from 'react';
+import { router, useFocusEffect } from 'expo-router';
+import { memo, useCallback, useLayoutEffect, useMemo, useRef } from 'react';
 import {
   Animated,
   type ImageSourcePropType,
@@ -58,16 +59,44 @@ export function Page({
   return <View style={[styles.page, style]}>{children}</View>;
 }
 
-/** Shared warm-gradient header for main tab screens (Explorer, Panier, Chat, Profil). */
+/**
+ * Smart top navbar row for tab heroes (location, actions, etc.).
+ * Lives above the title so taps stay hit-testable while the sheet scrolls under.
+ */
+export function SmartNavbar({
+  left,
+  right,
+  style,
+}: {
+  left?: React.ReactNode;
+  right?: React.ReactNode;
+  style?: React.ComponentProps<typeof View>['style'];
+}) {
+  const colors = useColors();
+  const styles = useMemo(() => createStyles(colors), [colors]);
+  return (
+    <View style={[styles.smartNavbar, style]} pointerEvents="box-none">
+      {left ? <View style={styles.smartNavbarLeft}>{left}</View> : <View style={styles.smartNavbarLeft} />}
+      {right ? <View style={styles.smartNavbarRight}>{right}</View> : null}
+    </View>
+  );
+}
+
+/** Shared warm-gradient header for main tab screens (Accueil, Explorer, Panier, Chat, Profil). */
 export function TabHero({
   title,
   subtitle,
+  left,
   right,
+  navbar,
   children,
 }: {
   title: string;
   subtitle?: string;
+  left?: React.ReactNode;
   right?: React.ReactNode;
+  /** Optional smart top bar (e.g. Livrer à + actions) above the title. */
+  navbar?: React.ReactNode;
   children?: React.ReactNode;
 }) {
   const { scheme } = useTheme();
@@ -77,7 +106,9 @@ export function TabHero({
   return (
     <LinearGradient colors={chrome.gradient} style={styles.tabHero}>
       <View style={[styles.tabHeroOrb, { backgroundColor: chrome.orb }]} />
+      {navbar ? <View style={styles.tabHeroNavbar}>{navbar}</View> : null}
       <View style={styles.tabHeroTitleRow}>
+        {left ? <View style={styles.tabHeroRight}>{left}</View> : null}
         <Text style={[styles.tabHeroTitle, { color: chrome.ink }]}>{title}</Text>
         {right ? <View style={styles.tabHeroRight}>{right}</View> : null}
       </View>
@@ -87,11 +118,18 @@ export function TabHero({
   );
 }
 
+const BADGE_LABEL: Record<NonNullable<Product['badge']>, string> = {
+  nouveau: 'Nouveau',
+  local: 'Local',
+  rupture: 'Rupture',
+};
+
 export const ProductCard = memo(function ProductCard({
   product,
   width = 140,
   imageHeight = 130,
   compact = false,
+  circleImage = false,
   index = 0,
   animate = true,
 }: {
@@ -99,6 +137,8 @@ export const ProductCard = memo(function ProductCard({
   width?: number | `${number}%`;
   imageHeight?: number;
   compact?: boolean;
+  /** Circular product photo (50% radius); info stays below. */
+  circleImage?: boolean;
   index?: number;
   animate?: boolean;
 }) {
@@ -107,10 +147,13 @@ export const ProductCard = memo(function ProductCard({
   const { qty, increment, decrement } = useProductQty(product.id);
   const { isFavorite, toggle } = useFavorites();
   const liked = isFavorite(product.id);
+  const outOfStock = product.inStock === false;
+  const badge = outOfStock ? ('rupture' as const) : product.badge;
   const scaleX = useRef(new Animated.Value(1)).current;
   const heartScale = useRef(new Animated.Value(1)).current;
 
   const bump = (next: () => void) => {
+    if (outOfStock) return;
     Animated.sequence([
       Animated.timing(scaleX, { toValue: 0.97, duration: 60, useNativeDriver: true }),
       Animated.spring(scaleX, { toValue: 1, useNativeDriver: true, speed: 28, bounciness: 4 }),
@@ -128,43 +171,114 @@ export const ProductCard = memo(function ProductCard({
 
   const openProduct = () => router.push(`/product/${product.id}`);
   const { rating, reviews } = productReviewStats(product);
+  const hasDeal = Boolean(product.oldPrice && product.oldPrice > product.price);
+  const unitPrice = product.price;
+  const unitOld = product.oldPrice;
   // Width must sit on the outermost wrapper: % widths inside MotionView
   // resolve against a shrink-wrapped parent and collapse the image (~70×168).
   const widthStyle = { width } as const;
 
+  const priceBlock = (lineQty = 1, showReduction = true) => (
+    <View style={[styles.priceStack, compact && styles.priceStackCompact]}>
+      <Text style={[styles.price, compact && styles.priceCompact]} numberOfLines={1}>
+        {formatFcfa(unitPrice * lineQty)}
+      </Text>
+      {showReduction && hasDeal && unitOld ? (
+        <Text style={[styles.priceOld, compact && styles.priceOldCompact]} numberOfLines={1}>
+          {formatFcfa(unitOld * lineQty)}
+        </Text>
+      ) : null}
+    </View>
+  );
+
+  const circleR = circleImage ? imageHeight / 2 : undefined;
+
   const body = (
-    <View style={styles.card}>
-      <View style={styles.cardInner}>
-        <View style={[styles.imagePanel, { height: imageHeight }]}>
-          <Pressable onPress={openProduct} style={StyleSheet.absoluteFill}>
-            <AppImage source={product.image} frameStyle={StyleSheet.absoluteFill} />
+    <View
+      style={styles.card}
+      accessibilityLabel={`${product.name}, ${formatFcfa(product.price)}${
+        outOfStock ? ', en rupture' : hasDeal && unitOld ? `, au lieu de ${formatFcfa(unitOld)}` : ''
+      }`}>
+      <View style={[styles.cardInner, circleImage && styles.cardInnerCircle]}>
+        <View
+          style={[
+            styles.imagePanel,
+            compact && styles.imagePanelCompact,
+            { height: imageHeight },
+            circleImage && [
+              styles.imagePanelCircle,
+              {
+                width: imageHeight,
+                alignSelf: 'center',
+              },
+            ],
+          ]}>
+          <Pressable
+            onPress={openProduct}
+            style={[
+              StyleSheet.absoluteFill,
+              circleImage && { borderRadius: circleR, overflow: 'hidden' },
+            ]}
+            accessibilityRole="button"
+            accessibilityLabel={`Voir ${product.name}`}>
+            <AppImage
+              source={product.image}
+              frameStyle={[StyleSheet.absoluteFill, circleImage && { borderRadius: circleR, overflow: 'hidden' }]}
+            />
+            {outOfStock ? (
+              <View style={[styles.stockOverlay, circleImage && { borderRadius: circleR }]} />
+            ) : null}
           </Pressable>
-          {product.discount ? (
-            <View style={[styles.discount, { pointerEvents: 'none' }]}>
-              <Text style={styles.discountText}>{product.discount}</Text>
+          {product.discount && !outOfStock ? (
+            <View
+              style={[
+                styles.discount,
+                compact && styles.discountCompact,
+                circleImage && styles.overlayCircle,
+                { pointerEvents: 'none' },
+              ]}>
+              <Text style={[styles.discountText, compact && styles.discountTextCompact]}>{product.discount}</Text>
+            </View>
+          ) : null}
+          {badge && (!product.discount || outOfStock) ? (
+            <View
+              style={[
+                styles.cardBadge,
+                compact && styles.discountCompact,
+                badge === 'rupture' && styles.cardBadgeRupture,
+                badge === 'local' && styles.cardBadgeLocal,
+                badge === 'nouveau' && styles.cardBadgeNouveau,
+                circleImage && styles.overlayCircle,
+                { pointerEvents: 'none' },
+              ]}>
+              <Text style={[styles.cardBadgeText, compact && styles.discountTextCompact]}>{BADGE_LABEL[badge]}</Text>
             </View>
           ) : null}
           <Pressable
-            style={styles.heart}
+            style={[styles.heart, compact && styles.heartCompact, circleImage && styles.heartCircle]}
             onPress={(e) => {
               e.stopPropagation?.();
               toggleLike();
             }}
-            hitSlop={8}
+            hitSlop={compact ? 8 : 12}
             accessibilityRole="button"
             accessibilityLabel={liked ? 'Retirer des favoris' : 'Ajouter aux favoris'}>
             <Animated.View style={{ transform: [{ scale: heartScale }] }}>
               <Ionicons
                 name={liked ? 'heart' : 'heart-outline'}
-                size={15}
-                color={liked ? colors.terracotta : '#1c1613'}
+                size={compact ? 13 : 15}
+                color={liked ? colors.terracotta : colors.text}
               />
             </Animated.View>
           </Pressable>
         </View>
         <View style={[styles.info, compact && styles.infoCompact]}>
-          <Pressable style={styles.infoText} onPress={openProduct}>
-            <Text style={styles.name} numberOfLines={1}>
+          <Pressable
+            style={styles.infoText}
+            onPress={openProduct}
+            accessibilityRole="button"
+            accessibilityLabel={`Voir ${product.name}`}>
+            <Text style={[styles.name, compact && styles.nameCompact]} numberOfLines={1}>
               {product.name}
             </Text>
             <View style={[styles.metaRow, compact && styles.metaRowCompact]}>
@@ -172,31 +286,69 @@ export const ProductCard = memo(function ProductCard({
                 {product.unit}
               </Text>
               <View style={[styles.ratingRow, compact && styles.ratingRowCompact]}>
-                <Ionicons name="star" size={compact ? 11 : 12} color={colors.gold} />
+                <Ionicons name="star" size={compact ? 10 : 12} color={colors.gold} />
                 <Text style={[styles.ratingText, compact && styles.ratingTextCompact]} numberOfLines={1}>
-                  {rating.toFixed(1)} ({reviews} avis)
+                  {compact ? rating.toFixed(1) : `${rating.toFixed(1)} (${reviews} avis)`}
                 </Text>
               </View>
             </View>
           </Pressable>
-          {qty > 0 ? (
-            <Animated.View style={[styles.row, styles.rowAnimAnchor, { transform: [{ scaleX }] }]}>
-              <Pressable style={styles.stepBtn} onPress={() => bump(decrement)}>
+          {outOfStock ? (
+            <View
+              style={[styles.row, compact && styles.rowCompact, styles.rowDisabled]}
+              accessibilityLabel="Produit en rupture">
+              <Text style={[styles.price, compact && styles.priceCompact]} numberOfLines={1}>
+                Indisponible
+              </Text>
+            </View>
+          ) : qty > 0 ? (
+            <Animated.View
+              style={[
+                styles.rowAnimAnchor,
+                compact && styles.rowAnimAnchorCompact,
+                { transform: [{ scaleX }] },
+              ]}>
+              <View
+                style={[
+                  styles.row,
+                  styles.rowInCart,
+                  compact && styles.rowCompact,
+                ]}>
+              <Pressable
+                style={[styles.stepBtn, compact && styles.stepBtnCompact]}
+                onPress={() => bump(decrement)}
+                hitSlop={10}
+                accessibilityRole="button"
+                accessibilityLabel="Diminuer la quantité">
                 <Text style={styles.stepSign}>–</Text>
               </Pressable>
-              <Text style={styles.qtyVal}>{qty}</Text>
-              <Pressable style={styles.stepBtn} onPress={() => bump(increment)}>
-                <Feather name="plus" size={14} color={colors.white} />
+              <Text style={[styles.qtyVal, compact && styles.qtyValCompact]} accessibilityLabel={`Quantité ${qty}`}>
+                {qty}
+              </Text>
+              <Pressable
+                style={[styles.stepBtn, compact && styles.stepBtnCompact]}
+                onPress={() => bump(increment)}
+                hitSlop={10}
+                accessibilityRole="button"
+                accessibilityLabel="Augmenter la quantité">
+                <Feather name="plus" size={compact ? 12 : 14} color={colors.onAccent} />
               </Pressable>
+              <View style={styles.rowDivider} />
+              {priceBlock(qty, false)}
+              </View>
             </Animated.View>
           ) : (
-            <Animated.View style={[styles.rowAnimAnchor, { transform: [{ scaleX }] }]}>
-              <Pressable style={styles.row} onPress={() => bump(increment)}>
-                <Text style={styles.price} numberOfLines={1}>
-                  {formatFcfa(product.price)}
-                </Text>
-                <View style={styles.add}>
-                  <Feather name="plus" size={16} color={colors.white} />
+            <Animated.View
+              style={[styles.rowAnimAnchor, compact && styles.rowAnimAnchorCompact, { transform: [{ scaleX }] }]}>
+              <Pressable
+                style={[styles.row, compact && styles.rowCompact, hasDeal && styles.rowDeal]}
+                onPress={() => bump(increment)}
+                hitSlop={6}
+                accessibilityRole="button"
+                accessibilityLabel={`Ajouter ${product.name} au panier`}>
+                {priceBlock(1, !circleImage)}
+                <View style={[styles.add, compact && styles.addCompact]}>
+                  <Feather name="plus" size={compact ? 14 : 16} color={colors.onAccent} />
                 </View>
               </Pressable>
             </Animated.View>
@@ -222,6 +374,7 @@ export function SearchField({
   onPress,
   active,
   showFilter = true,
+  autoFocus = false,
 }: {
   placeholder?: string;
   value?: string;
@@ -230,20 +383,57 @@ export function SearchField({
   onPress?: () => void;
   active?: boolean;
   showFilter?: boolean;
+  /** Focus the real input after mount / screen focus (search page). */
+  autoFocus?: boolean;
 }) {
   const colors = useColors();
   const styles = useMemo(() => createStyles(colors), [colors]);
+  const inputRef = useRef<TextInput>(null);
+
+  const focusNow = useCallback(() => {
+    const node = inputRef.current;
+    if (!node) return;
+    transferWebKeyboard(node);
+    node.focus();
+  }, []);
+
+  useLayoutEffect(() => {
+    if (!autoFocus || !onChangeText) return;
+    focusNow();
+  }, [autoFocus, onChangeText, focusNow]);
+
+  useFocusEffect(
+    useCallback(() => {
+      if (!autoFocus || !onChangeText) return;
+      focusNow();
+      const id = requestAnimationFrame(() => focusNow());
+      const t = setTimeout(focusNow, Platform.OS === 'web' ? 50 : 280);
+      return () => {
+        cancelAnimationFrame(id);
+        clearTimeout(t);
+      };
+    }, [autoFocus, onChangeText, focusNow]),
+  );
+
   const box = (
     <View style={[styles.search, active && styles.searchActive]}>
       <Feather name="search" size={18} color={colors.placeholder} />
       {onChangeText ? (
         <TextInput
+          ref={inputRef}
           value={value}
           onChangeText={onChangeText}
           onSubmitEditing={onSubmitEditing}
           returnKeyType="search"
           placeholder={placeholder}
           placeholderTextColor={colors.placeholder}
+          autoFocus={autoFocus}
+          showSoftInputOnFocus
+          autoCorrect={false}
+          autoCapitalize="none"
+          keyboardType="default"
+          inputMode="search"
+          // ≥16px avoids iOS Safari auto-zoom on focus (inline styles override +html CSS).
           style={styles.input}
         />
       ) : (
@@ -260,7 +450,12 @@ export function SearchField({
 
   if (onPress) {
     return (
-      <PressScale onPress={onPress} scaleTo={0.985}>
+      <PressScale
+        onPress={() => {
+          pinWebKeyboard();
+          onPress();
+        }}
+        scaleTo={0.985}>
         {box}
       </PressScale>
     );
@@ -441,7 +636,7 @@ export const CartTotalFab = memo(function CartTotalFab({ bottom = 20 }: { bottom
     <Reanimated.View entering={enterZoom(80)} style={[styles.totalFab, { bottom }]}>
       <PressScale style={styles.totalFabInner} onPress={() => navigateTab(tabPaths.cart)} scaleTo={0.96}>
         <View style={styles.totalFabIcon}>
-          <Feather name="shopping-bag" size={15} color={colors.white} />
+          <Feather name="shopping-bag" size={15} color={colors.onAccent} />
           {count > 0 ? (
             <View style={styles.totalFabBadge}>
               <Text style={styles.totalFabBadgeText}>{count > 99 ? '99+' : count}</Text>
@@ -485,6 +680,26 @@ function createStyles(colors: AppColors) {
       top: -40,
       right: -30,
     },
+    smartNavbar: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'space-between',
+      gap: 12,
+      minHeight: 42,
+    },
+    smartNavbarLeft: {
+      flex: 1,
+      minWidth: 0,
+    },
+    smartNavbarRight: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 8,
+      flexShrink: 0,
+    },
+    tabHeroNavbar: {
+      marginBottom: 16,
+    },
     tabHeroTitleRow: {
       flexDirection: 'row',
       alignItems: 'center',
@@ -521,6 +736,14 @@ function createStyles(colors: AppColors) {
       borderBottomRightRadius: 20,
       overflow: 'hidden',
     },
+    cardInnerCircle: {
+      overflow: 'visible',
+      borderRadius: 0,
+      borderTopLeftRadius: 0,
+      borderTopRightRadius: 0,
+      borderBottomLeftRadius: 0,
+      borderBottomRightRadius: 0,
+    },
     imagePanel: {
       width: '100%',
       overflow: 'hidden',
@@ -543,21 +766,81 @@ function createStyles(colors: AppColors) {
       paddingVertical: 4,
       zIndex: 2,
     },
-    discountText: { color: colors.white, fontWeight: '700', fontSize: 11 },
+    discountCompact: {
+      left: 6,
+      top: 6,
+      borderRadius: 6,
+      paddingHorizontal: 5,
+      paddingVertical: 2,
+    },
+    discountText: { color: colors.onAccent, fontWeight: '700', fontSize: 11 },
+    discountTextCompact: { fontSize: 9 },
+    cardBadge: {
+      position: 'absolute',
+      left: 12,
+      top: 12,
+      borderRadius: 8,
+      paddingHorizontal: 8,
+      paddingVertical: 4,
+      zIndex: 2,
+      backgroundColor: colors.gold,
+    },
+    cardBadgeNouveau: { backgroundColor: colors.gold },
+    cardBadgeLocal: { backgroundColor: colors.green },
+    cardBadgeRupture: { backgroundColor: colors.muted },
+    cardBadgeText: { color: colors.onAccent, fontWeight: '700', fontSize: 11 },
+    stockOverlay: {
+      ...StyleSheet.absoluteFill,
+      backgroundColor: 'rgba(28,22,19,0.38)',
+      borderRadius: 16,
+    },
+    imagePanelCompact: {
+      borderRadius: 12,
+    },
+    imagePanelCircle: {
+      overflow: 'visible',
+      borderRadius: 0,
+      backgroundColor: 'transparent',
+    },
+    overlayCircle: {
+      left: 0,
+      top: 0,
+      zIndex: 3,
+      elevation: 3,
+    },
+    heartCircle: {
+      right: -2,
+      top: -2,
+      zIndex: 3,
+      elevation: 3,
+    },
     heart: {
       position: 'absolute',
-      right: 12,
-      top: 12,
-      width: 28,
-      height: 28,
-      borderRadius: 14,
-      backgroundColor: 'rgba(255,255,255,0.82)',
+      right: 10,
+      top: 10,
+      width: 36,
+      height: 36,
+      borderRadius: 18,
+      backgroundColor: colors.white,
       alignItems: 'center',
       justifyContent: 'center',
       zIndex: 2,
+      opacity: 0.92,
+    },
+    heartCompact: {
+      right: 6,
+      top: 6,
+      width: 26,
+      height: 26,
+      borderRadius: 13,
+    },
+    rowDisabled: {
+      backgroundColor: colors.muted,
+      opacity: 0.85,
+      paddingRight: 10,
     },
     info: { paddingHorizontal: 4, paddingTop: 10, paddingBottom: 10, gap: 8 },
-    infoCompact: { paddingTop: 8, paddingBottom: 8, gap: 6 },
+    infoCompact: { paddingTop: 6, paddingBottom: 4, gap: 5, paddingHorizontal: 2 },
     infoText: { gap: 4 },
     name: {
       color: colors.text,
@@ -565,24 +848,25 @@ function createStyles(colors: AppColors) {
       lineHeight: 20,
       ...displayFont('700'),
     },
+    nameCompact: { fontSize: 12, lineHeight: 16 },
     metaRow: {
       flexDirection: 'row',
       alignItems: 'center',
       justifyContent: 'space-between',
       gap: 6,
     },
-    metaRowCompact: {},
+    metaRowCompact: { gap: 2 },
     unit: { color: colors.muted, fontSize: 12, flexShrink: 1 },
-    unitCompact: { fontSize: 11 },
+    unitCompact: { fontSize: 10 },
     ratingRow: { flexDirection: 'row', alignItems: 'center', gap: 3, flexShrink: 1 },
-    ratingRowCompact: { gap: 2 },
+    ratingRowCompact: { gap: 2, flexShrink: 0 },
     ratingText: { color: colors.muted, fontSize: 11, fontWeight: '600', flexShrink: 1 },
-    ratingTextCompact: { fontSize: 10 },
+    ratingTextCompact: { fontSize: 9 },
     row: {
       flexDirection: 'row',
       alignItems: 'center',
       justifyContent: 'flex-start',
-      alignSelf: 'flex-start',
+      alignSelf: 'flex-end',
       gap: 6,
       backgroundColor: colors.gold,
       borderRadius: 12,
@@ -590,12 +874,64 @@ function createStyles(colors: AppColors) {
       paddingRight: 8,
       paddingVertical: 6,
       minHeight: 36,
+      maxWidth: '100%',
+    },
+    rowCompact: {
+      alignSelf: 'flex-end',
+      justifyContent: 'flex-start',
+      gap: 4,
+      borderRadius: 10,
+      paddingLeft: 7,
+      paddingRight: 5,
+      paddingVertical: 4,
+      minHeight: 30,
+    },
+    rowInCart: {
+      paddingRight: 10,
+      gap: 4,
+    },
+    rowDeal: {
+      paddingVertical: 5,
     },
     rowAnimAnchor: {
-      alignSelf: 'flex-start',
-      transformOrigin: 'left center',
+      alignSelf: 'flex-end',
+      transformOrigin: 'right center',
+      maxWidth: '100%',
     },
-    price: { color: colors.white, fontWeight: '700', fontSize: 11, flexShrink: 0, opacity: 1 },
+    rowAnimAnchorCompact: {
+      alignSelf: 'flex-end',
+      maxWidth: '100%',
+    },
+    rowDivider: {
+      width: 1,
+      alignSelf: 'stretch',
+      backgroundColor: 'rgba(255,255,255,0.35)',
+      marginHorizontal: 2,
+      marginVertical: 2,
+    },
+    priceStack: {
+      flexDirection: 'row',
+      alignItems: 'baseline',
+      gap: 5,
+      flexShrink: 1,
+      minWidth: 0,
+    },
+    priceStackCompact: {
+      flexDirection: 'row',
+      alignItems: 'baseline',
+      gap: 4,
+      flexShrink: 1,
+    },
+    price: { color: colors.onAccent, fontWeight: '700', fontSize: 13, flexShrink: 1, opacity: 1 },
+    priceCompact: { fontSize: 12 },
+    priceOld: {
+      color: 'rgba(255,255,255,0.72)',
+      fontWeight: '600',
+      fontSize: 12,
+      textDecorationLine: 'line-through',
+      flexShrink: 1,
+    },
+    priceOldCompact: { fontSize: 10 },
     add: {
       width: 20,
       height: 20,
@@ -605,14 +941,25 @@ function createStyles(colors: AppColors) {
       backgroundColor: 'transparent',
       opacity: 1,
     },
+    addCompact: { width: 16, height: 16 },
     stepBtn: {
       width: 24,
       height: 24,
       alignItems: 'center',
       justifyContent: 'center',
+      flexShrink: 0,
     },
-    stepSign: { color: colors.white, fontWeight: '700', fontSize: 16, lineHeight: 18 },
-    qtyVal: { color: colors.white, fontWeight: '700', fontSize: 13, minWidth: 16, textAlign: 'center' },
+    stepBtnCompact: { width: 18, height: 18 },
+    stepSign: { color: colors.onAccent, fontWeight: '700', fontSize: 16, lineHeight: 18 },
+    qtyVal: {
+      color: colors.onAccent,
+      fontWeight: '700',
+      fontSize: 13,
+      minWidth: 16,
+      textAlign: 'center',
+      flexShrink: 0,
+    },
+    qtyValCompact: { fontSize: 11, minWidth: 12 },
     search: {
       backgroundColor: colors.white,
       borderWidth: 1,
@@ -625,8 +972,16 @@ function createStyles(colors: AppColors) {
       gap: 12,
     },
     searchActive: { borderColor: colors.gold, borderWidth: 1.5 },
-    searchPlaceholder: { flex: 1, color: colors.placeholder, fontSize: 14 },
-    input: { flex: 1, fontSize: 14, color: colors.text, ...(Platform.OS === 'web' ? { outlineStyle: 'none' as never } : {}) },
+    searchPlaceholder: { flex: 1, color: colors.placeholder, fontSize: 15 },
+    input: {
+      flex: 1,
+      // Keep ≥16 so mobile browsers don't zoom the page when the field focuses.
+      fontSize: 16,
+      color: colors.text,
+      padding: 0,
+      margin: 0,
+      ...(Platform.OS === 'web' ? { outlineStyle: 'none' as never } : {}),
+    },
     tilePress: { minWidth: 0 },
     tilePressed: { opacity: 0.92, transform: [{ scale: 0.98 }] },
     tile: {
@@ -711,7 +1066,7 @@ function createStyles(colors: AppColors) {
       alignItems: 'center',
       justifyContent: 'center',
     },
-    ctaText: { color: colors.white, fontWeight: '700', fontSize: 16 },
+    ctaText: { color: colors.onAccent, fontWeight: '700', fontSize: 16 },
     iconCircle: {
       width: 42,
       height: 42,
@@ -788,7 +1143,7 @@ function createStyles(colors: AppColors) {
       gap: 8,
     },
     totalFabText: {
-      color: colors.white,
+      color: colors.onAccent,
       fontWeight: '800',
       fontSize: 15,
       letterSpacing: 0.2,

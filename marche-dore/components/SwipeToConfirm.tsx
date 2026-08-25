@@ -150,7 +150,7 @@ export const SwipeToConfirm = memo(function SwipeToConfirm({
       </Animated.View>
 
       <Animated.View style={[styles.doneCopy, { opacity: doneOpacity, pointerEvents: 'none' }]}>
-        <Feather name="check" size={18} color={colors.white} />
+        <Feather name="check" size={18} color={colors.onAccent} />
         <Text style={styles.doneText}>Confirmé</Text>
       </Animated.View>
 
@@ -195,7 +195,7 @@ function createStyles(colors: AppColors) {
       right: 88,
       justifyContent: 'center',
     },
-    title: { color: colors.white, fontSize: 15, fontWeight: '800' },
+    title: { color: colors.onAccent, fontSize: 15, fontWeight: '800' },
     subtitle: { color: 'rgba(255,255,255,0.82)', fontSize: 11, fontWeight: '600', marginTop: 2 },
     doneCopy: {
       position: 'absolute',
@@ -206,7 +206,7 @@ function createStyles(colors: AppColors) {
       justifyContent: 'center',
       gap: 8,
     },
-    doneText: { color: colors.white, fontSize: 15, fontWeight: '800' },
+    doneText: { color: colors.onAccent, fontSize: 15, fontWeight: '800' },
     amountWrap: {
       position: 'absolute',
       right: 16,
@@ -214,7 +214,7 @@ function createStyles(colors: AppColors) {
       bottom: 0,
       justifyContent: 'center',
     },
-    amount: { color: colors.white, fontSize: 16, fontWeight: '800' },
+    amount: { color: colors.onAccent, fontSize: 16, fontWeight: '800' },
     thumb: {
       position: 'absolute',
       left: PAD,
@@ -222,7 +222,7 @@ function createStyles(colors: AppColors) {
       width: THUMB,
       height: 64 - PAD * 2,
       borderRadius: 14,
-      backgroundColor: colors.white,
+      backgroundColor: '#ffffff',
       flexDirection: 'row',
       alignItems: 'center',
       justifyContent: 'center',

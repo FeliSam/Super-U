@@ -2,15 +2,32 @@ import { IconCircle, Screen, Page } from '@/components/ui';
 import { MotionView, PressScale } from '@/components/motion';
 import { SwipeToConfirm } from '@/components/SwipeToConfirm';
 import { displayFont, type AppColors } from '@/constants/theme';
+import { useAddresses } from '@/context/AddressesContext';
 import { useColors } from '@/context/ThemeContext';
 import { useCart } from '@/context/CartContext';
 import { useCheckoutPayment, type PaymentId } from '@/context/CheckoutPaymentContext';
 import { useOrders } from '@/context/OrdersContext';
+import { usePayments } from '@/context/PaymentsContext';
+import { useStores } from '@/context/StoresContext';
+import { useProfile } from '@/context/ProfileContext';
+import { SUPER_U_BRAND } from '@/data/superU';
+import { formatDistanceKm, formatDurationMin } from '@/lib/deliveryRouting';
 import { formatFcfa } from '@/lib/format';
+import { noZoomInputStyle } from '@/lib/noZoomInput';
+import { useDeliveryEstimate } from '@/lib/useDeliveryEstimate';
 import { Feather } from '@expo/vector-icons';
 import { Href, router } from 'expo-router';
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
+import {
+  Alert,
+  Platform,
+  Pressable,
+  ScrollView,
+  StyleSheet,
+  Text,
+  TextInput,
+  View,
+} from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 type DayId = 'today' | 'tomorrow' | 'day2';
@@ -19,10 +36,89 @@ type TimeSlot = {
   id: string;
   label: string;
   hint?: string;
+  /** Heure d’arrivée estimée (ramassage + trajet + marge) */
+  etaNote?: string;
   feeNote?: string;
   urgent?: boolean;
   express?: boolean;
 };
+
+function formatArrivalClock(date: Date) {
+  return date.toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' });
+}
+
+function arrivalWindowLabel(fromMin: number, toMin: number) {
+  const now = Date.now();
+  const a = new Date(now + fromMin * 60_000);
+  const b = new Date(now + toMin * 60_000);
+  return `Arrivée ≈ ${formatArrivalClock(a)} – ${formatArrivalClock(b)}`;
+}
+
+const EXPRESS_SLOTS: TimeSlot[] = [
+  { id: 'after-1-2', label: '1h – 2h', hint: 'Après commande', express: true },
+  {
+    id: 'urgent',
+    label: 'Express',
+    hint: 'Dès que possible',
+    feeNote: '+ double frais de livraison',
+    urgent: true,
+    express: true,
+  },
+];
+
+/** Créneaux express : libellés fixes + ETA (préparation + trajet OSRM + marge). */
+function buildExpressSlots(opts: {
+  distanceMeters: number;
+  durationSeconds: number;
+  loading: boolean;
+  unavailable: boolean;
+  approximated: boolean;
+}): TimeSlot[] {
+  const { distanceMeters, durationSeconds, loading, unavailable, approximated } = opts;
+  const [comfort, urgent] = EXPRESS_SLOTS;
+
+  if (loading) {
+    return [
+      { ...comfort, etaNote: 'Calcul du trajet…' },
+      { ...urgent, etaNote: 'Calcul du trajet…' },
+    ];
+  }
+
+  // Fallback si pas de coords / échec : fenêtre 1h–2h générique
+  if (unavailable || !durationSeconds || durationSeconds <= 0) {
+    return [
+      { ...comfort, etaNote: arrivalWindowLabel(60, 120) },
+      { ...urgent, etaNote: arrivalWindowLabel(35, 55) },
+    ];
+  }
+
+  const roadMin = Math.max(1, Math.round(durationSeconds / 60));
+  const pickupMin = 20; // ramassage / préparation magasin
+  const marginComfort = 15;
+  const marginUrgent = 5;
+
+  const comfortLow = pickupMin + roadMin + marginComfort;
+  const comfortHigh = Math.max(comfortLow + 25, pickupMin + roadMin + 55);
+  const urgentLow = Math.max(18, pickupMin + roadMin + marginUrgent - 5);
+  const urgentHigh = pickupMin + roadMin + marginUrgent + 12;
+
+  const approx = approximated ? ' · approx.' : '';
+  const dist = formatDistanceKm(distanceMeters);
+
+  return [
+    {
+      ...comfort,
+      hint: 'Après commande',
+      etaNote: `${arrivalWindowLabel(comfortLow, comfortHigh)}${approx}`,
+    },
+    {
+      ...urgent,
+      hint: `${dist} · trajet ~${formatDurationMin(durationSeconds)}`,
+      etaNote: `${arrivalWindowLabel(urgentLow, urgentHigh)}${approx}`,
+      feeNote: '+ double frais de livraison',
+    },
+  ];
+}
 
 function buildDays(now = new Date()) {
   const short = ['Dim', 'Lun', 'Mar', 'Mer', 'Jeu', 'Ven', 'Sam'];
@@ -57,26 +153,14 @@ function buildHourSlots(dayId: DayId, now = new Date()): TimeSlot[] {
   return slots;
 }
 
-const EXPRESS_SLOTS: TimeSlot[] = [
-  { id: 'after-1-2', label: '1h – 2h', hint: 'Après commande', express: true },
-  {
-    id: 'urgent',
-    label: '30 – 45 min',
-    hint: 'Livraison urgente',
-    feeNote: '+ double frais de livraison',
-    urgent: true,
-    express: true,
-  },
-];
-
 type PaymentIdLocal = PaymentId;
 
 function buildPayments(colors: AppColors) {
   return [
-    { id: 'om' as const, label: 'Orange Money', hint: 'Mobile Money', icon: 'smartphone' as const, accent: '#ff7900', soft: '#fff3e8' },
-    { id: 'wave' as const, label: 'MTN MoMo', hint: 'Mobile Money', icon: 'zap' as const, accent: '#1c64f2', soft: '#e8f0fe' },
+    { id: 'om' as const, label: 'Orange Money', hint: 'Mobile Money', icon: 'smartphone' as const, accent: '#ff7900', soft: colors.blush },
+    { id: 'wave' as const, label: 'MTN MoMo', hint: 'Mobile Money', icon: 'zap' as const, accent: '#1c64f2', soft: colors.cream },
     { id: 'card' as const, label: 'Carte', hint: 'Visa · Mastercard', icon: 'credit-card' as const, accent: colors.gold, soft: colors.cream },
-    { id: 'cod' as const, label: 'Livraison', hint: 'Espèces au livreur', icon: 'package' as const, accent: colors.green, soft: '#eaf4ec' },
+    { id: 'cod' as const, label: 'Livraison', hint: 'Espèces au livreur', icon: 'package' as const, accent: colors.green, soft: colors.successSoft },
   ];
 }
 
@@ -89,18 +173,45 @@ export default function CheckoutScreen() {
   const { subtotal, delivery, discount, count, lines, promoCode, clear, ready: cartReady } = useCart();
   const { isReady, detailFor, setup, clearSetup } = useCheckoutPayment();
   const { placeOrder } = useOrders();
+  const { defaultAddress } = useAddresses();
+  const { selectedStore } = useStores();
+  const { defaultMethod, methodById } = usePayments();
+  const { profile } = useProfile();
+  const routeEstimate = useDeliveryEstimate(
+    selectedStore.coordinate,
+    defaultAddress.coordinate,
+  );
   const days = useMemo(() => buildDays(), []);
   const [dayId, setDayId] = useState<DayId>('today');
   const hourSlots = useMemo(() => buildHourSlots(dayId), [dayId]);
+  const expressSlots = useMemo(
+    () =>
+      buildExpressSlots({
+        distanceMeters: routeEstimate.distanceMeters,
+        durationSeconds: routeEstimate.durationSeconds,
+        loading: routeEstimate.loading,
+        unavailable: routeEstimate.unavailable,
+        approximated: routeEstimate.approximated,
+      }),
+    [
+      routeEstimate.distanceMeters,
+      routeEstimate.durationSeconds,
+      routeEstimate.loading,
+      routeEstimate.unavailable,
+      routeEstimate.approximated,
+    ],
+  );
   const [slotId, setSlotId] = useState('after-1-2');
-  const [pay, setPay] = useState<PaymentIdLocal>(setup?.methodId ?? 'om');
+  const [pay, setPay] = useState<PaymentIdLocal>(
+    (setup?.methodId ?? (defaultMethod?.id as PaymentIdLocal) ?? 'om') as PaymentIdLocal,
+  );
   const [comment, setComment] = useState('');
   const placingRef = useRef(false);
 
   const allSlots = useMemo(() => {
-    if (dayId === 'today') return [...EXPRESS_SLOTS, ...hourSlots];
+    if (dayId === 'today') return [...expressSlots, ...hourSlots];
     return hourSlots;
-  }, [dayId, hourSlots]);
+  }, [dayId, hourSlots, expressSlots]);
 
   useEffect(() => {
     if (!allSlots.some((s) => s.id === slotId)) {
@@ -110,13 +221,15 @@ export default function CheckoutScreen() {
 
   useEffect(() => {
     if (setup?.ready && setup.methodId) setPay(setup.methodId);
-  }, [setup]);
+    else if (defaultMethod?.id) setPay(defaultMethod.id as PaymentIdLocal);
+  }, [setup, defaultMethod?.id]);
 
   const selectedPay = payments.find((p) => p.id === pay) ?? payments[0];
   const selectedDay = days.find((d) => d.id === dayId) ?? days[0];
   const selectedSlot = allSlots.find((s) => s.id === slotId) ?? allSlots[0];
   const payReady = isReady(pay);
-  const payDetail = detailFor(pay);
+  const walletDetail = methodById(pay)?.detail;
+  const payDetail = detailFor(pay) ?? walletDetail ?? null;
   const isUrgent = slotId === 'urgent';
   const deliveryFee = delivery > 0 && isUrgent ? delivery * 2 : delivery;
   const checkoutTotal = Math.max(0, subtotal + deliveryFee - discount);
@@ -126,9 +239,19 @@ export default function CheckoutScreen() {
     router.push(`/payment-setup/${id}` as Href);
   };
 
-  const confirmOrder = () => {
+  const confirmOrder = async () => {
     if (!lines.length || !selectedSlot || placingRef.current) return;
-    const order = placeOrder({
+    if (!defaultAddress?.line?.trim()) {
+      Alert.alert('Adresse requise', 'Choisissez une adresse de livraison avant de confirmer.');
+      return;
+    }
+    if (!payReady) {
+      Alert.alert('Paiement incomplet', `Configurez ${selectedPay.label} pour continuer.`);
+      openPaymentSetup(pay);
+      return;
+    }
+    placingRef.current = true;
+    const order = await placeOrder({
       lines,
       subtotal,
       delivery: deliveryFee,
@@ -143,10 +266,16 @@ export default function CheckoutScreen() {
       paymentLabel: selectedPay.label,
       paymentDetail: payDetail,
       comment,
-    });
-    if (!order) return;
-    // Prevent the empty-cart effect from stealing navigation to /cart.
-    placingRef.current = true;
+      addressLabel: defaultAddress.label,
+      addressLine: defaultAddress.line,
+      addressCity: defaultAddress.city,
+      addressPhone: defaultAddress.phone,
+      addressCoordinate: defaultAddress.coordinate,
+      storeId: selectedStore.id });
+    if (!order) {
+      placingRef.current = false;
+      return;
+    }
     clear();
     clearSetup();
     router.replace(`/order-success?id=${order.id}` as Href);
@@ -191,13 +320,48 @@ export default function CheckoutScreen() {
               </View>
               <View style={styles.cardBody}>
                 <View style={styles.nameRow}>
-                  <Text style={styles.name}>Amina Diallo</Text>
+                  <Text style={styles.name}>
+                    {profile.firstName} {profile.lastName}
+                  </Text>
                   <View style={styles.badge}>
-                    <Text style={styles.badgeText}>Par défaut</Text>
+                    <Text style={styles.badgeText}>{defaultAddress.label}</Text>
                   </View>
                 </View>
-                <Text style={styles.meta}>Rue 12, Ganhi</Text>
-                <Text style={styles.meta}>+229 97 12 34 56</Text>
+                <Text style={styles.meta}>{defaultAddress.line}</Text>
+                <Text style={styles.meta}>{defaultAddress.phone}</Text>
+              </View>
+              <Feather name="chevron-right" size={18} color={colors.placeholder} />
+            </Pressable>
+          </View>
+
+          <View style={styles.section}>
+            <View style={styles.sectionHead}>
+              <Text style={styles.h}>Magasin Super U</Text>
+              <Pressable onPress={() => router.push('/account/stores')}>
+                <Text style={styles.link}>Choisir</Text>
+              </Pressable>
+            </View>
+            <Pressable style={styles.addressCard} onPress={() => router.push('/account/stores')}>
+              <View style={[styles.pin, { backgroundColor: SUPER_U_BRAND.red }]}>
+                <Text style={styles.storePinText}>U</Text>
+              </View>
+              <View style={styles.cardBody}>
+                <Text style={styles.name}>{selectedStore.name}</Text>
+                <Text style={styles.meta}>
+                  {selectedStore.cityLabel} · {selectedStore.address}
+                </Text>
+                <View style={styles.routePill}>
+                  <Feather name="navigation" size={12} color={colors.gold} />
+                  <Text style={styles.routePillText} numberOfLines={2}>
+                    {routeEstimate.loading
+                      ? 'Calcul distance / durée…'
+                      : routeEstimate.unavailable
+                        ? 'Préparation & départ livreur'
+                        : routeEstimate.approximated
+                          ? `Approx. ${formatDistanceKm(routeEstimate.distanceMeters)} · ~${formatDurationMin(routeEstimate.durationSeconds)}`
+                          : `${formatDistanceKm(routeEstimate.distanceMeters)} · ~${formatDurationMin(routeEstimate.durationSeconds)} → ${defaultAddress.label}`}
+                  </Text>
+                </View>
               </View>
               <Feather name="chevron-right" size={18} color={colors.placeholder} />
             </Pressable>
@@ -229,7 +393,7 @@ export default function CheckoutScreen() {
                 <>
                   <Text style={[styles.blockLabel, styles.blockLabelSpaced]}>Express</Text>
                   <View style={styles.expressRow}>
-                    {EXPRESS_SLOTS.map((slot, i) => {
+                    {expressSlots.map((slot, i) => {
                       const on = slotId === slot.id;
                       return (
                         <MotionView key={slot.id} index={i} preset="zoom" style={{ flex: 1 }}>
@@ -242,7 +406,8 @@ export default function CheckoutScreen() {
                               on && slot.urgent && styles.expressUrgentOn,
                             ]}
                             onPress={() => setSlotId(slot.id)}
-                            scaleTo={0.97}>
+                            scaleTo={0.97}
+                            accessibilityLabel={`${slot.label}. ${slot.hint ?? ''}. ${slot.etaNote ?? ''}`}>
                             <View
                               style={[
                                 styles.expressIcon,
@@ -264,6 +429,9 @@ export default function CheckoutScreen() {
                             </View>
                             <Text style={[styles.expressLabel, on && styles.expressLabelOn]}>{slot.label}</Text>
                             <Text style={[styles.expressHint, on && styles.expressHintOn]}>{slot.hint}</Text>
+                            {slot.etaNote ? (
+                              <Text style={[styles.expressEta, on && styles.expressEtaOn]}>{slot.etaNote}</Text>
+                            ) : null}
                             {slot.feeNote ? (
                               <Text style={[styles.expressFee, on && styles.expressFeeOn]}>{slot.feeNote}</Text>
                             ) : null}
@@ -317,10 +485,10 @@ export default function CheckoutScreen() {
                 return (
                   <MotionView key={p.id} index={i} preset="right">
                     <PressScale
-                      style={[styles.payCard, on && { borderColor: p.accent, backgroundColor: p.soft }]}
+                      style={[styles.payCard, on && { backgroundColor: p.soft }]}
                       onPress={() => openPaymentSetup(p.id)}
                       scaleTo={0.97}>
-                      <View style={[styles.payIcon, { backgroundColor: on ? p.accent : colors.white }]}>
+                      <View style={[styles.payIcon, { backgroundColor: on ? p.accent : colors.cream }]}>
                         <Feather name={p.icon} size={20} color={on ? colors.white : p.accent} />
                       </View>
                       <Text style={styles.payLabel} numberOfLines={1}>
@@ -332,8 +500,8 @@ export default function CheckoutScreen() {
                       <View
                         style={[
                           styles.payDot,
-                          on && { backgroundColor: p.accent, borderColor: p.accent },
-                          ready && !on && { borderColor: colors.green, backgroundColor: colors.green },
+                          on && { backgroundColor: p.accent },
+                          ready && !on && { backgroundColor: colors.green },
                         ]}
                       />
                     </PressScale>
@@ -377,7 +545,7 @@ export default function CheckoutScreen() {
                 <Text style={styles.commentCount}>{comment.length}/160</Text>
               </View>
               <TextInput
-                style={styles.commentInput}
+                style={[styles.commentInput, noZoomInputStyle]}
                 value={comment}
                 onChangeText={(t) => setComment(t.slice(0, 160))}
                 placeholder="Ex. Sonnez à l’interphone, laissez au gardien…"
@@ -429,7 +597,7 @@ export default function CheckoutScreen() {
         <View style={[styles.footer, { paddingBottom: Math.max(16, insets.bottom + 10) }]}>
           {!payReady ? (
             <PressScale style={styles.setupCta} onPress={() => openPaymentSetup(pay)} scaleTo={0.98}>
-              <Feather name={selectedPay.icon} size={18} color={colors.white} />
+              <Feather name={selectedPay.icon} size={18} color={colors.onAccent} />
               <Text style={styles.setupCtaText}>Configurer {selectedPay.label}</Text>
             </PressScale>
           ) : (
@@ -466,8 +634,7 @@ function createStyles(colors: AppColors) {
     justifyContent: 'space-between',
     paddingHorizontal: 20,
     paddingBottom: 10,
-    gap: 10,
-  },
+    gap: 10 },
   headerCenter: { flex: 1, alignItems: 'center' },
   headerSpacer: { width: 40 },
   title: { color: colors.text, fontSize: 17, ...displayFont('700') },
@@ -478,8 +645,7 @@ function createStyles(colors: AppColors) {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    gap: 8,
-  },
+    gap: 8 },
   h: { color: colors.text, fontSize: 16, fontWeight: '800' },
   link: { color: colors.gold, fontSize: 13, fontWeight: '700' },
   sectionHint: {
@@ -487,90 +653,83 @@ function createStyles(colors: AppColors) {
     fontSize: 12,
     fontWeight: '600',
     flexShrink: 1,
-    textAlign: 'right',
-  },
+    textAlign: 'right' },
   addressCard: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 12,
     backgroundColor: colors.white,
-    borderWidth: 1,
-    borderColor: colors.border,
     borderRadius: 20,
-    padding: 14,
-  },
+    padding: 14 },
   pin: {
     width: 44,
     height: 44,
     borderRadius: 14,
     backgroundColor: colors.cream,
     alignItems: 'center',
-    justifyContent: 'center',
-  },
-  cardBody: { flex: 1, gap: 2 },
+    justifyContent: 'center' },
+  storePinText: {
+    color: '#ffffff',
+    fontSize: 20,
+    fontWeight: '900' },
+  cardBody: { flex: 1, gap: 4 },
   nameRow: { flexDirection: 'row', alignItems: 'center', gap: 8, flexWrap: 'wrap' },
   name: { color: colors.text, fontWeight: '700', fontSize: 15 },
   badge: {
     backgroundColor: colors.blush,
     borderRadius: 8,
     paddingHorizontal: 7,
-    paddingVertical: 2,
-  },
+    paddingVertical: 2 },
   badgeText: { color: colors.terracotta, fontSize: 10, fontWeight: '800' },
   meta: { color: colors.muted, fontSize: 13 },
+  routePill: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    alignSelf: 'flex-start',
+    marginTop: 4,
+    backgroundColor: colors.cream,
+    borderRadius: 10,
+    paddingHorizontal: 10,
+    paddingVertical: 6 },
+  routePillText: { color: colors.text, fontSize: 12, fontWeight: '700', flexShrink: 1 },
   block: {
     backgroundColor: colors.white,
-    borderWidth: 1,
-    borderColor: colors.border,
     borderRadius: 20,
     padding: 14,
-    gap: 10,
-  },
+    gap: 10 },
   blockLabel: {
     color: colors.muted,
     fontSize: 11,
     fontWeight: '800',
     letterSpacing: 0.4,
-    textTransform: 'uppercase',
-  },
+    textTransform: 'uppercase' },
   blockLabelSpaced: { marginTop: 4 },
   pills: { flexDirection: 'row', gap: 8 },
   pill: {
     flex: 1,
     minHeight: 40,
     borderRadius: 12,
-    borderWidth: 1,
-    borderColor: colors.border,
     backgroundColor: colors.bg,
     alignItems: 'center',
     justifyContent: 'center',
-    paddingHorizontal: 8,
-  },
-  pillOn: { backgroundColor: colors.gold, borderColor: colors.gold },
+    paddingHorizontal: 8 },
+  pillOn: { backgroundColor: colors.gold },
   pillText: { color: colors.muted, fontSize: 13, fontWeight: '700' },
-  pillTextOn: { color: colors.white },
+  pillTextOn: { color: colors.onAccent },
   expressRow: { flexDirection: 'row', gap: 10 },
   expressCard: {
     flex: 1,
     borderRadius: 16,
-    borderWidth: 1.5,
-    borderColor: colors.border,
     backgroundColor: colors.bg,
     padding: 12,
-    gap: 6,
-  },
+    gap: 6 },
   expressCardOn: {
-    backgroundColor: colors.gold,
-    borderColor: colors.gold,
-  },
+    backgroundColor: colors.gold },
   expressUrgent: {
-    borderColor: colors.terracotta,
-    backgroundColor: colors.blush,
-  },
+    backgroundColor: colors.blush },
   expressUrgentOn: {
-    backgroundColor: colors.terracotta,
-    borderColor: colors.terracotta,
-  },
+    backgroundColor: colors.terracotta },
   expressIcon: {
     width: 30,
     height: 30,
@@ -578,12 +737,19 @@ function createStyles(colors: AppColors) {
     backgroundColor: colors.white,
     alignItems: 'center',
     justifyContent: 'center',
-    marginBottom: 2,
-  },
+    marginBottom: 2 },
   expressLabel: { color: colors.text, fontSize: 15, fontWeight: '800' },
-  expressLabelOn: { color: colors.white },
+  expressLabelOn: { color: colors.onAccent },
   expressHint: { color: colors.muted, fontSize: 11, fontWeight: '600' },
   expressHintOn: { color: 'rgba(255,255,255,0.88)' },
+  expressEta: {
+    color: colors.text,
+    fontSize: 11,
+    fontWeight: '700',
+    marginTop: 2,
+    lineHeight: 14,
+  },
+  expressEtaOn: { color: colors.onAccent },
   expressFee: { color: colors.terracotta, fontSize: 10, fontWeight: '700', marginTop: 2 },
   expressFeeOn: { color: 'rgba(255,255,255,0.95)' },
   slotRow: { gap: 8, paddingRight: 2 },
@@ -592,35 +758,26 @@ function createStyles(colors: AppColors) {
     paddingHorizontal: 14,
     paddingVertical: 11,
     borderRadius: 12,
-    borderWidth: 1,
-    borderColor: colors.border,
     backgroundColor: colors.bg,
     alignItems: 'center',
-    justifyContent: 'center',
-  },
+    justifyContent: 'center' },
   emptyHours: { color: colors.muted, fontSize: 12, lineHeight: 17 },
   payRow: { gap: 10, paddingRight: 4 },
   payCard: {
     width: 124,
     borderRadius: 18,
-    borderWidth: 1.5,
-    borderColor: colors.border,
     backgroundColor: colors.white,
     paddingHorizontal: 12,
     paddingTop: 14,
     paddingBottom: 12,
-    gap: 5,
-  },
+    gap: 5 },
   payIcon: {
     width: 42,
     height: 42,
     borderRadius: 14,
     alignItems: 'center',
     justifyContent: 'center',
-    borderWidth: 1,
-    borderColor: colors.border,
-    marginBottom: 2,
-  },
+    marginBottom: 2 },
   payLabel: { color: colors.text, fontSize: 13, fontWeight: '800' },
   payHint: { color: colors.muted, fontSize: 10, fontWeight: '600' },
   payDot: {
@@ -630,27 +787,20 @@ function createStyles(colors: AppColors) {
     width: 10,
     height: 10,
     borderRadius: 5,
-    borderWidth: 1.5,
-    borderColor: colors.border,
-    backgroundColor: 'transparent',
-  },
+    backgroundColor: colors.border },
   paySummary: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 12,
     backgroundColor: colors.white,
-    borderWidth: 1,
-    borderColor: colors.border,
     borderRadius: 16,
-    padding: 12,
-  },
+    padding: 12 },
   paySummaryIcon: {
     width: 40,
     height: 40,
     borderRadius: 12,
     alignItems: 'center',
-    justifyContent: 'center',
-  },
+    justifyContent: 'center' },
   paySummaryText: { flex: 1, gap: 2 },
   paySummaryTitle: { color: colors.text, fontSize: 14, fontWeight: '800' },
   paySummaryDetail: { color: colors.muted, fontSize: 12, fontWeight: '600' },
@@ -663,17 +813,13 @@ function createStyles(colors: AppColors) {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
-    gap: 10,
-  },
-  setupCtaText: { color: colors.white, fontSize: 15, fontWeight: '800' },
+    gap: 10 },
+  setupCtaText: { color: colors.onAccent, fontSize: 15, fontWeight: '800' },
   commentCard: {
     backgroundColor: colors.white,
-    borderWidth: 1,
-    borderColor: colors.border,
     borderRadius: 20,
     padding: 14,
-    gap: 10,
-  },
+    gap: 10 },
   commentHead: { flexDirection: 'row', alignItems: 'center', gap: 8 },
   commentIcon: {
     width: 28,
@@ -681,25 +827,22 @@ function createStyles(colors: AppColors) {
     borderRadius: 10,
     backgroundColor: colors.cream,
     alignItems: 'center',
-    justifyContent: 'center',
-  },
+    justifyContent: 'center' },
   commentTitle: { flex: 1, color: colors.text, fontSize: 13, fontWeight: '700' },
   commentCount: { color: colors.placeholder, fontSize: 11, fontWeight: '600' },
   commentInput: {
     minHeight: 84,
     color: colors.text,
-    fontSize: 14,
-    lineHeight: 20,
+    fontSize: 16,
+    lineHeight: 22,
     padding: 0,
+    ...(Platform.OS === 'web' ? ({ fontSize: '16px' } as object) : null),
   },
   summary: {
     backgroundColor: colors.white,
-    borderWidth: 1,
-    borderColor: colors.border,
     borderRadius: 20,
     padding: 16,
-    gap: 12,
-  },
+    gap: 12 },
   summaryTitle: { color: colors.text, fontSize: 15, fontWeight: '800' },
   recapChips: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
   recapChip: {
@@ -709,15 +852,12 @@ function createStyles(colors: AppColors) {
     backgroundColor: colors.bg,
     borderRadius: 999,
     paddingHorizontal: 10,
-    paddingVertical: 6,
-    borderWidth: 1,
-    borderColor: colors.border,
-  },
+    paddingVertical: 6 },
   recapChipText: { color: colors.text, fontSize: 11, fontWeight: '700' },
   row: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
   sumLabel: { color: colors.muted, fontSize: 14 },
   sumVal: { color: colors.text, fontWeight: '700', fontSize: 14 },
-  hr: { height: 1, backgroundColor: colors.border },
+  hr: { height: StyleSheet.hairlineWidth, backgroundColor: colors.border },
   totalLabel: { color: colors.text, fontSize: 16, fontWeight: '800' },
   total: { color: colors.terracotta, fontSize: 20, fontWeight: '800' },
   secure: {
@@ -725,15 +865,10 @@ function createStyles(colors: AppColors) {
     alignItems: 'center',
     justifyContent: 'center',
     gap: 8,
-    paddingBottom: 4,
-  },
+    paddingBottom: 4 },
   secureText: { color: colors.muted, fontSize: 12, fontWeight: '600' },
   footer: {
     paddingHorizontal: 16,
     paddingTop: 12,
-    borderTopWidth: 1,
-    borderTopColor: colors.border,
-    backgroundColor: colors.white,
-  },
-});
+    backgroundColor: colors.white } });
 }

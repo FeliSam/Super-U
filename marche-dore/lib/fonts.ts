@@ -9,6 +9,7 @@ import {
   Syne_700Bold,
   Syne_800ExtraBold,
 } from '@expo-google-fonts/syne';
+import { INPUT_FONT_SIZE, noZoomInputStyle } from '@/lib/noZoomInput';
 import * as Font from 'expo-font';
 import { Platform, Text, TextInput } from 'react-native';
 import { fontFamilies } from '@/constants/typography';
@@ -25,21 +26,14 @@ const brandFonts = {
 
 let applied = false;
 
-/** Inject web CSS so weight axes resolve cleanly with family names. */
+/** Inject web base font stack — brand faces come from Font.loadAsync (bundled). */
 function injectWebFontCss() {
   if (Platform.OS !== 'web' || typeof document === 'undefined') return;
-  const id = 'marche-dore-fonts';
+  const id = 'marche-dore-fonts-base';
   if (document.getElementById(id)) return;
 
-  const link = document.createElement('link');
-  link.id = id;
-  link.rel = 'stylesheet';
-  link.href =
-    'https://fonts.googleapis.com/css2?family=DM+Sans:ital,opsz,wght@0,9..40,400;0,9..40,500;0,9..40,600;0,9..40,700;1,9..40,400&family=Syne:wght@600;700;800&display=swap';
-  document.head.appendChild(link);
-
   const style = document.createElement('style');
-  style.id = `${id}-base`;
+  style.id = id;
   style.textContent = `
     html, body, #root, input, textarea, button, select {
       font-family: ${fontFamilies.body}, system-ui, -apple-system, sans-serif;
@@ -61,7 +55,7 @@ export async function loadBrandFonts(): Promise<void> {
   try {
     await Font.loadAsync(brandFonts);
   } catch {
-    // Keep system fallback if download fails.
+    // Bundled font modules failed to register — system stack remains.
   }
 
   if (applied) return;
@@ -71,6 +65,13 @@ export async function loadBrandFonts(): Promise<void> {
     Platform.OS === 'web'
       ? { fontFamily: fontFamilies.body }
       : { fontFamily: fontFamilies.body };
+
+  /** ≥16px prevents iOS / mobile Safari auto-zoom on focus. */
+  const inputBaseStyle = {
+    ...baseStyle,
+    ...noZoomInputStyle,
+    fontSize: INPUT_FONT_SIZE,
+  };
 
   const textAny = Text as typeof Text & {
     defaultProps?: { style?: unknown };
@@ -85,6 +86,6 @@ export async function loadBrandFonts(): Promise<void> {
   };
   inputAny.defaultProps = {
     ...inputAny.defaultProps,
-    style: [baseStyle, inputAny.defaultProps?.style],
+    style: [inputBaseStyle, inputAny.defaultProps?.style],
   };
 }

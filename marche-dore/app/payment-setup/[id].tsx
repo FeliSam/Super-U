@@ -6,13 +6,19 @@ import {
   maskCard,
   maskPhone,
   useCheckoutPayment,
-  type PaymentId,
-} from '@/context/CheckoutPaymentContext';
-import { userProfile } from '@/data/account';
+  type PaymentId } from '@/context/CheckoutPaymentContext';
+import { usePayments } from '@/context/PaymentsContext';
+import { useProfile } from '@/context/ProfileContext';
+import {
+  formatBeninPhone,
+  formatBeninPhoneInput,
+  isValidBeninPhone,
+} from '@/lib/beninPhone';
 import { Feather } from '@expo/vector-icons';
 import { router, useLocalSearchParams } from 'expo-router';
 import { useMemo, useState } from 'react';
 import {
+  Alert,
   KeyboardAvoidingView,
   Platform,
   Pressable,
@@ -20,11 +26,10 @@ import {
   StyleSheet,
   Text,
   TextInput,
-  View,
-} from 'react-native';
+  View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
-const METHODS: Record<
+function buildMethods(colors: AppColors): Record<
   PaymentId,
   {
     label: string;
@@ -34,40 +39,37 @@ const METHODS: Record<
     title: string;
     subtitle: string;
   }
-> = {
-  om: {
-    label: 'Orange Money',
-    accent: '#ff7900',
-    soft: '#fff3e8',
-    icon: 'smartphone',
-    title: 'Payer avec Orange Money',
-    subtitle: 'Un code USSD / notification sera envoyé sur ce numéro pour valider le paiement.',
-  },
-  wave: {
-    label: 'MTN MoMo',
-    accent: '#1c64f2',
-    soft: '#e8f0fe',
-    icon: 'zap',
-    title: 'Payer avec MTN MoMo',
-    subtitle: 'Vous recevrez une demande de paiement MTN MoMo à confirmer dans l’application.',
-  },
-  card: {
-    label: 'Carte bancaire',
-    accent: '#e2931d',
-    soft: '#fdf0d5',
-    icon: 'credit-card',
-    title: 'Carte Visa / Mastercard',
-    subtitle: 'Paiement sécurisé. Vos données ne sont pas stockées sur cet appareil (démo).',
-  },
-  cod: {
-    label: 'Paiement à la livraison',
-    accent: '#498c53',
-    soft: '#eaf4ec',
-    icon: 'package',
-    title: 'Payer à la livraison',
-    subtitle: 'Réglez en espèces ou mobile money directement au livreur à la réception.',
-  },
-};
+> {
+  return {
+    om: {
+      label: 'Orange Money',
+      accent: '#ff7900',
+      soft: colors.blush,
+      icon: 'smartphone',
+      title: 'Payer avec Orange Money',
+      subtitle: 'Un code USSD / notification sera envoyé sur ce numéro pour valider le paiement.' },
+    wave: {
+      label: 'MTN MoMo',
+      accent: '#1c64f2',
+      soft: colors.cream,
+      icon: 'zap',
+      title: 'Payer avec MTN MoMo',
+      subtitle: 'Vous recevrez une demande de paiement MTN MoMo à confirmer dans l’application.' },
+    card: {
+      label: 'Carte bancaire',
+      accent: '#e2931d',
+      soft: colors.cream,
+      icon: 'credit-card',
+      title: 'Carte Visa / Mastercard',
+      subtitle: 'Paiement sécurisé. Vos données ne sont pas stockées sur cet appareil (démo).' },
+    cod: {
+      label: 'Paiement à la livraison',
+      accent: colors.green,
+      soft: colors.successSoft,
+      icon: 'package',
+      title: 'Payer à la livraison',
+      subtitle: 'Réglez en espèces ou mobile money directement au livreur à la réception.' } };
+}
 
 function Field({
   label,
@@ -79,8 +81,7 @@ function Field({
   secureTextEntry,
   autoComplete,
   colors,
-  styles,
-}: {
+  styles }: {
   label: string;
   value: string;
   onChangeText: (t: string) => void;
@@ -113,26 +114,32 @@ function Field({
 export default function PaymentSetupScreen() {
   const colors = useColors();
   const styles = useMemo(() => createStyles(colors), [colors]);
+  const methods = useMemo(() => buildMethods(colors), [colors]);
 
   const { id } = useLocalSearchParams<{ id: string }>();
   const methodId = (['om', 'wave', 'card', 'cod'].includes(id ?? '') ? id : 'om') as PaymentId;
-  const meta = METHODS[methodId];
+  const meta = methods[methodId];
   const insets = useSafeAreaInsets();
   const { setup, setSetup } = useCheckoutPayment();
+  const { saveMobileNumber, saveCard, methodById } = usePayments();
+  const { profile } = useProfile();
 
-  const [phone, setPhone] = useState(
-    setup?.methodId === methodId && setup.phone ? setup.phone : userProfile.phone.replace('+229 ', ''),
-  );
+  const wallet = methodById(methodId);
+  const [phone, setPhone] = useState(() => {
+    if (setup?.methodId === methodId && setup.phone) return formatBeninPhoneInput(setup.phone);
+    if (wallet?.phone) return formatBeninPhoneInput(wallet.phone);
+    return formatBeninPhoneInput(profile.phone);
+  });
   const [cardNumber, setCardNumber] = useState('');
   const [expiry, setExpiry] = useState('');
   const [cvc, setCvc] = useState('');
-  const [cardName, setCardName] = useState(`${userProfile.firstName} ${userProfile.lastName}`);
+  const [cardName, setCardName] = useState(`${profile.firstName} ${profile.lastName}`);
   const [accepted, setAccepted] = useState(methodId === 'cod');
 
   const canSubmit = useMemo(() => {
     if (methodId === 'cod') return accepted;
     if (methodId === 'om' || methodId === 'wave') {
-      return phone.replace(/\D/g, '').length >= 9;
+      return isValidBeninPhone(phone);
     }
     const digits = cardNumber.replace(/\D/g, '');
     return digits.length >= 15 && expiry.length >= 4 && cvc.length >= 3 && cardName.trim().length > 2;
@@ -157,33 +164,38 @@ export default function PaymentSetupScreen() {
         methodId,
         label: meta.label,
         detail: 'Espèces au livreur',
-        ready: true,
-      });
+        ready: true });
       router.back();
       return;
     }
 
     if (methodId === 'om' || methodId === 'wave') {
+      const res = saveMobileNumber(methodId, phone);
+      if (!res.ok) {
+        Alert.alert('Numéro invalide', res.error);
+        return;
+      }
+      const formatted = formatBeninPhone(phone);
       setSetup({
         methodId,
         label: meta.label,
-        detail: maskPhone(phone),
-        phone,
-        ready: true,
-      });
+        detail: maskPhone(formatted),
+        phone: formatted,
+        ready: true });
       router.back();
       return;
     }
 
     const digits = cardNumber.replace(/\D/g, '');
+    const brand = digits.startsWith('4') ? 'Visa' : 'Mastercard';
+    saveCard(digits.slice(-4), brand);
     setSetup({
       methodId: 'card',
       label: meta.label,
       detail: maskCard(digits),
       cardLast4: digits.slice(-4),
-      cardBrand: digits.startsWith('4') ? 'Visa' : 'Mastercard',
-      ready: true,
-    });
+      cardBrand: brand,
+      ready: true });
     router.back();
   };
 
@@ -207,7 +219,7 @@ export default function PaymentSetupScreen() {
             <MotionView preset="down" delay={40}>
               <View style={[styles.hero, { backgroundColor: meta.soft, borderColor: meta.accent }]}>
                 <View style={[styles.heroIcon, { backgroundColor: meta.accent }]}>
-                  <Feather name={meta.icon} size={22} color={colors.white} />
+                  <Feather name={meta.icon} size={22} color={colors.onAccent} />
                 </View>
                 <Text style={styles.heroTitle}>{meta.title}</Text>
                 <Text style={styles.heroSub}>{meta.subtitle}</Text>
@@ -218,16 +230,17 @@ export default function PaymentSetupScreen() {
               {methodId === 'om' || methodId === 'wave' ? (
                 <>
                   <Field
-                    label="Numéro de téléphone"
+                    label="Numéro béninois (+229)"
                     value={phone}
-                    onChangeText={setPhone}
-                    placeholder="77 123 45 67"
+                    onChangeText={(t) => setPhone(formatBeninPhoneInput(t))}
+                    placeholder="+229 97 12 34 56"
                     keyboardType="phone-pad"
-                    maxLength={16}
+                    maxLength={22}
                     autoComplete="tel"
                     colors={colors}
                     styles={styles}
                   />
+                  <Text style={styles.hint}>Format accepté : +229 suivi de 8 ou 10 chiffres.</Text>
                   <View style={styles.infoBox}>
                     <Feather name="info" size={16} color={meta.accent} />
                     <Text style={styles.infoText}>
@@ -312,7 +325,7 @@ export default function PaymentSetupScreen() {
                     </View>
                     <View style={styles.codRow}>
                       <Feather name="phone" size={16} color={colors.gold} />
-                      <Text style={styles.codText}>{userProfile.phone}</Text>
+                      <Text style={styles.codText}>{profile.phone}</Text>
                     </View>
                     <View style={styles.codRow}>
                       <Feather name="info" size={16} color={colors.gold} />
@@ -321,7 +334,7 @@ export default function PaymentSetupScreen() {
                   </View>
                   <Pressable style={styles.checkRow} onPress={() => setAccepted((v) => !v)}>
                     <View style={[styles.checkbox, accepted && styles.checkboxOn]}>
-                      {accepted ? <Feather name="check" size={14} color={colors.white} /> : null}
+                      {accepted ? <Feather name="check" size={14} color={colors.onAccent} /> : null}
                     </View>
                     <Text style={styles.checkText}>
                       Je confirme payer le total au livreur à la réception de ma commande.
@@ -364,42 +377,36 @@ function createStyles(colors: AppColors) {
     justifyContent: 'space-between',
     paddingHorizontal: 20,
     paddingBottom: 8,
-    gap: 10,
-  },
+    gap: 10 },
   headerTitle: { flex: 1, textAlign: 'center', color: colors.text, fontSize: 17, fontWeight: '800' },
   headerSpacer: { width: 40 },
   content: { paddingHorizontal: 20, gap: 16 },
   hero: {
     borderRadius: 22,
-    borderWidth: 1.5,
     padding: 18,
     gap: 8,
-    alignItems: 'flex-start',
-  },
+    alignItems: 'flex-start' },
   heroIcon: {
     width: 48,
     height: 48,
     borderRadius: 16,
     alignItems: 'center',
     justifyContent: 'center',
-    marginBottom: 4,
-  },
+    marginBottom: 4 },
   heroTitle: { color: colors.text, fontSize: 18, fontWeight: '800' },
   heroSub: { color: colors.muted, fontSize: 13, lineHeight: 19 },
   form: { gap: 12 },
+  hint: { color: colors.muted, fontSize: 12, fontWeight: '500', marginTop: -4 },
   field: { gap: 6 },
   fieldLabel: { color: colors.muted, fontSize: 12, fontWeight: '700' },
   input: {
     backgroundColor: colors.white,
-    borderWidth: 1,
-    borderColor: colors.border,
     borderRadius: 14,
     paddingHorizontal: 14,
     paddingVertical: 13,
     color: colors.text,
-    fontSize: 15,
-    fontWeight: '600',
-  },
+    fontSize: 16,
+    fontWeight: '600' },
   row2: { flexDirection: 'row', gap: 10 },
   infoBox: {
     flexDirection: 'row',
@@ -407,21 +414,15 @@ function createStyles(colors: AppColors) {
     alignItems: 'flex-start',
     backgroundColor: colors.bg,
     borderRadius: 14,
-    padding: 12,
-    borderWidth: 1,
-    borderColor: colors.border,
-  },
+    padding: 12 },
   infoText: { flex: 1, color: colors.muted, fontSize: 12, lineHeight: 18 },
   savedRow: { flexDirection: 'row', alignItems: 'center', gap: 8 },
   savedText: { color: colors.green, fontSize: 12, fontWeight: '700' },
   codCard: {
     backgroundColor: colors.white,
     borderRadius: 18,
-    borderWidth: 1,
-    borderColor: colors.border,
     padding: 14,
-    gap: 12,
-  },
+    gap: 12 },
   codRow: { flexDirection: 'row', alignItems: 'center', gap: 10 },
   codText: { flex: 1, color: colors.text, fontSize: 13, fontWeight: '600' },
   checkRow: { flexDirection: 'row', gap: 12, alignItems: 'flex-start' },
@@ -429,13 +430,10 @@ function createStyles(colors: AppColors) {
     width: 22,
     height: 22,
     borderRadius: 7,
-    borderWidth: 1.5,
-    borderColor: colors.border,
     backgroundColor: colors.white,
     alignItems: 'center',
     justifyContent: 'center',
-    marginTop: 1,
-  },
+    marginTop: 1 },
   checkboxOn: { backgroundColor: colors.green, borderColor: colors.green },
   checkText: { flex: 1, color: colors.text, fontSize: 13, lineHeight: 19, fontWeight: '600' },
   footer: {
@@ -444,9 +442,7 @@ function createStyles(colors: AppColors) {
     borderTopWidth: 1,
     borderTopColor: colors.border,
     backgroundColor: colors.white,
-    gap: 8,
-  },
+    gap: 8 },
   footerHint: { textAlign: 'center', color: colors.placeholder, fontSize: 12, fontWeight: '600' },
-  footerHintOk: { textAlign: 'center', color: colors.green, fontSize: 12, fontWeight: '700' },
-});
+  footerHintOk: { textAlign: 'center', color: colors.green, fontSize: 12, fontWeight: '700' } });
 }

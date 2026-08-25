@@ -4,12 +4,11 @@ import { displayFont, type AppColors } from '@/constants/theme';
 import { useColors } from '@/context/ThemeContext';
 import {
   buildLoyaltyQrPayload,
-  loyaltyAccount,
   loyaltyEarnRules,
   loyaltyRewards,
-  loyaltyTiers,
-} from '@/data/account';
+  loyaltyTiers } from '@/data/account';
 import { formatFcfa } from '@/lib/format';
+import { useLiveLoyalty } from '@/lib/loyalty';
 import { navigateTab, tabPaths } from '@/lib/navigation';
 import { Feather } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
@@ -20,16 +19,29 @@ import { Modal, Pressable, ScrollView, StyleSheet, Text, View } from 'react-nati
 export default function LoyaltyScreen() {
   const colors = useColors();
   const styles = useMemo(() => createStyles(colors), [colors]);
+  const loyalty = useLiveLoyalty();
 
   const [copiedCode, setCopiedCode] = useState<string | null>(null);
   const [qrOpen, setQrOpen] = useState(false);
 
-  const progress = Math.min(1, loyaltyAccount.points / loyaltyAccount.nextRewardAt);
-  const currentTier = loyaltyTiers.find((t) => t.id === loyaltyAccount.tierId) ?? loyaltyTiers[2];
-  const nextTier = loyaltyTiers.find((t) => t.minPoints > loyaltyAccount.points);
-  const pointsLeft = Math.max(0, loyaltyAccount.nextRewardAt - loyaltyAccount.points);
+  const progress = loyalty.progress;
+  const currentTier = loyalty.tier;
+  const nextTier = loyaltyTiers.find((t) => t.minPoints > loyalty.points);
+  const pointsLeft = loyalty.pointsLeft;
 
-  const qrValue = useMemo(() => buildLoyaltyQrPayload(loyaltyAccount), []);
+  const qrValue = useMemo(
+    () =>
+      buildLoyaltyQrPayload({
+        clientId: loyalty.clientId,
+        cardNumber: loyalty.cardNumber,
+        memberName: loyalty.memberName,
+        points: loyalty.points,
+        nextRewardAt: loyalty.nextRewardAt,
+        tierId: loyalty.tier.id,
+        memberSince: loyalty.memberSince,
+        lifetimeSaved: loyalty.lifetimeSaved }),
+    [loyalty],
+  );
 
   const copyCode = (code: string) => {
     setCopiedCode(code);
@@ -57,9 +69,9 @@ export default function LoyaltyScreen() {
             <View style={styles.cardTop}>
               <View style={{ flex: 1 }}>
                 <Text style={styles.cardBrand}>Marché Doré</Text>
-                <Text style={styles.cardTier}>Cliente {currentTier.name}</Text>
-                <Text style={styles.cardNumber}>{loyaltyAccount.cardNumber}</Text>
-                <Text style={styles.cardClientId}>ID {loyaltyAccount.clientId}</Text>
+                <Text style={styles.cardTier}>{loyalty.tierLabel}</Text>
+                <Text style={styles.cardNumber}>{loyalty.cardNumber}</Text>
+                <Text style={styles.cardClientId}>ID {loyalty.clientId}</Text>
               </View>
               <Pressable style={styles.qrThumb} onPress={() => setQrOpen(true)}>
                 <View style={styles.qrThumbInner}>
@@ -72,11 +84,11 @@ export default function LoyaltyScreen() {
             <View style={styles.cardBottom}>
               <View>
                 <Text style={styles.cardMetaLabel}>Titulaire</Text>
-                <Text style={styles.cardMetaValue}>{loyaltyAccount.memberName}</Text>
+                <Text style={styles.cardMetaValue}>{loyalty.memberName}</Text>
               </View>
               <View style={{ alignItems: 'flex-end' }}>
                 <Text style={styles.cardMetaLabel}>Membre depuis</Text>
-                <Text style={styles.cardMetaValue}>{loyaltyAccount.memberSince}</Text>
+                <Text style={styles.cardMetaValue}>{loyalty.memberSince}</Text>
               </View>
             </View>
           </LinearGradient>
@@ -87,7 +99,7 @@ export default function LoyaltyScreen() {
             </View>
             <View style={styles.qrBannerText}>
               <Text style={styles.qrBannerTitle}>Présenter mon QR code</Text>
-              <Text style={styles.qrBannerSub}>Unique à chaque client · {loyaltyAccount.clientId}</Text>
+              <Text style={styles.qrBannerSub}>Unique à chaque client · {loyalty.clientId}</Text>
             </View>
             <Feather name="chevron-right" size={18} color={colors.placeholder} />
           </Pressable>
@@ -96,11 +108,16 @@ export default function LoyaltyScreen() {
             <View style={styles.pointsHead}>
               <View>
                 <Text style={styles.pointsLabel}>Solde actuel</Text>
-                <Text style={styles.pointsValue}>{loyaltyAccount.points} pts</Text>
+                <Text style={styles.pointsValue}>{loyalty.points} pts</Text>
+                <Text style={styles.pointsHint}>
+                  {loyalty.orderCount > 0
+                    ? `1 pt / 100 F · ${loyalty.orderCount} commande${loyalty.orderCount > 1 ? 's' : ''}`
+                    : '1 pt / 100 F sur vos commandes'}
+                </Text>
               </View>
               <View style={styles.savedPill}>
                 <Feather name="trending-down" size={12} color={colors.green} />
-                <Text style={styles.savedText}>{formatFcfa(loyaltyAccount.lifetimeSaved)} économisés</Text>
+                <Text style={styles.savedText}>{formatFcfa(loyalty.lifetimeSaved)} économisés</Text>
               </View>
             </View>
             <View style={styles.progressTrack}>
@@ -108,7 +125,7 @@ export default function LoyaltyScreen() {
             </View>
             <Text style={styles.progressHint}>
               {pointsLeft > 0
-                ? `${pointsLeft} pts avant votre prochaine récompense (${loyaltyAccount.nextRewardAt} pts)`
+                ? `${pointsLeft} pts avant votre prochaine récompense (${loyalty.nextRewardAt} pts)`
                 : 'Récompense débloquée — échangez vos points ci-dessous'}
             </Text>
             {nextTier ? (
@@ -122,13 +139,13 @@ export default function LoyaltyScreen() {
           <View style={styles.tiersRow}>
             {loyaltyTiers.map((tier) => {
               const active = tier.id === currentTier.id;
-              const unlocked = loyaltyAccount.points >= tier.minPoints;
+              const unlocked = loyalty.points >= tier.minPoints;
               return (
                 <View key={tier.id} style={[styles.tier, active && styles.tierActive, !unlocked && styles.tierLocked]}>
                   <Feather
                     name={unlocked ? 'check-circle' : 'circle'}
                     size={14}
-                    color={active ? colors.white : unlocked ? colors.gold : colors.placeholder}
+                    color={active ? colors.onAccent : unlocked ? colors.gold : colors.placeholder}
                   />
                   <Text style={[styles.tierName, active && styles.tierNameActive]}>{tier.name}</Text>
                   <Text style={[styles.tierPts, active && styles.tierPtsActive]}>{tier.minPoints}+</Text>
@@ -139,7 +156,7 @@ export default function LoyaltyScreen() {
 
           <Text style={styles.sectionTitle}>Récompenses & réductions</Text>
           {loyaltyRewards.map((reward) => {
-            const canRedeem = loyaltyAccount.points >= reward.cost;
+            const canRedeem = loyalty.points >= reward.cost;
             return (
               <View key={reward.id} style={styles.rewardCard}>
                 <View style={styles.rewardIcon}>
@@ -199,11 +216,11 @@ export default function LoyaltyScreen() {
             <Pressable style={StyleSheet.absoluteFill} onPress={() => setQrOpen(false)} />
             <View style={styles.modalCard}>
               <Text style={styles.modalTitle}>QR code fidélité</Text>
-              <Text style={styles.modalSub}>{loyaltyAccount.memberName}</Text>
+              <Text style={styles.modalSub}>{loyalty.memberName}</Text>
               <View style={styles.modalQr}>
                 <LoyaltyQrCode value={qrValue} size={210} />
               </View>
-              <Text style={styles.modalId}>{loyaltyAccount.clientId}</Text>
+              <Text style={styles.modalId}>{loyalty.clientId}</Text>
               <Text style={styles.modalHint}>
                 Présentez ce code en caisse pour cumuler ou utiliser vos points.
               </Text>
@@ -226,8 +243,7 @@ function createStyles(colors: AppColors) {
     alignItems: 'center',
     justifyContent: 'space-between',
     paddingHorizontal: 20,
-    paddingVertical: 12,
-  },
+    paddingVertical: 12 },
   headerSpacer: { width: 40 },
   title: { color: colors.text, fontSize: 17, ...displayFont('700') },
   content: { padding: 20, gap: 14, paddingBottom: 40 },
@@ -235,8 +251,7 @@ function createStyles(colors: AppColors) {
     borderRadius: 22,
     padding: 18,
     overflow: 'hidden',
-    gap: 18,
-  },
+    gap: 18 },
   cardOrbA: {
     position: 'absolute',
     width: 140,
@@ -244,8 +259,7 @@ function createStyles(colors: AppColors) {
     borderRadius: 70,
     backgroundColor: 'rgba(226,147,29,0.18)',
     top: -40,
-    right: -20,
-  },
+    right: -20 },
   cardOrbB: {
     position: 'absolute',
     width: 90,
@@ -253,82 +267,70 @@ function createStyles(colors: AppColors) {
     borderRadius: 45,
     backgroundColor: 'rgba(255,255,255,0.06)',
     bottom: -20,
-    left: 40,
-  },
+    left: 40 },
   cardTop: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start', gap: 14 },
   cardBrand: { color: 'rgba(255,255,255,0.65)', fontSize: 12, fontWeight: '600', letterSpacing: 0.4 },
-  cardTier: { color: colors.white, fontSize: 22, fontWeight: '800', marginTop: 2 },
+  cardTier: { color: colors.onAccent, fontSize: 22, fontWeight: '800', marginTop: 2 },
   cardNumber: {
     color: colors.gold,
     fontSize: 16,
     fontWeight: '700',
     letterSpacing: 1.2,
-    marginTop: 10,
-  },
+    marginTop: 10 },
   cardClientId: {
     color: 'rgba(255,255,255,0.45)',
     fontSize: 11,
     fontWeight: '600',
-    marginTop: 4,
-  },
+    marginTop: 4 },
   qrThumb: { alignItems: 'center', gap: 6 },
   qrThumbInner: {
     padding: 6,
     borderRadius: 12,
-    backgroundColor: colors.white,
-  },
+    backgroundColor: '#ffffff' },
   qrThumbLabel: { color: 'rgba(255,255,255,0.7)', fontSize: 10, fontWeight: '700' },
   cardBottom: { flexDirection: 'row', justifyContent: 'space-between' },
   cardMetaLabel: { color: 'rgba(255,255,255,0.5)', fontSize: 11, fontWeight: '500' },
-  cardMetaValue: { color: colors.white, fontSize: 14, fontWeight: '700', marginTop: 2 },
+  cardMetaValue: { color: colors.onAccent, fontSize: 14, fontWeight: '700', marginTop: 2 },
   qrBanner: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 12,
     backgroundColor: colors.white,
-    borderWidth: 1,
-    borderColor: colors.border,
     borderRadius: 16,
-    padding: 14,
-  },
+    padding: 14 },
   qrBannerIcon: {
     width: 40,
     height: 40,
     borderRadius: 12,
     backgroundColor: colors.cream,
     alignItems: 'center',
-    justifyContent: 'center',
-  },
+    justifyContent: 'center' },
   qrBannerText: { flex: 1, gap: 2 },
   qrBannerTitle: { color: colors.text, fontSize: 14, fontWeight: '700' },
   qrBannerSub: { color: colors.muted, fontSize: 12 },
   pointsCard: {
     backgroundColor: colors.white,
-    borderWidth: 1,
-    borderColor: colors.border,
     borderRadius: 18,
     padding: 16,
-    gap: 10,
-  },
+    gap: 10 },
   pointsHead: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start' },
   pointsLabel: { color: colors.muted, fontSize: 12, fontWeight: '600' },
   pointsValue: { color: colors.text, fontSize: 28, fontWeight: '800', marginTop: 2 },
+  pointsHint: { color: colors.muted, fontSize: 12, fontWeight: '600', marginTop: 4 },
   savedPill: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 5,
-    backgroundColor: '#edf7ef',
+    backgroundColor: colors.successSoft,
     borderRadius: 999,
     paddingHorizontal: 10,
-    paddingVertical: 6,
-  },
+    paddingVertical: 6 },
   savedText: { color: colors.green, fontSize: 11, fontWeight: '700' },
   progressTrack: {
     height: 7,
     borderRadius: 4,
     backgroundColor: colors.border,
-    overflow: 'hidden',
-  },
+    overflow: 'hidden' },
   progressFill: { height: '100%', borderRadius: 4, backgroundColor: colors.gold },
   progressHint: { color: colors.muted, fontSize: 12, fontWeight: '500' },
   nextTier: { color: colors.gold, fontSize: 12, fontWeight: '700' },
@@ -339,15 +341,12 @@ function createStyles(colors: AppColors) {
     alignItems: 'center',
     gap: 4,
     backgroundColor: colors.white,
-    borderWidth: 1,
-    borderColor: colors.border,
     borderRadius: 14,
-    paddingVertical: 10,
-  },
+    paddingVertical: 10 },
   tierActive: { backgroundColor: colors.gold, borderColor: colors.gold },
   tierLocked: { opacity: 0.7 },
   tierName: { color: colors.text, fontSize: 12, fontWeight: '700' },
-  tierNameActive: { color: colors.white },
+  tierNameActive: { color: colors.onAccent },
   tierPts: { color: colors.muted, fontSize: 10, fontWeight: '600' },
   tierPtsActive: { color: 'rgba(255,255,255,0.85)' },
   rewardCard: {
@@ -355,19 +354,15 @@ function createStyles(colors: AppColors) {
     alignItems: 'center',
     gap: 12,
     backgroundColor: colors.white,
-    borderWidth: 1,
-    borderColor: colors.border,
     borderRadius: 16,
-    padding: 14,
-  },
+    padding: 14 },
   rewardIcon: {
     width: 42,
     height: 42,
     borderRadius: 13,
     backgroundColor: colors.cream,
     alignItems: 'center',
-    justifyContent: 'center',
-  },
+    justifyContent: 'center' },
   rewardBody: { flex: 1, gap: 2 },
   rewardTitle: { color: colors.text, fontSize: 14, fontWeight: '700' },
   rewardSub: { color: colors.muted, fontSize: 12 },
@@ -376,8 +371,7 @@ function createStyles(colors: AppColors) {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 8,
-    marginTop: 4,
-  },
+    marginTop: 4 },
   codeText: {
     color: colors.text,
     fontSize: 12,
@@ -387,25 +381,20 @@ function createStyles(colors: AppColors) {
     paddingHorizontal: 8,
     paddingVertical: 4,
     borderRadius: 6,
-    overflow: 'hidden',
-  },
+    overflow: 'hidden' },
   copyText: { color: colors.gold, fontSize: 11, fontWeight: '700' },
   redeemBtn: {
     backgroundColor: colors.gold,
     borderRadius: 12,
     paddingHorizontal: 12,
-    paddingVertical: 10,
-  },
-  redeemBtnOff: { backgroundColor: colors.bg, borderWidth: 1, borderColor: colors.border },
-  redeemText: { color: colors.white, fontSize: 12, fontWeight: '700' },
+    paddingVertical: 10 },
+  redeemBtnOff: { backgroundColor: colors.bg },
+  redeemText: { color: colors.onAccent, fontSize: 12, fontWeight: '700' },
   redeemTextOff: { color: colors.placeholder },
   earnCard: {
     backgroundColor: colors.white,
-    borderWidth: 1,
-    borderColor: colors.border,
     borderRadius: 18,
-    padding: 14,
-  },
+    padding: 14 },
   earnRow: { flexDirection: 'row', alignItems: 'center', gap: 12, paddingVertical: 8 },
   earnIcon: {
     width: 36,
@@ -413,8 +402,7 @@ function createStyles(colors: AppColors) {
     borderRadius: 11,
     backgroundColor: colors.cream,
     alignItems: 'center',
-    justifyContent: 'center',
-  },
+    justifyContent: 'center' },
   earnTitle: { color: colors.text, fontSize: 14, fontWeight: '700' },
   earnSub: { color: colors.muted, fontSize: 12, marginTop: 1 },
   separator: { height: 1, backgroundColor: colors.border, marginLeft: 48 },
@@ -423,8 +411,7 @@ function createStyles(colors: AppColors) {
     backgroundColor: 'rgba(28,22,19,0.55)',
     alignItems: 'center',
     justifyContent: 'center',
-    padding: 24,
-  },
+    padding: 24 },
   modalCard: {
     width: '100%',
     maxWidth: 340,
@@ -432,32 +419,25 @@ function createStyles(colors: AppColors) {
     borderRadius: 24,
     padding: 24,
     alignItems: 'center',
-    gap: 10,
-  },
+    gap: 10 },
   modalTitle: { color: colors.text, fontSize: 18, fontWeight: '800' },
   modalSub: { color: colors.muted, fontSize: 14, fontWeight: '500', marginTop: -4 },
   modalQr: {
     marginTop: 8,
     padding: 14,
     borderRadius: 16,
-    backgroundColor: colors.white,
-    borderWidth: 1,
-    borderColor: colors.border,
-  },
+    backgroundColor: colors.white },
   modalId: { color: colors.gold, fontSize: 14, fontWeight: '800', letterSpacing: 0.6 },
   modalHint: {
     color: colors.muted,
     fontSize: 13,
     textAlign: 'center',
-    lineHeight: 19,
-  },
+    lineHeight: 19 },
   modalClose: {
     marginTop: 6,
     backgroundColor: colors.gold,
     borderRadius: 14,
     paddingHorizontal: 24,
-    paddingVertical: 12,
-  },
-  modalCloseText: { color: colors.white, fontSize: 14, fontWeight: '700' },
-});
+    paddingVertical: 12 },
+  modalCloseText: { color: colors.onAccent, fontSize: 14, fontWeight: '700' } });
 }

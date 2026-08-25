@@ -1,27 +1,62 @@
 import { AppImage } from '@/components/AppImage';
-import { IconCircle, Screen, Page } from '@/components/ui';
-import { MotionView, PressScale } from '@/components/motion';
+import { EmptyStateHero } from '@/components/EmptyStateHero';
+import { LibreMap } from '@/components/LibreMap';
+import { StarRating } from '@/components/StarRating';
+import { CtaButton, IconCircle, Screen } from '@/components/ui';
+import { PressScale } from '@/components/motion';
+import { cotonouMap, courierRouteProgress, demoTimelineMs, mapStyles, type LngLat } from '@/constants/map';
 import { displayFont, type AppColors } from '@/constants/theme';
-import { useColors } from '@/context/ThemeContext';
-import { avatar } from '@/data/catalog';
-import { formatOrderId, statusLabel, useOrders, canCancelOrder, DEMO_STATUS_TIMELINE, type Order, type OrderStatus } from '@/context/OrdersContext';
+import { useCart } from '@/context/CartContext';
+import { useReviews } from '@/context/ReviewsContext';
+import { useColors, useTheme } from '@/context/ThemeContext';
+import { avatar, getProduct } from '@/data/catalog';
+import {
+  formatOrderId,
+  statusLabel,
+  useOrders,
+  canCancelOrder,
+  type Order,
+  type OrderStatus } from '@/context/OrdersContext';
+import { SUPER_U_BRAND } from '@/data/superU';
+import {
+  formatDistanceKm,
+  formatDurationMin,
+  pointAlongPolyline,
+  routeBoundsCenter } from '@/lib/deliveryRouting';
 import { formatFcfa } from '@/lib/format';
+import { navigateTab, tabPaths } from '@/lib/navigation';
 import { softShadow } from '@/lib/shadow';
+import { statusTone } from '@/lib/statusTone';
 import { Feather } from '@expo/vector-icons';
-import { LinearGradient } from 'expo-linear-gradient';
 import { Href, router, useLocalSearchParams } from 'expo-router';
-import { useEffect, useMemo, useState } from 'react';
-import { Alert, Linking, Modal, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { useEffect, useMemo, useState, type ComponentProps } from 'react';
+import {
+  Alert,
+  Dimensions,
+  Linking,
+  Modal,
+  Platform,
+  Pressable,
+  ScrollView,
+  StyleSheet,
+  Text,
+  TextInput,
+  View } from 'react-native';
+import { Gesture, GestureDetector, GestureHandlerRootView } from 'react-native-gesture-handler';
 import Animated, {
   Easing,
   useAnimatedStyle,
   useSharedValue,
-  withDelay,
   withRepeat,
   withSequence,
-  withTiming,
-} from 'react-native-reanimated';
+  withSpring,
+  withTiming } from 'react-native-reanimated';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+
+const WINDOW_H = Dimensions.get('window').height;
+const SHEET_MIN = Math.round(WINDOW_H * 0.38);
+const SHEET_MAX = Math.round(WINDOW_H * 0.82);
+const SHEET_MID = Math.round((SHEET_MIN + SHEET_MAX) / 2);
 
 type StepState = 'done' | 'active' | 'pending';
 
@@ -30,7 +65,7 @@ type TimelineStep = {
   hint: string;
   time: string;
   state: StepState;
-  icon: React.ComponentProps<typeof Feather>['name'];
+  icon: ComponentProps<typeof Feather>['name'];
 };
 
 function parseOrderDate(raw: string | undefined) {
@@ -72,16 +107,33 @@ function statusRank(status: OrderStatus) {
 
 function buildSteps(order: Order): TimelineStep[] {
   const t = parseOrderDate(order.createdAt);
+  const timeline = demoTimelineMs(order.routeDurationSeconds);
   const at = (status: OrderStatus) => {
-    const step = DEMO_STATUS_TIMELINE.find((s) => s.status === status);
-    return new Date(t.getTime() + (step?.afterMs ?? 0));
+    const afterMs =
+      status === 'confirmed'
+        ? 0
+        : status === 'preparing'
+          ? timeline.preparing
+          : status === 'shipping'
+            ? timeline.shipping
+            : timeline.delivered;
+    return new Date(t.getTime() + afterMs);
   };
+  const store = order.storeName || 'Super U';
+  const roadEta = formatDurationMin(order.routeDurationSeconds || 0);
+  const roadDist = formatDistanceKm(order.routeDistanceMeters || 0);
 
   const defs: Omit<TimelineStep, 'state' | 'time'>[] = [
     { label: 'Commande confirmée', hint: paymentHint(order), icon: 'check' },
-    { label: 'Préparation en cours', hint: 'Assemblage de votre panier', icon: 'package' },
-    { label: 'En route', hint: 'Votre livreur est en chemin', icon: 'truck' },
-    { label: 'Livrée', hint: 'Bon appétit !', icon: 'home' },
+    {
+      label: 'Préparation magasin',
+      hint: `${store} · assemblage du panier`,
+      icon: 'package' },
+    {
+      label: 'En livraison',
+      hint: `${roadDist} · ~${roadEta} (itinéraire routier)`,
+      icon: 'truck' },
+    { label: 'Livrée', hint: 'Colis remis à votre adresse', icon: 'home' },
   ];
 
   if (order.status === 'cancelled') {
@@ -91,8 +143,7 @@ function buildSteps(order: Order): TimelineStep[] {
         hint: 'Annulée avant la préparation',
         icon: 'x',
         time: formatClock(t),
-        state: 'active' as const,
-      },
+        state: 'active' as const },
       ...defs.slice(1).map((d) => ({ ...d, time: '', state: 'pending' as const })),
     ];
   }
@@ -108,57 +159,32 @@ function buildSteps(order: Order): TimelineStep[] {
   return defs.map((d, i) => ({
     ...d,
     time: times[i],
-    state: i < rank ? 'done' : i === rank ? 'active' : 'pending',
-  }));
+    state: i < rank ? 'done' : i === rank ? 'active' : 'pending' }));
 }
 
 function mapBadgeText(status: OrderStatus) {
   switch (status) {
     case 'confirmed':
-      return 'Commande reçue par le magasin';
+      return 'Magasin assigné · confirmation';
     case 'preparing':
-      return 'Préparation de votre panier';
+      return 'Préparation & récupération colis';
     case 'shipping':
-      return 'Livreur en route vers vous';
+      return 'Livreur sur l’itinéraire routier';
     case 'delivered':
-      return 'Commande livrée';
+      return 'Livraison terminée';
     case 'cancelled':
       return 'Commande annulée';
     default:
-      return 'Suivi de votre commande';
+      return 'Suivi en direct';
   }
 }
 
-function statusTone(status: OrderStatus, colors: AppColors) {
-  switch (status) {
-    case 'confirmed':
-      return { bg: '#eaf4ec', text: colors.green, dot: colors.green };
-    case 'preparing':
-      return { bg: colors.cream, text: colors.gold, dot: colors.gold };
-    case 'shipping':
-      return { bg: colors.blush, text: colors.terracotta, dot: colors.terracotta };
-    case 'delivered':
-      return { bg: '#eaf4ec', text: colors.green, dot: colors.green };
-    case 'cancelled':
-      return { bg: '#f3eeeb', text: colors.muted, dot: colors.muted };
-    default:
-      return { bg: colors.cream, text: colors.gold, dot: colors.gold };
-  }
-}
-
-function courierLeftPct(status: OrderStatus) {
-  switch (status) {
-    case 'confirmed':
-      return 22;
-    case 'preparing':
-      return 38;
-    case 'shipping':
-      return 58;
-    case 'delivered':
-      return 72;
-    default:
-      return 30;
-  }
+function zoomForRoute(meters: number): number {
+  if (meters < 1200) return 14.4;
+  if (meters < 3000) return 13.4;
+  if (meters < 7000) return 12.5;
+  if (meters < 14000) return 11.6;
+  return 11.0;
 }
 
 function PulseDot({ color }: { color?: string }) {
@@ -186,8 +212,7 @@ function PulseDot({ color }: { color?: string }) {
 
   const ringStyle = useAnimatedStyle(() => ({
     transform: [{ scale: scale.value }],
-    opacity: opacity.value,
-  }));
+    opacity: opacity.value }));
 
   return (
     <View style={styles.pulseWrap}>
@@ -197,46 +222,11 @@ function PulseDot({ color }: { color?: string }) {
   );
 }
 
-function CourierMarker() {
-  const colors = useColors();
-  const styles = useMemo(() => createStyles(colors), [colors]);
-
-  const bob = useSharedValue(0);
-
-  useEffect(() => {
-    bob.value = withDelay(
-      200,
-      withRepeat(
-        withSequence(
-          withTiming(-4, { duration: 700, easing: Easing.inOut(Easing.sin) }),
-          withTiming(0, { duration: 700, easing: Easing.inOut(Easing.sin) }),
-        ),
-        -1,
-        false,
-      ),
-    );
-  }, [bob]);
-
-  const style = useAnimatedStyle(() => ({
-    transform: [{ translateY: bob.value }],
-  }));
-
-  return (
-    <Animated.View style={[styles.courierPin, style]}>
-      <View style={styles.courierPinGlow} />
-      <View style={styles.courierPinInner}>
-        <Feather name="navigation" size={15} color={colors.white} />
-      </View>
-    </Animated.View>
-  );
-}
-
 function InfoRow({
   icon,
   title,
-  lines,
-}: {
-  icon: React.ComponentProps<typeof Feather>['name'];
+  lines }: {
+  icon: ComponentProps<typeof Feather>['name'];
   title: string;
   lines: string[];
 }) {
@@ -244,7 +234,7 @@ function InfoRow({
   const styles = useMemo(() => createStyles(colors), [colors]);
   return (
     <View style={styles.infoRow}>
-      <View style={styles.infoIcon}>
+      <View style={[styles.infoIcon, { backgroundColor: colors.cream }]}>
         <Feather name={icon} size={15} color={colors.gold} />
       </View>
       <View style={styles.infoText}>
@@ -260,22 +250,151 @@ function InfoRow({
 }
 
 export default function TrackingScreen() {
+  const { scheme } = useTheme();
   const colors = useColors();
   const styles = useMemo(() => createStyles(colors), [colors]);
-
   const insets = useSafeAreaInsets();
   const { id } = useLocalSearchParams<{ id?: string }>();
   const { getOrder, activeOrder, orders, ready, setStatus } = useOrders();
+  const { count: cartCount } = useCart();
+  const {
+    addCourierReview,
+    courierReviewForOrder,
+    hasUserReviewedProduct } = useReviews();
   const orderId = typeof id === 'string' ? id : Array.isArray(id) ? id[0] : undefined;
-  const order = (orderId ? getOrder(orderId) : null) ?? activeOrder ?? orders[0] ?? null;
+  const order = (orderId ? getOrder(orderId) : null) ?? activeOrder ?? null;
+
+  const recentDone = useMemo(
+    () => orders.filter((o) => o.status === 'delivered' || o.status === 'cancelled').slice(0, 3),
+    [orders],
+  );
 
   const steps = useMemo(() => (order ? buildSteps(order) : []), [order]);
   const activeStep = steps.findIndex((s) => s.state === 'active');
-  const activeIndex = activeStep >= 0 ? activeStep : Math.max(0, steps.findIndex((s) => s.state === 'done'));
+  const activeIndex =
+    activeStep >= 0 ? activeStep : Math.max(0, steps.findIndex((s) => s.state === 'done'));
   const progress = steps.length > 1 ? ((activeIndex + 0.15) / (steps.length - 1)) * 100 : 0;
   const tone = order ? statusTone(order.status, colors) : statusTone('confirmed', colors);
   const cancellable = order ? canCancelOrder(order.status) : false;
+  const delivered = order?.status === 'delivered';
+  const existingCourierReview = order ? courierReviewForOrder(order.id) : undefined;
   const [menuOpen, setMenuOpen] = useState(false);
+  const [mapReady, setMapReady] = useState(false);
+  const [mapError, setMapError] = useState(false);
+  const [now, setNow] = useState(Date.now());
+  const [courierRating, setCourierRating] = useState(5);
+  const [courierComment, setCourierComment] = useState('');
+  const [courierSubmitted, setCourierSubmitted] = useState(false);
+
+  const sheetH = useSharedValue(SHEET_MIN);
+  const dragStartH = useSharedValue(SHEET_MIN);
+
+  useEffect(() => {
+    if (!order || order.status === 'delivered' || order.status === 'cancelled') return;
+    const timer = setInterval(() => setNow(Date.now()), 250);
+    return () => clearInterval(timer);
+  }, [order?.id, order?.status]);
+
+  useEffect(() => {
+    if (!delivered) return;
+    sheetH.value = withSpring(SHEET_MAX, { damping: 22, stiffness: 220, mass: 0.9 });
+  }, [delivered, sheetH]);
+
+  useEffect(() => {
+    setCourierRating(5);
+    setCourierComment('');
+    setCourierSubmitted(false);
+  }, [order?.id]);
+
+  const submitCourierReview = () => {
+    if (!order || existingCourierReview || courierSubmitted) return;
+    const comment = courierComment.trim();
+    if (courierRating < 1) return;
+    addCourierReview({
+      orderId: order.id,
+      courierName: order.courierName,
+      rating: courierRating,
+      comment: comment || 'Livraison impeccable.' });
+    setCourierSubmitted(true);
+  };
+
+  const sheetPan = useMemo(
+    () =>
+      Gesture.Pan()
+        .activeOffsetY([-8, 8])
+        .onStart(() => {
+          dragStartH.value = sheetH.value;
+        })
+        .onUpdate((e) => {
+          const next = dragStartH.value - e.translationY;
+          sheetH.value = Math.min(SHEET_MAX, Math.max(SHEET_MIN, next));
+        })
+        .onEnd((e) => {
+          const projected = sheetH.value - e.velocityY * 0.12;
+          const target =
+            projected > SHEET_MID || (sheetH.value > SHEET_MID && e.velocityY < -400)
+              ? SHEET_MAX
+              : SHEET_MIN;
+          sheetH.value = withSpring(target, { damping: 22, stiffness: 220, mass: 0.9 });
+        }),
+    [dragStartH, sheetH],
+  );
+
+  const sheetAnimStyle = useAnimatedStyle(() => ({
+    height: sheetH.value }));
+
+  const mapModel = useMemo(() => {
+    if (!order) return null;
+    const store = order.storeCoordinate ?? cotonouMap.store;
+    const home = order.addressCoordinate ?? cotonouMap.home;
+    const poly: LngLat[] =
+      order.routeCoordinates?.length >= 2 ? order.routeCoordinates : [store, home];
+    const progressT = courierRouteProgress(
+      order.status,
+      order.createdAt,
+      now,
+      order.routeDurationSeconds,
+    );
+    const courier = pointAlongPolyline(poly, progressT);
+    const followCourier = order.status === 'shipping';
+    const courierLabel =
+      order.status === 'confirmed' || order.status === 'preparing'
+        ? 'Récupération'
+        : order.status === 'shipping'
+          ? 'En route'
+          : order.status === 'delivered'
+            ? 'Livré'
+            : undefined;
+
+    return {
+      center: followCourier ? courier : routeBoundsCenter(poly),
+      zoom: followCourier ? 14.8 : zoomForRoute(order.routeDistanceMeters || 3000),
+      route: poly,
+      markers: [
+        {
+          id: 'su-pickup',
+          coordinate: store,
+          kind: 'superu' as const,
+          label: order.storeName?.replace(/^Super U\s+/i, 'U · ') || 'U · Départ',
+          color: SUPER_U_BRAND.red },
+        {
+          id: 'home',
+          coordinate: home,
+          kind: 'home' as const,
+          label: order.addressLabel || 'Chez vous',
+          color: colors.gold },
+        ...(order.status === 'cancelled'
+          ? []
+          : [
+              {
+                id: 'courier',
+                coordinate: courier,
+                kind: 'courier' as const,
+                label: courierLabel,
+                color: colors.terracotta },
+            ]),
+      ] };
+  }, [order, colors.gold, colors.terracotta, now]);
 
   const closeMenu = () => setMenuOpen(false);
 
@@ -293,22 +412,20 @@ export default function TrackingScreen() {
           onPress: () => {
             setStatus(order.id, 'cancelled');
             router.replace('/orders' as Href);
-          },
-        },
+          } },
       ],
     );
   };
 
   const runMenu = (action: () => void) => {
     closeMenu();
-    // Let the modal close before navigating / alerting.
     requestAnimationFrame(action);
   };
 
   if (!ready) {
     return (
       <Screen>
-        <Page style={styles.flex} />
+        <View style={styles.flex} />
       </Screen>
     );
   }
@@ -316,654 +433,762 @@ export default function TrackingScreen() {
   if (!order) {
     return (
       <Screen>
-        <Page style={styles.flex}>
-          <View style={[styles.header, { paddingTop: Math.max(8, insets.top ? 4 : 8) }]}>
+        <View style={[styles.emptyRoot, { paddingTop: Math.max(10, insets.top + 6) }]}>
+          <View style={styles.emptyHeader}>
             <IconCircle name="chevron-left" onPress={() => router.back()} />
-            <View style={styles.headerCenter}>
-              <Text style={styles.title}>Suivi de commande</Text>
-              <Text style={styles.sub}>Aucune commande active</Text>
-            </View>
+            <Text style={styles.emptyHeaderTitle}>Suivi de commande</Text>
             <View style={{ width: 40 }} />
           </View>
-          <View style={styles.empty}>
-            <View style={styles.emptyIcon}>
-              <Feather name="truck" size={28} color={colors.gold} />
-            </View>
-            <Text style={styles.emptyTitle}>Rien à suivre pour le moment</Text>
-            <Text style={styles.emptyText}>
-              Ajoutez des produits au panier, validez le paiement, puis suivez votre livraison ici.
-            </Text>
-            <PressScale style={styles.emptyBtn} onPress={() => router.replace('/(tabs)/cart')} scaleTo={0.98}>
-              <Text style={styles.emptyBtnText}>Voir mon panier</Text>
-            </PressScale>
-            <PressScale style={styles.emptyGhost} onPress={() => router.push('/orders' as Href)} scaleTo={0.98}>
-              <Text style={styles.emptyGhostText}>Historique des commandes</Text>
-            </PressScale>
-          </View>
-        </Page>
+          <ScrollView
+            contentContainerStyle={[
+              styles.emptyScroll,
+              { paddingBottom: Math.max(28, insets.bottom + 20) },
+            ]}
+            showsVerticalScrollIndicator={false}>
+            <EmptyStateHero
+              icon="truck"
+              badge="Livraison live"
+              title={'Aucune livraison\nen cours'}
+              subtitle="Passez commande pour suivre le livreur en direct : Super U le plus proche, itinéraire routier et ETA."
+              primaryLabel={cartCount > 0 ? 'Finaliser mon panier' : 'Découvrir les produits'}
+              primaryIcon={cartCount > 0 ? 'shopping-bag' : 'compass'}
+              onPrimary={() =>
+                cartCount > 0 ? navigateTab(tabPaths.cart) : navigateTab(tabPaths.home)
+              }
+              secondaryLabel="Historique des commandes"
+              secondaryIcon="clock"
+              onSecondary={() => router.push('/orders' as Href)}
+              perks={[
+                { icon: 'map-pin', label: 'Magasin proche', color: colors.gold },
+                { icon: 'navigation', label: 'Route rapide', color: colors.green },
+                { icon: 'radio', label: 'Suivi live', color: colors.terracotta },
+              ]}
+              footer={
+                recentDone.length > 0 ? (
+                  <View style={styles.emptySection}>
+                    <View style={styles.emptySectionHead}>
+                      <Text style={styles.emptySectionTitle}>Dernières commandes</Text>
+                      <Pressable onPress={() => router.push('/orders' as Href)}>
+                        <Text style={styles.emptySectionLink}>Voir tout</Text>
+                      </Pressable>
+                    </View>
+                    {recentDone.map((o) => {
+                      const first = o.lines[0];
+                      const product = first ? getProduct(first.productId) : undefined;
+                      return (
+                        <PressScale
+                          key={o.id}
+                          style={styles.recentCard}
+                          onPress={() => router.push(`/order/${o.id}` as Href)}
+                          scaleTo={0.98}>
+                          {product ? (
+                            <AppImage source={product.image} frameStyle={styles.recentImg} />
+                          ) : (
+                            <View style={[styles.recentImg, styles.recentImgFallback]}>
+                              <Feather name="package" size={18} color={colors.gold} />
+                            </View>
+                          )}
+                          <View style={styles.recentText}>
+                            <Text style={styles.recentId}>{formatOrderId(o.id)}</Text>
+                            <Text style={styles.recentMeta} numberOfLines={1}>
+                              {statusLabel(o.status)} · {formatFcfa(o.total)}
+                            </Text>
+                          </View>
+                          <Feather name="chevron-right" size={18} color={colors.placeholder} />
+                        </PressScale>
+                      );
+                    })}
+                  </View>
+                ) : null
+              }
+            />
+          </ScrollView>
+        </View>
       </Screen>
     );
   }
 
-  const etaLabel = [order.dayLabel, order.slotLabel].filter(Boolean).join(' · ');
+  const progressT = courierRouteProgress(
+    order.status,
+    order.createdAt,
+    now,
+    order.routeDurationSeconds,
+  );
+  const remainingRoadSec = Math.max(
+    0,
+    Math.round((order.routeDurationSeconds || 0) * (1 - progressT)),
+  );
+  const etaPrimary =
+    order.status === 'shipping'
+      ? `~${formatDurationMin(remainingRoadSec)}`
+      : order.status === 'preparing' || order.status === 'confirmed'
+        ? `~${formatDurationMin((order.routeDurationSeconds || 0) + 8 * 60)}`
+        : [order.dayLabel, order.slotLabel].filter(Boolean).join(' · ');
+  const etaLabel = etaPrimary || 'Créneau à confirmer';
   const addressLine = [order.addressLine, order.addressCity].filter(Boolean).join(', ');
-  const paymentLines = [order.paymentDetail].filter(Boolean) as string[];
-  const pinLeft = `${courierLeftPct(order.status)}%`;
+  const roadMeta = `${formatDistanceKm(order.routeDistanceMeters)} · trajet ${formatDurationMin(order.routeDurationSeconds)} · ${order.storeName || 'Super U'} → vous`;
 
   return (
     <Screen>
-      <Page style={styles.flex}>
-        <View style={[styles.header, { paddingTop: Math.max(8, insets.top ? 4 : 8) }]}>
-          <IconCircle name="chevron-left" onPress={() => router.back()} />
-          <View style={styles.headerCenter}>
-            <Text style={styles.title}>Suivi de commande</Text>
-            <Text style={styles.sub}>N° {formatOrderId(order.id)}</Text>
+      <GestureHandlerRootView style={styles.flex}>
+        <View style={styles.root}>
+          {/* Full-bleed map */}
+          <View style={StyleSheet.absoluteFill}>
+            {mapModel ? (
+              <LibreMap
+                style={StyleSheet.absoluteFill}
+                mapStyle={scheme === 'dark' ? mapStyles.dark : mapStyles.light}
+                center={[...mapModel.center]}
+                zoom={mapModel.zoom}
+                route={[...mapModel.route]}
+                markers={mapModel.markers}
+                interactive
+                showNavigation
+                navigationOffset={{
+                  top: Math.max(96, insets.top + 78),
+                  right: 14 }}
+                onReady={() => {
+                  setMapError(false);
+                  setMapReady(true);
+                }}
+                onError={() => {
+                  setMapError(true);
+                  setMapReady(true);
+                }}
+              />
+            ) : null}
+            {mapError ? (
+              <View style={styles.mapLoading} pointerEvents="none">
+                <Feather name="wifi-off" size={22} color={colors.muted} />
+                <Text style={styles.mapLoadingText}>Carte indisponible pour le moment</Text>
+                <Text style={styles.mapErrorHint}>Vérifiez votre connexion, puis réessayez.</Text>
+              </View>
+            ) : !mapReady ? (
+              <View style={styles.mapLoading} pointerEvents="none">
+                <Text style={styles.mapLoadingText}>Calcul de l’itinéraire…</Text>
+              </View>
+            ) : null}
           </View>
-          <IconCircle name="more-vertical" onPress={() => setMenuOpen(true)} />
-        </View>
 
-        <Modal visible={menuOpen} transparent animationType="fade" onRequestClose={closeMenu}>
-          <View style={styles.menuRoot}>
-            <Pressable style={styles.menuBackdrop} onPress={closeMenu} />
-            <View
-              style={[
-                styles.menuPanel,
-                softShadow({ y: 10, blur: 24, opacity: 0.14 }),
-                { top: Math.max(8, insets.top ? 4 : 8) + 48, right: 16 },
-              ]}>
-              <Pressable
-                style={styles.menuItem}
-                onPress={() => runMenu(() => router.push(`/order/${order.id}` as Href))}>
-                <Feather name="file-text" size={16} color={colors.text} />
-                <Text style={styles.menuItemText}>Voir le détail</Text>
-              </Pressable>
-              <Pressable
-                style={styles.menuItem}
-                onPress={() => runMenu(() => router.push('/orders' as Href))}>
-                <Feather name="list" size={16} color={colors.text} />
-                <Text style={styles.menuItemText}>Mes commandes</Text>
-              </Pressable>
-              {order.status !== 'cancelled' ? (
+          {/* Floating header */}
+          <View
+            style={[styles.topBar, { paddingTop: Math.max(10, insets.top + 4) }]}
+            pointerEvents="box-none">
+            <IconCircle name="chevron-left" onPress={() => router.back()} bg="rgba(255,255,255,0.92)" />
+            <View style={styles.titlePill}>
+              <Text style={styles.titlePillMain}>Suivi · {formatOrderId(order.id)}</Text>
+              <Text style={styles.titlePillSub}>{mapBadgeText(order.status)}</Text>
+            </View>
+            <IconCircle name="more-vertical" onPress={() => setMenuOpen(true)} bg="rgba(255,255,255,0.92)" />
+          </View>
+
+          <View
+            style={[styles.livePill, { top: Math.max(96, insets.top + 78) }]}
+            pointerEvents="none">
+            <PulseDot color={tone.dot} />
+            <Text style={styles.livePillText}>{mapBadgeText(order.status)}</Text>
+          </View>
+
+          <Modal visible={menuOpen} transparent animationType="fade" onRequestClose={closeMenu}>
+            <View style={styles.menuRoot}>
+              <Pressable style={styles.menuBackdrop} onPress={closeMenu} />
+              <View
+                style={[
+                  styles.menuPanel,
+                  softShadow({ y: 10, blur: 24, opacity: 0.14 }),
+                  { top: Math.max(8, insets.top ? 4 : 8) + 48, right: 16 },
+                ]}>
                 <Pressable
                   style={styles.menuItem}
-                  onPress={() => runMenu(() => Linking.openURL(`tel:${order.courierPhone}`))}>
-                  <Feather name="phone" size={16} color={colors.text} />
-                  <Text style={styles.menuItemText}>Appeler le livreur</Text>
+                  onPress={() => runMenu(() => router.push(`/order/${order.id}` as Href))}>
+                  <Feather name="file-text" size={16} color={colors.text} />
+                  <Text style={styles.menuItemText}>Voir le détail</Text>
                 </Pressable>
-              ) : null}
-              <Pressable
-                style={styles.menuItem}
-                onPress={() => runMenu(() => router.push('/help' as Href))}>
-                <Feather name="help-circle" size={16} color={colors.text} />
-                <Text style={styles.menuItemText}>Aide & support</Text>
-              </Pressable>
-              {cancellable ? (
-                <>
-                  <View style={styles.menuDivider} />
-                  <Pressable style={styles.menuItem} onPress={confirmCancel}>
-                    <Feather name="x-circle" size={16} color={colors.terracotta} />
-                    <Text style={[styles.menuItemText, styles.menuItemDanger]}>Annuler la commande</Text>
+                <Pressable
+                  style={styles.menuItem}
+                  onPress={() => runMenu(() => router.push('/orders' as Href))}>
+                  <Feather name="list" size={16} color={colors.text} />
+                  <Text style={styles.menuItemText}>Mes commandes</Text>
+                </Pressable>
+                {order.status !== 'cancelled' ? (
+                  <Pressable
+                    style={styles.menuItem}
+                    onPress={() => runMenu(() => Linking.openURL(`tel:${order.courierPhone}`))}>
+                    <Feather name="phone" size={16} color={colors.text} />
+                    <Text style={styles.menuItemText}>Appeler le livreur</Text>
                   </Pressable>
-                </>
-              ) : null}
-            </View>
-          </View>
-        </Modal>
-
-        <ScrollView
-          contentContainerStyle={[styles.content, { paddingBottom: Math.max(28, insets.bottom + 16) }]}
-          showsVerticalScrollIndicator={false}>
-          <MotionView preset="down" delay={40}>
-            <LinearGradient colors={['#eef5ea', '#e4eee0', '#f3f7f0']} style={styles.map}>
-              <View style={styles.mapParkA} />
-              <View style={styles.mapParkB} />
-              <View style={styles.roadShadow} />
-              <View style={styles.road} />
-              <View style={styles.roadDash} />
-
-              <View style={[styles.mapLabel, styles.mapLabelStore]}>
-                <View style={[styles.mapLabelDot, { backgroundColor: colors.green }]} />
-                <Text style={styles.mapLabelText}>Marché Doré</Text>
-              </View>
-              <View style={[styles.mapLabel, styles.mapLabelHome]}>
-                <View style={[styles.mapLabelDot, { backgroundColor: colors.gold }]} />
-                <Text style={styles.mapLabelText} numberOfLines={1}>
-                  {order.addressLabel || 'Chez vous'}
-                </Text>
-              </View>
-
-              <View style={[styles.marker, styles.markerHome]}>
-                <Feather name="home" size={14} color={colors.white} />
-              </View>
-              <View style={[styles.courierPinWrap, { left: pinLeft }]}>
-                <CourierMarker />
-              </View>
-              <View style={[styles.marker, styles.markerStore]}>
-                <Feather name="shopping-bag" size={13} color={colors.white} />
-              </View>
-
-              <View style={styles.mapBadge}>
-                <PulseDot color={tone.dot} />
-                <Text style={styles.mapBadgeText}>{mapBadgeText(order.status)}</Text>
-              </View>
-            </LinearGradient>
-          </MotionView>
-
-          <MotionView preset="down" delay={60}>
-            <PressScale
-              style={[styles.details, softShadow({ y: 4, blur: 14, opacity: 0.05 })]}
-              onPress={() => router.push(`/order/${order.id}` as Href)}
-              scaleTo={0.985}>
-              <View style={styles.detailsIcon}>
-                <Feather name="shopping-bag" size={18} color={colors.gold} />
-              </View>
-              <View style={styles.detailsText}>
-                <Text style={styles.detailsLeft}>Articles & total</Text>
-                <Text style={styles.detailsRight}>
-                  {order.itemCount} article{order.itemCount > 1 ? 's' : ''} · {formatFcfa(order.total)}
-                </Text>
-              </View>
-              <Feather name="chevron-right" size={18} color={colors.placeholder} />
-            </PressScale>
-          </MotionView>
-
-          <MotionView preset="down" delay={80}>
-            <View style={[styles.card, softShadow({ y: 6, blur: 18, opacity: 0.06 })]}>
-              <View style={styles.etaRow}>
-                <View style={styles.etaTextBlock}>
-                  <Text style={styles.meta}>Livraison estimée</Text>
-                  <Text style={styles.eta}>{etaLabel || 'Créneau à confirmer'}</Text>
-                </View>
-                <View style={[styles.tag, { backgroundColor: tone.bg }]}>
-                  <View style={[styles.tagDot, { backgroundColor: tone.dot }]} />
-                  <Text style={[styles.tagText, { color: tone.text }]}>{statusLabel(order.status)}</Text>
-                </View>
-              </View>
-
-              <View style={styles.progressTrack}>
-                <View style={[styles.progressFill, { width: `${Math.min(100, Math.max(8, progress))}%` }]} />
-              </View>
-              <View style={styles.progressMeta}>
-                <Text style={styles.progressLabel}>
-                  Étape {activeIndex + 1}/{steps.length}
-                </Text>
-                <Text style={styles.progressLabel}>{Math.round(Math.min(100, progress))} %</Text>
-              </View>
-
-              <View style={styles.hr} />
-              <View style={styles.current}>
-                <PulseDot color={tone.dot} />
-                <Text style={styles.currentText}>
-                  {steps[activeIndex]?.hint ?? 'Votre commande est en cours de traitement.'}
-                </Text>
+                ) : null}
+                <Pressable
+                  style={styles.menuItem}
+                  onPress={() => runMenu(() => router.push('/help' as Href))}>
+                  <Feather name="help-circle" size={16} color={colors.text} />
+                  <Text style={styles.menuItemText}>Aide & support</Text>
+                </Pressable>
+                {cancellable ? (
+                  <>
+                    <View style={styles.menuDivider} />
+                    <Pressable style={styles.menuItem} onPress={confirmCancel}>
+                      <Feather name="x-circle" size={16} color={colors.terracotta} />
+                      <Text style={[styles.menuItemText, styles.menuItemDanger]}>Annuler la commande</Text>
+                    </Pressable>
+                  </>
+                ) : null}
               </View>
             </View>
-          </MotionView>
+          </Modal>
 
-          <MotionView preset="down" delay={110}>
-            <View style={[styles.card, softShadow({ y: 6, blur: 18, opacity: 0.06 })]}>
-              <Text style={styles.cardTitle}>Récapitulatif</Text>
-              <InfoRow icon="map-pin" title={order.addressLabel || 'Adresse'} lines={[addressLine, order.addressPhone]} />
-              <View style={styles.hr} />
-              <InfoRow icon="clock" title="Créneau" lines={[etaLabel]} />
-              <View style={styles.hr} />
-              <InfoRow
-                icon={order.paymentId === 'cod' ? 'package' : 'credit-card'}
-                title={order.paymentLabel || 'Paiement'}
-                lines={paymentLines.length ? paymentLines : [paymentHint(order)]}
-              />
-              {order.comment ? (
-                <>
-                  <View style={styles.hr} />
-                  <InfoRow icon="message-circle" title="Instructions" lines={[order.comment]} />
-                </>
-              ) : null}
-            </View>
-          </MotionView>
+          {/* Bottom sheet — même logique que l’ajout d’adresse */}
+          <GestureDetector gesture={sheetPan}>
+            <Animated.View
+              style={[
+                styles.sheet,
+                sheetAnimStyle,
+                {
+                  paddingBottom: Math.max(14, insets.bottom + 8),
+                  backgroundColor: colors.bg },
+              ]}>
+              <View style={styles.sheetHandle}>
+                <View style={[styles.sheetHandleBar, { backgroundColor: colors.border }]} />
+              </View>
+              <Text style={[styles.sheetEyebrow, { color: colors.muted }]}>
+                {delivered
+                  ? 'Livraison terminée'
+                  : order.status === 'cancelled'
+                    ? 'Commande annulée'
+                    : 'Livraison en cours'}
+              </Text>
 
-          <MotionView preset="down" delay={140}>
-            <Text style={styles.h}>Étapes de livraison</Text>
-            <View style={[styles.timeline, softShadow({ y: 6, blur: 18, opacity: 0.06 })]}>
-              {steps.map((step, i) => {
-                const isLast = i === steps.length - 1;
-                return (
-                  <MotionView key={step.label} index={i} preset="right" style={styles.step}>
-                    <View style={styles.col}>
+              <Animated.ScrollView
+                showsVerticalScrollIndicator={false}
+                style={styles.sheetScroll}
+                contentContainerStyle={styles.sheetContent}
+                bounces
+                nestedScrollEnabled>
+                {delivered ? (
+                  <View style={[styles.doneHero, { backgroundColor: colors.successSoft }]}>
+                    <View style={[styles.doneIcon, { backgroundColor: colors.green }]}>
+                      <Feather name="check" size={22} color={colors.onAccent} />
+                    </View>
+                    <Text style={styles.doneTitle}>Merci ! Votre commande est livrée</Text>
+                    <Text style={styles.doneSub}>
+                      Bon appétit. Notez votre livreur et partagez un avis sur les produits reçus.
+                    </Text>
+                  </View>
+                ) : (
+                  <View style={styles.statusBlock}>
+                    <View style={styles.etaRow}>
+                      <View style={styles.etaTextBlock}>
+                        <Text style={styles.meta}>
+                          {order.status === 'shipping' ? 'Temps restant (route)' : 'Estimation trajet'}
+                        </Text>
+                        <Text style={styles.eta}>{etaLabel}</Text>
+                        <Text style={styles.roadMeta}>{roadMeta}</Text>
+                      </View>
+                      <View style={[styles.tag, { backgroundColor: tone.bg }]}>
+                        <View style={[styles.tagDot, { backgroundColor: tone.dot }]} />
+                        <Text style={[styles.tagText, { color: tone.text }]}>
+                          {statusLabel(order.status)}
+                        </Text>
+                      </View>
+                    </View>
+                    <View style={[styles.progressTrack, { backgroundColor: colors.cream }]}>
                       <View
                         style={[
-                          styles.node,
-                          step.state === 'done' && styles.nodeDone,
-                          step.state === 'active' && styles.nodeActive,
-                          step.state === 'pending' && styles.nodePending,
-                        ]}>
-                        {step.state === 'done' ? (
-                          <Feather name="check" size={12} color={colors.white} />
-                        ) : (
-                          <Feather
-                            name={step.icon}
-                            size={step.state === 'active' ? 12 : 11}
-                            color={step.state === 'active' ? colors.white : colors.placeholder}
-                          />
-                        )}
-                      </View>
-                      {!isLast ? (
-                        <View
-                          style={[
-                            styles.vline,
-                            step.state === 'done' && styles.vlineDone,
-                            step.state === 'active' && styles.vlineActive,
-                          ]}
-                        />
-                      ) : null}
+                          styles.progressFill,
+                          {
+                            width: `${Math.min(100, Math.max(8, progress))}%`,
+                            backgroundColor: colors.terracotta },
+                        ]}
+                      />
                     </View>
-                    <View style={styles.stepBody}>
-                      <Text
-                        style={[
-                          styles.stepLabel,
-                          step.state === 'pending' && styles.stepLabelPending,
-                          step.state === 'active' && styles.stepLabelActive,
-                        ]}>
-                        {step.label}
-                      </Text>
-                      <Text style={[styles.stepHint, step.state === 'pending' && styles.stepHintPending]}>
-                        {step.hint}
+                    <View style={styles.current}>
+                      <PulseDot color={tone.dot} />
+                      <Text style={styles.currentText}>
+                        {steps[activeIndex]?.hint ?? 'Votre commande est en cours de traitement.'}
                       </Text>
                     </View>
-                    <Text style={[styles.time, step.state === 'active' && styles.timeActive]}>
-                      {step.time || '—'}
+                  </View>
+                )}
+
+                <PressScale
+                  style={[styles.softCard, { backgroundColor: colors.white }]}
+                  onPress={() => router.push(`/order/${order.id}` as Href)}
+                  scaleTo={0.985}>
+                  <View style={[styles.detailsIcon, { backgroundColor: colors.cream }]}>
+                    <Feather name="shopping-bag" size={18} color={colors.gold} />
+                  </View>
+                  <View style={styles.detailsText}>
+                    <Text style={styles.detailsLeft}>Articles & total</Text>
+                    <Text style={styles.detailsRight}>
+                      {order.itemCount} article{order.itemCount > 1 ? 's' : ''} · {formatFcfa(order.total)}
                     </Text>
-                  </MotionView>
-                );
-              })}
-            </View>
-          </MotionView>
+                  </View>
+                  <Feather name="chevron-right" size={18} color={colors.placeholder} />
+                </PressScale>
 
-          <MotionView preset="down" delay={180}>
-            {order.status === 'cancelled' ? (
-              <View style={[styles.cancelledBanner, softShadow({ y: 4, blur: 12, opacity: 0.05 })]}>
-                <Feather name="x-circle" size={18} color={colors.muted} />
-                <View style={styles.cancelledText}>
-                  <Text style={styles.cancelledTitle}>Commande annulée</Text>
-                  <Text style={styles.cancelledMeta}>Aucun livreur ne sera envoyé pour cette commande.</Text>
-                </View>
-              </View>
-            ) : (
-              <View style={[styles.courier, softShadow({ y: 6, blur: 18, opacity: 0.06 })]}>
-                <View style={styles.avatarWrap}>
-                  <AppImage source={avatar} frameStyle={styles.avatar} />
-                  <View style={styles.onlineDot} />
-                </View>
-                <View style={styles.courierText}>
-                  <Text style={styles.name}>{order.courierName}</Text>
-                  <Text style={styles.meta}>Livreur Marché Doré · 4.9 ★</Text>
-                </View>
-                <View style={styles.courierActions}>
-                  <IconCircle name="message-circle" onPress={() => router.push('/chat/courier-moussa' as Href)} />
-                  <IconCircle name="phone" onPress={() => Linking.openURL(`tel:${order.courierPhone}`)} />
-                </View>
-              </View>
-            )}
-          </MotionView>
+                {delivered ? (
+                  <View style={[styles.softCardCol, { backgroundColor: colors.white }]}>
+                    <Text style={styles.cardTitle}>Noter le livreur</Text>
+                    <View style={styles.courierMini}>
+                      <AppImage source={avatar} frameStyle={styles.avatar} />
+                      <View style={styles.courierText}>
+                        <Text style={styles.name}>{order.courierName}</Text>
+                        <Text style={styles.meta}>Livreur Marché Doré</Text>
+                      </View>
+                    </View>
+                    {existingCourierReview || courierSubmitted ? (
+                      <View style={[styles.reviewDoneBanner, { backgroundColor: colors.successSoft }]}>
+                        <Feather name="check-circle" size={16} color={colors.green} />
+                        <Text style={[styles.reviewDoneText, { color: colors.green }]}>
+                          Merci pour votre avis
+                          {existingCourierReview
+                            ? ` · ${existingCourierReview.rating}/5`
+                            : courierRating
+                              ? ` · ${courierRating}/5`
+                              : ''}
+                          .
+                        </Text>
+                      </View>
+                    ) : (
+                      <>
+                        <View style={styles.draftStars}>
+                          <StarRating
+                            rating={courierRating}
+                            size={28}
+                            interactive
+                            onChange={setCourierRating}
+                          />
+                          <Text style={styles.draftRatingLabel}>{courierRating}/5</Text>
+                        </View>
+                        <TextInput
+                          value={courierComment}
+                          onChangeText={setCourierComment}
+                          placeholder="Comment s’est passée la livraison ?"
+                          placeholderTextColor={colors.placeholder}
+                          multiline
+                          style={styles.reviewInput}
+                          textAlignVertical="top"
+                        />
+                        <CtaButton label="Envoyer mon avis livreur" onPress={submitCourierReview} />
+                      </>
+                    )}
+                  </View>
+                ) : null}
 
-          <PressScale style={styles.help} onPress={() => router.push('/help')} scaleTo={0.98}>
-            <Feather name="help-circle" size={15} color={colors.muted} />
-            <Text style={styles.helpText}>Besoin d’aide ? Contacter le support</Text>
-          </PressScale>
-        </ScrollView>
-      </Page>
+                {delivered ? (
+                  <View style={[styles.softCardCol, { backgroundColor: colors.white }]}>
+                    <Text style={styles.cardTitle}>Avis produits</Text>
+                    <Text style={styles.productReviewHint}>
+                      Seuls les articles de cette livraison peuvent être notés.
+                    </Text>
+                    {order.lines.map((line, i) => {
+                      const product = getProduct(line.productId);
+                      const reviewed = hasUserReviewedProduct(line.productId);
+                      return (
+                        <View key={`${line.productId}-${i}`}>
+                          {i > 0 ? (
+                            <View style={[styles.softHr, { backgroundColor: colors.border }]} />
+                          ) : null}
+                          <Pressable
+                            style={styles.productReviewRow}
+                            onPress={() =>
+                              router.push(`/product/reviews/${line.productId}` as Href)
+                            }>
+                            {product?.image ? (
+                              <AppImage source={product.image} frameStyle={styles.productThumb} />
+                            ) : (
+                              <View style={[styles.productThumb, styles.productThumbFallback]}>
+                                <Feather name="package" size={16} color={colors.placeholder} />
+                              </View>
+                            )}
+                            <View style={styles.productReviewText}>
+                              <Text style={styles.productReviewName} numberOfLines={2}>
+                                {line.name}
+                              </Text>
+                              <Text style={styles.productReviewMeta}>
+                                {reviewed ? 'Avis déjà publié' : 'Laisser un avis'}
+                              </Text>
+                            </View>
+                            <Feather
+                              name={reviewed ? 'check' : 'edit-3'}
+                              size={16}
+                              color={reviewed ? colors.green : colors.gold}
+                            />
+                          </Pressable>
+                        </View>
+                      );
+                    })}
+                  </View>
+                ) : null}
+
+                {!delivered ? (
+                  <View style={[styles.softCardCol, { backgroundColor: colors.white }]}>
+                    <Text style={styles.cardTitle}>Parcours</Text>
+                    <InfoRow
+                      icon="shopping-bag"
+                      title={order.storeName || 'Super U'}
+                      lines={['Magasin le plus proche', 'Point de départ livreur']}
+                    />
+                    <View style={[styles.softHr, { backgroundColor: colors.border }]} />
+                    <InfoRow
+                      icon="navigation"
+                      title="Itinéraire routier"
+                      lines={[roadMeta, 'Profil voiture / moto · plus rapide']}
+                    />
+                    <View style={[styles.softHr, { backgroundColor: colors.border }]} />
+                    <InfoRow
+                      icon="map-pin"
+                      title={order.addressLabel || 'Adresse'}
+                      lines={[addressLine, order.addressPhone]}
+                    />
+                  </View>
+                ) : null}
+
+                <View style={[styles.softCardCol, { backgroundColor: colors.white }]}>
+                  <Text style={styles.cardTitle}>Étapes</Text>
+                  {steps.map((step, i) => {
+                    const isLast = i === steps.length - 1;
+                    return (
+                      <View key={step.label} style={styles.step}>
+                        <View style={styles.col}>
+                          <View
+                            style={[
+                              styles.node,
+                              step.state === 'done' && { backgroundColor: colors.green },
+                              step.state === 'active' && { backgroundColor: colors.terracotta },
+                              step.state === 'pending' && { backgroundColor: colors.cream },
+                            ]}>
+                            {step.state === 'done' ? (
+                              <Feather name="check" size={12} color={colors.onAccent} />
+                            ) : (
+                              <Feather
+                                name={step.icon}
+                                size={11}
+                                color={step.state === 'active' ? colors.onAccent : colors.placeholder}
+                              />
+                            )}
+                          </View>
+                          {!isLast ? (
+                            <View
+                              style={[
+                                styles.vline,
+                                {
+                                  backgroundColor:
+                                    step.state === 'done' || step.state === 'active'
+                                      ? colors.terracotta
+                                      : colors.border },
+                              ]}
+                            />
+                          ) : null}
+                        </View>
+                        <View style={styles.stepBody}>
+                          <Text
+                            style={[
+                              styles.stepLabel,
+                              step.state === 'pending' && { color: colors.placeholder },
+                              step.state === 'active' && { color: colors.terracotta },
+                            ]}>
+                            {step.label}
+                          </Text>
+                          <Text style={styles.stepHint}>{step.hint}</Text>
+                        </View>
+                        <Text style={styles.time}>{step.time || '—'}</Text>
+                      </View>
+                    );
+                  })}
+                </View>
+
+                {order.status === 'cancelled' ? (
+                  <View style={[styles.softCard, { backgroundColor: colors.white }]}>
+                    <Feather name="x-circle" size={18} color={colors.muted} />
+                    <View style={styles.cancelledText}>
+                      <Text style={styles.cancelledTitle}>Commande annulée</Text>
+                      <Text style={styles.cancelledMeta}>Aucun livreur ne sera envoyé.</Text>
+                    </View>
+                  </View>
+                ) : !delivered ? (
+                  <View style={[styles.softCard, { backgroundColor: colors.white }]}>
+                    <View style={styles.avatarWrap}>
+                      <AppImage source={avatar} frameStyle={styles.avatar} />
+                      <View style={[styles.onlineDot, { borderColor: colors.white }]} />
+                    </View>
+                    <View style={styles.courierText}>
+                      <Text style={styles.name}>{order.courierName}</Text>
+                      <Text style={styles.meta}>Livreur Marché Doré · 4.9 ★</Text>
+                    </View>
+                    <View style={styles.courierActions}>
+                      <IconCircle
+                        name="message-circle"
+                        onPress={() => router.push('/chat/courier-moussa' as Href)}
+                      />
+                      <IconCircle name="phone" onPress={() => Linking.openURL(`tel:${order.courierPhone}`)} />
+                    </View>
+                  </View>
+                ) : null}
+
+                <PressScale style={styles.help} onPress={() => router.push('/help')} scaleTo={0.98}>
+                  <Feather name="help-circle" size={15} color={colors.muted} />
+                  <Text style={styles.helpText}>Besoin d’aide ? Contacter le support</Text>
+                </PressScale>
+              </Animated.ScrollView>
+            </Animated.View>
+          </GestureDetector>
+        </View>
+      </GestureHandlerRootView>
     </Screen>
   );
 }
 
 function createStyles(colors: AppColors) {
   return StyleSheet.create({
-  flex: { flex: 1 },
-  header: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    paddingHorizontal: 20,
-    paddingBottom: 8,
-    gap: 10,
-  },
-  headerCenter: { flex: 1, alignItems: 'center' },
-  title: { ...displayFont('700'), color: colors.text, fontSize: 18 },
-  sub: { color: colors.muted, fontSize: 12, fontWeight: '600', marginTop: 2 },
-  content: { paddingHorizontal: 20, gap: 16 },
-  map: {
-    height: 216,
-    borderRadius: 26,
-    overflow: 'hidden',
-    borderWidth: 1,
-    borderColor: 'rgba(73,140,83,0.14)',
-  },
-  mapParkA: {
-    position: 'absolute',
-    width: 70,
-    height: 48,
-    borderRadius: 20,
-    backgroundColor: 'rgba(73,140,83,0.12)',
-    top: 28,
-    left: 24,
-  },
-  mapParkB: {
-    position: 'absolute',
-    width: 54,
-    height: 54,
-    borderRadius: 27,
-    backgroundColor: 'rgba(226,147,29,0.12)',
-    bottom: 70,
-    right: 36,
-  },
-  roadShadow: {
-    position: 'absolute',
-    left: 28,
-    top: 58,
-    width: 300,
-    height: 18,
-    backgroundColor: 'rgba(28,22,19,0.08)',
-    borderRadius: 10,
-    transform: [{ rotate: '-16deg' }],
-  },
-  road: {
-    position: 'absolute',
-    left: 26,
-    top: 54,
-    width: 300,
-    height: 14,
-    backgroundColor: '#cfc8bc',
-    borderRadius: 8,
-    transform: [{ rotate: '-16deg' }],
-  },
-  roadDash: {
-    position: 'absolute',
-    left: 40,
-    top: 59,
-    width: 260,
-    height: 2,
-    backgroundColor: 'rgba(255,255,255,0.55)',
-    transform: [{ rotate: '-16deg' }],
-  },
-  mapLabel: {
-    position: 'absolute',
-    backgroundColor: 'rgba(255,255,255,0.94)',
-    borderRadius: 999,
-    paddingHorizontal: 10,
-    paddingVertical: 5,
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 6,
-    maxWidth: 140,
-  },
-  mapLabelDot: { width: 6, height: 6, borderRadius: 3 },
-  mapLabelStore: { top: 16, right: 48 },
-  mapLabelHome: { bottom: 58, left: 44 },
-  mapLabelText: { color: colors.text, fontSize: 10, fontWeight: '700', flexShrink: 1 },
-  marker: {
-    position: 'absolute',
-    width: 34,
-    height: 34,
-    borderRadius: 17,
-    alignItems: 'center',
-    justifyContent: 'center',
-    borderWidth: 3,
-    borderColor: colors.white,
-    ...softShadow({ y: 3, blur: 8, opacity: 0.16, elevation: 3 }),
-  },
-  markerHome: { left: 72, bottom: 46, backgroundColor: colors.gold },
-  markerStore: { right: 72, top: 40, backgroundColor: colors.green },
-  courierPinWrap: { position: 'absolute', top: 64, marginLeft: -19 },
-  courierPin: { alignItems: 'center', justifyContent: 'center' },
-  courierPinGlow: {
-    position: 'absolute',
-    width: 46,
-    height: 46,
-    borderRadius: 23,
-    backgroundColor: 'rgba(200,75,49,0.22)',
-  },
-  courierPinInner: {
-    width: 38,
-    height: 38,
-    borderRadius: 19,
-    backgroundColor: colors.terracotta,
-    alignItems: 'center',
-    justifyContent: 'center',
-    borderWidth: 3,
-    borderColor: colors.white,
-  },
-  mapBadge: {
-    position: 'absolute',
-    left: 12,
-    right: 12,
-    bottom: 12,
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 10,
-    backgroundColor: 'rgba(255,255,255,0.96)',
-    borderRadius: 14,
-    paddingHorizontal: 12,
-    paddingVertical: 10,
-  },
-  mapBadgeText: { flex: 1, color: colors.text, fontSize: 12, fontWeight: '700' },
-  pulseWrap: { width: 14, height: 14, alignItems: 'center', justifyContent: 'center' },
-  pulseRing: { position: 'absolute', width: 14, height: 14, borderRadius: 7 },
-  pulseCore: { width: 8, height: 8, borderRadius: 4 },
-  card: {
-    backgroundColor: colors.white,
-    borderWidth: 1,
-    borderColor: colors.border,
-    borderRadius: 22,
-    padding: 16,
-    gap: 12,
-  },
-  cardTitle: { ...displayFont('700'), color: colors.text, fontSize: 16 },
-  etaRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start', gap: 10 },
-  etaTextBlock: { flex: 1 },
-  meta: { color: colors.muted, fontSize: 13, fontWeight: '600' },
-  eta: { ...displayFont('700'), color: colors.text, fontSize: 22, marginTop: 4 },
-  tag: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 6,
-    borderRadius: 999,
-    paddingHorizontal: 12,
-    paddingVertical: 7,
-  },
-  tagDot: { width: 7, height: 7, borderRadius: 4 },
-  tagText: { fontWeight: '800', fontSize: 12 },
-  progressTrack: {
-    height: 8,
-    borderRadius: 999,
-    backgroundColor: colors.bg,
-    overflow: 'hidden',
-  },
-  progressFill: {
-    height: '100%',
-    borderRadius: 999,
-    backgroundColor: colors.terracotta,
-  },
-  progressMeta: { flexDirection: 'row', justifyContent: 'space-between' },
-  progressLabel: { color: colors.placeholder, fontSize: 11, fontWeight: '700' },
-  hr: { height: 1, backgroundColor: colors.border },
-  current: { flexDirection: 'row', gap: 12, alignItems: 'center' },
-  currentText: { flex: 1, color: colors.muted, fontSize: 13, lineHeight: 19, fontWeight: '500' },
-  infoRow: { flexDirection: 'row', alignItems: 'flex-start', gap: 12 },
-  infoIcon: {
-    width: 32,
-    height: 32,
-    borderRadius: 10,
-    backgroundColor: colors.cream,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  infoText: { flex: 1, gap: 2, paddingTop: 2 },
-  infoTitle: { color: colors.text, fontSize: 14, fontWeight: '700' },
-  infoMeta: { color: colors.muted, fontSize: 13, fontWeight: '500', lineHeight: 18 },
-  h: { ...displayFont('700'), color: colors.text, fontSize: 17, marginBottom: 2 },
-  timeline: {
-    backgroundColor: colors.white,
-    borderWidth: 1,
-    borderColor: colors.border,
-    borderRadius: 22,
-    paddingHorizontal: 14,
-    paddingTop: 14,
-    paddingBottom: 6,
-  },
-  step: { flexDirection: 'row', alignItems: 'flex-start', minHeight: 64, gap: 10 },
-  col: { width: 28, alignItems: 'center' },
-  node: {
-    width: 28,
-    height: 28,
-    borderRadius: 14,
-    alignItems: 'center',
-    justifyContent: 'center',
-    borderWidth: 2,
-  },
-  nodeDone: { backgroundColor: colors.gold, borderColor: colors.gold },
-  nodeActive: { backgroundColor: colors.terracotta, borderColor: colors.terracotta },
-  nodePending: { backgroundColor: colors.bg, borderColor: colors.border },
-  vline: {
-    width: 2,
-    flex: 1,
-    minHeight: 28,
-    backgroundColor: colors.border,
-    marginVertical: 4,
-  },
-  vlineDone: { backgroundColor: colors.gold },
-  vlineActive: { backgroundColor: 'rgba(200,75,49,0.35)' },
-  stepBody: { flex: 1, paddingTop: 3, gap: 2 },
-  stepLabel: { color: colors.text, fontSize: 14, fontWeight: '700' },
-  stepLabelActive: { color: colors.terracotta },
-  stepLabelPending: { color: colors.placeholder },
-  stepHint: { color: colors.muted, fontSize: 12, fontWeight: '500' },
-  stepHintPending: { color: colors.placeholder },
-  time: { color: colors.muted, fontSize: 12, fontWeight: '700', paddingTop: 6, minWidth: 36, textAlign: 'right' },
-  timeActive: { color: colors.terracotta },
-  courier: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 12,
-    backgroundColor: colors.white,
-    borderWidth: 1,
-    borderColor: colors.border,
-    borderRadius: 22,
-    padding: 14,
-  },
-  avatarWrap: { position: 'relative' },
-  avatar: { width: 52, height: 52, borderRadius: 26 },
-  onlineDot: {
-    position: 'absolute',
-    right: 1,
-    bottom: 1,
-    width: 12,
-    height: 12,
-    borderRadius: 6,
-    backgroundColor: colors.green,
-    borderWidth: 2,
-    borderColor: colors.white,
-  },
-  courierText: { flex: 1, gap: 2 },
-  name: { color: colors.text, fontWeight: '800', fontSize: 15 },
-  courierActions: { flexDirection: 'row', gap: 8 },
-  details: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 12,
-    backgroundColor: colors.white,
-    borderWidth: 1,
-    borderColor: colors.border,
-    borderRadius: 18,
-    padding: 14,
-  },
-  detailsIcon: {
-    width: 40,
-    height: 40,
-    borderRadius: 12,
-    backgroundColor: colors.cream,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  detailsText: { flex: 1, gap: 2 },
-  detailsLeft: { color: colors.text, fontWeight: '700', fontSize: 14 },
-  detailsRight: { color: colors.muted, fontSize: 12, fontWeight: '600' },
-  cancelledBanner: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 12,
-    backgroundColor: colors.white,
-    borderWidth: 1,
-    borderColor: colors.border,
-    borderRadius: 22,
-    padding: 14,
-  },
-  cancelledText: { flex: 1, gap: 2 },
-  cancelledTitle: { color: colors.text, fontSize: 15, fontWeight: '800' },
-  cancelledMeta: { color: colors.muted, fontSize: 12, fontWeight: '500', lineHeight: 17 },
-  menuRoot: { flex: 1 },
-  menuBackdrop: {
-    ...StyleSheet.absoluteFillObject,
-    backgroundColor: 'rgba(28,22,19,0.28)',
-  },
-  menuPanel: {
-    position: 'absolute',
-    minWidth: 220,
-    backgroundColor: colors.white,
-    borderRadius: 18,
-    borderWidth: 1,
-    borderColor: colors.border,
-    paddingVertical: 6,
-    overflow: 'hidden',
-  },
-  menuItem: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 12,
-    paddingHorizontal: 16,
-    paddingVertical: 13,
-  },
-  menuItemText: { color: colors.text, fontSize: 14, fontWeight: '700' },
-  menuItemDanger: { color: colors.terracotta },
-  menuDivider: {
-    height: 1,
-    backgroundColor: colors.border,
-    marginVertical: 4,
-    marginHorizontal: 12,
-  },
-  help: {
-    flexDirection: 'row',
-    justifyContent: 'center',
-    alignItems: 'center',
-    gap: 8,
-    paddingVertical: 6,
-  },
-  helpText: { color: colors.muted, fontSize: 13, fontWeight: '600' },
-  empty: {
-    flex: 1,
-    alignItems: 'center',
-    justifyContent: 'center',
-    paddingHorizontal: 32,
-    gap: 10,
-  },
-  emptyIcon: {
-    width: 64,
-    height: 64,
-    borderRadius: 32,
-    backgroundColor: colors.cream,
-    alignItems: 'center',
-    justifyContent: 'center',
-    marginBottom: 6,
-  },
-  emptyTitle: { ...displayFont('700'), color: colors.text, fontSize: 18 },
-  emptyText: { color: colors.muted, fontSize: 14, textAlign: 'center', lineHeight: 20 },
-  emptyBtn: {
-    marginTop: 10,
-    backgroundColor: colors.gold,
-    borderRadius: 14,
-    paddingHorizontal: 20,
-    paddingVertical: 14,
-  },
-  emptyBtnText: { color: colors.white, fontSize: 14, fontWeight: '800' },
-  emptyGhost: { paddingVertical: 10, paddingHorizontal: 12 },
-  emptyGhostText: { color: colors.gold, fontSize: 14, fontWeight: '700' },
-});
+    flex: { flex: 1 },
+    root: { flex: 1, backgroundColor: colors.bg },
+    mapLoading: {
+      ...StyleSheet.absoluteFillObject,
+      alignItems: 'center',
+      justifyContent: 'center',
+      backgroundColor: 'rgba(255,255,255,0.55)',
+      gap: 8 },
+    mapLoadingText: { color: colors.muted, fontSize: 14, fontWeight: '600' },
+    mapErrorHint: { color: colors.placeholder, fontSize: 12, textAlign: 'center', paddingHorizontal: 24 },
+    topBar: {
+      position: 'absolute',
+      top: 0,
+      left: 0,
+      right: 0,
+      flexDirection: 'row',
+      alignItems: 'center',
+      paddingHorizontal: 14,
+      gap: 10,
+      zIndex: 5 },
+    titlePill: {
+      flex: 1,
+      backgroundColor: colors.white,
+      borderRadius: 14,
+      paddingHorizontal: 14,
+      paddingVertical: 8,
+      opacity: 0.96,
+      ...Platform.select({
+        web: { boxShadow: '0 4px 16px rgba(0,0,0,0.08)' },
+        default: {} }) },
+    titlePillMain: { color: colors.text, fontSize: 14, fontWeight: '800' },
+    titlePillSub: { color: colors.muted, fontSize: 11, marginTop: 1, fontWeight: '600' },
+    livePill: {
+      position: 'absolute',
+      left: 14,
+      right: 14,
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 10,
+      backgroundColor: 'rgba(20,17,15,0.78)',
+      borderRadius: 14,
+      paddingHorizontal: 12,
+      paddingVertical: 10,
+      zIndex: 4 },
+    livePillText: { flex: 1, color: '#ffffff', fontSize: 12, fontWeight: '700' },
+    sheet: {
+      position: 'absolute',
+      left: 0,
+      right: 0,
+      bottom: 0,
+      borderTopLeftRadius: 22,
+      borderTopRightRadius: 22,
+      overflow: 'hidden',
+      zIndex: 6,
+      ...Platform.select({
+        web: { boxShadow: '0 -8px 28px rgba(0,0,0,0.12)' },
+        default: {} }) },
+    sheetHandle: { alignItems: 'center', paddingTop: 10, paddingBottom: 4 },
+    sheetHandleBar: { width: 40, height: 4, borderRadius: 999 },
+    sheetEyebrow: {
+      fontSize: 11,
+      fontWeight: '700',
+      letterSpacing: 0.6,
+      textTransform: 'uppercase',
+      paddingHorizontal: 20,
+      marginBottom: 6 },
+    sheetScroll: { flex: 1 },
+    sheetContent: { paddingHorizontal: 20, gap: 12, paddingBottom: 20 },
+    statusBlock: { gap: 10, marginBottom: 4 },
+    etaRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start', gap: 10 },
+    etaTextBlock: { flex: 1 },
+    meta: { color: colors.muted, fontSize: 13, fontWeight: '600' },
+    eta: { ...displayFont('700'), color: colors.text, fontSize: 22, marginTop: 4 },
+    roadMeta: { color: colors.muted, fontSize: 12, fontWeight: '600', marginTop: 4 },
+    tag: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 6,
+      borderRadius: 999,
+      paddingHorizontal: 12,
+      paddingVertical: 7 },
+    tagDot: { width: 7, height: 7, borderRadius: 4 },
+    tagText: { fontWeight: '800', fontSize: 12 },
+    progressTrack: { height: 8, borderRadius: 999, overflow: 'hidden' },
+    progressFill: { height: '100%', borderRadius: 999 },
+    current: { flexDirection: 'row', gap: 12, alignItems: 'center' },
+    currentText: { flex: 1, color: colors.muted, fontSize: 13, lineHeight: 19, fontWeight: '500' },
+    doneHero: {
+      borderRadius: 18,
+      padding: 16,
+      gap: 8,
+      alignItems: 'flex-start' },
+    doneIcon: {
+      width: 40,
+      height: 40,
+      borderRadius: 14,
+      alignItems: 'center',
+      justifyContent: 'center',
+      marginBottom: 2 },
+    doneTitle: { ...displayFont('700'), color: colors.text, fontSize: 18 },
+    doneSub: { color: colors.muted, fontSize: 13, lineHeight: 19, fontWeight: '500' },
+    courierMini: { flexDirection: 'row', alignItems: 'center', gap: 12 },
+    draftStars: { flexDirection: 'row', alignItems: 'center', gap: 12 },
+    draftRatingLabel: { color: colors.gold, fontSize: 15, fontWeight: '800' },
+    reviewInput: {
+      minHeight: 88,
+      borderRadius: 14,
+      padding: 12,
+      color: colors.text,
+      fontSize: 16,
+      backgroundColor: colors.bg },
+    reviewDoneBanner: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 8,
+      borderRadius: 14,
+      padding: 12 },
+    reviewDoneText: { flex: 1, fontSize: 13, fontWeight: '600' },
+    productReviewHint: { color: colors.muted, fontSize: 12, marginTop: -4, fontWeight: '500' },
+    productReviewRow: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 12,
+      paddingVertical: 4 },
+    productThumb: { width: 44, height: 44, borderRadius: 12 },
+    productThumbFallback: {
+      backgroundColor: colors.cream,
+      alignItems: 'center',
+      justifyContent: 'center' },
+    productReviewText: { flex: 1, gap: 2 },
+    productReviewName: { color: colors.text, fontSize: 14, fontWeight: '700' },
+    productReviewMeta: { color: colors.muted, fontSize: 12, fontWeight: '600' },
+    softCard: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 12,
+      borderRadius: 18,
+      padding: 14 },
+    softCardCol: {
+      borderRadius: 18,
+      padding: 16,
+      gap: 12 },
+    softHr: { height: StyleSheet.hairlineWidth },
+    cardTitle: { ...displayFont('700'), color: colors.text, fontSize: 16 },
+    detailsIcon: {
+      width: 40,
+      height: 40,
+      borderRadius: 14,
+      alignItems: 'center',
+      justifyContent: 'center' },
+    detailsText: { flex: 1 },
+    detailsLeft: { color: colors.text, fontSize: 14, fontWeight: '700' },
+    detailsRight: { color: colors.muted, fontSize: 12, fontWeight: '600', marginTop: 2 },
+    infoRow: { flexDirection: 'row', alignItems: 'flex-start', gap: 12 },
+    infoIcon: {
+      width: 32,
+      height: 32,
+      borderRadius: 10,
+      alignItems: 'center',
+      justifyContent: 'center' },
+    infoText: { flex: 1, gap: 2 },
+    infoTitle: { color: colors.text, fontSize: 14, fontWeight: '700' },
+    infoMeta: { color: colors.muted, fontSize: 12, lineHeight: 17 },
+    step: { flexDirection: 'row', gap: 12, minHeight: 52 },
+    col: { width: 24, alignItems: 'center' },
+    node: {
+      width: 24,
+      height: 24,
+      borderRadius: 12,
+      alignItems: 'center',
+      justifyContent: 'center' },
+    vline: { width: 2, flex: 1, marginVertical: 4, borderRadius: 1 },
+    stepBody: { flex: 1, paddingBottom: 10 },
+    stepLabel: { color: colors.text, fontSize: 14, fontWeight: '700' },
+    stepHint: { color: colors.muted, fontSize: 12, marginTop: 2, lineHeight: 17 },
+    time: { color: colors.placeholder, fontSize: 11, fontWeight: '700', marginTop: 2 },
+    avatarWrap: { position: 'relative' },
+    avatar: { width: 44, height: 44, borderRadius: 16 },
+    onlineDot: {
+      position: 'absolute',
+      right: -1,
+      bottom: -1,
+      width: 12,
+      height: 12,
+      borderRadius: 6,
+      backgroundColor: colors.green },
+    courierText: { flex: 1 },
+    name: { color: colors.text, fontSize: 15, fontWeight: '700' },
+    courierActions: { flexDirection: 'row', gap: 8 },
+    cancelledText: { flex: 1 },
+    cancelledTitle: { color: colors.text, fontSize: 14, fontWeight: '700' },
+    cancelledMeta: { color: colors.muted, fontSize: 12, marginTop: 2 },
+    help: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'center',
+      gap: 8,
+      paddingVertical: 8 },
+    helpText: { color: colors.muted, fontSize: 13, fontWeight: '600' },
+    pulseWrap: { width: 14, height: 14, alignItems: 'center', justifyContent: 'center' },
+    pulseRing: { position: 'absolute', width: 14, height: 14, borderRadius: 7 },
+    pulseCore: { width: 8, height: 8, borderRadius: 4 },
+    menuRoot: { flex: 1 },
+    menuBackdrop: { ...StyleSheet.absoluteFillObject, backgroundColor: 'rgba(0,0,0,0.2)' },
+    menuPanel: {
+      position: 'absolute',
+      backgroundColor: colors.white,
+      borderRadius: 16,
+      paddingVertical: 6,
+      minWidth: 220 },
+    menuItem: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 10,
+      paddingHorizontal: 14,
+      paddingVertical: 12 },
+    menuItemText: { color: colors.text, fontSize: 14, fontWeight: '600' },
+    menuItemDanger: { color: colors.terracotta },
+    menuDivider: { height: StyleSheet.hairlineWidth, backgroundColor: colors.border, marginVertical: 4 },
+    emptyRoot: { flex: 1 },
+    emptyHeader: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'space-between',
+      paddingHorizontal: 16,
+      paddingBottom: 8 },
+    emptyHeaderTitle: { ...displayFont('700'), color: colors.text, fontSize: 17 },
+    emptyScroll: { paddingHorizontal: 20, paddingTop: 8, gap: 16 },
+    emptySection: { gap: 10, marginTop: 4 },
+    emptySectionHead: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'space-between' },
+    emptySectionTitle: { color: colors.text, fontSize: 17, fontWeight: '800' },
+    emptySectionLink: { color: colors.gold, fontSize: 13, fontWeight: '700' },
+    recentCard: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 12,
+      backgroundColor: colors.white,
+      borderRadius: 16,
+      padding: 12 },
+    recentImg: { width: 48, height: 48, borderRadius: 14 },
+    recentImgFallback: {
+      backgroundColor: colors.cream,
+      alignItems: 'center',
+      justifyContent: 'center' },
+    recentText: { flex: 1, gap: 2 },
+    recentId: { color: colors.text, fontSize: 14, fontWeight: '700' },
+    recentMeta: { color: colors.muted, fontSize: 12, fontWeight: '600' } });
 }

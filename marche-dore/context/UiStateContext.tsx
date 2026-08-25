@@ -1,5 +1,8 @@
 import { recentSearchesDefault, type SearchSort } from '@/data/catalog';
-import React, { createContext, useCallback, useContext, useMemo, useState } from 'react';
+import AsyncStorage from '@react-native-async-storage/async-storage';
+import React, { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
+
+const RECENTS_KEY = 'marche-dore.search-recents.v1';
 
 type UiStateContextValue = {
   homeActiveChipId: string;
@@ -27,6 +30,35 @@ export function UiStateProvider({ children }: { children: React.ReactNode }) {
   const [searchPriceSort, setSearchPriceSort] = useState<SearchSort>('price-asc');
   const [searchInStockOnly, setSearchInStockOnly] = useState(false);
   const [searchPromoOnly, setSearchPromoOnly] = useState(false);
+  const hydrated = useRef(false);
+
+  useEffect(() => {
+    let active = true;
+    (async () => {
+      try {
+        const raw = await AsyncStorage.getItem(RECENTS_KEY);
+        if (raw && active) {
+          const parsed = JSON.parse(raw) as unknown;
+          if (Array.isArray(parsed)) {
+            const list = parsed.filter((x): x is string => typeof x === 'string' && x.trim().length > 0);
+            if (list.length) setSearchRecents(list.slice(0, 8));
+          }
+        }
+      } catch {
+        // keep defaults
+      } finally {
+        if (active) hydrated.current = true;
+      }
+    })();
+    return () => {
+      active = false;
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!hydrated.current) return;
+    AsyncStorage.setItem(RECENTS_KEY, JSON.stringify(searchRecents)).catch(() => undefined);
+  }, [searchRecents]);
 
   const addRecentSearch = useCallback((term: string) => {
     const trimmed = term.trim();

@@ -10,8 +10,7 @@ export default function ChatLayout() {
         headerShown: false,
         contentStyle: { backgroundColor: colors.bg },
         animation: Platform.OS === 'web' ? 'none' : 'slide_from_right',
-        freezeOnBlur: Platform.OS !== 'web',
-      }}>
+        freezeOnBlur: Platform.OS !== 'web' }}>
       <Stack.Screen name="index" />
       <Stack.Screen name="[id]" />
     </Stack>

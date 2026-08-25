@@ -1,6 +1,6 @@
 import { AppImage } from '@/components/AppImage';
-import { CategoryTile, IconCircle, ProductCard, PromoBanner, Screen, SearchField, Page, TabHero } from '@/components/ui';
-import { PressScale } from '@/components/motion';
+import { CategoryTile, IconCircle, ProductCard, PromoBanner, Screen, SearchField, Page } from '@/components/ui';
+import { MotionView, PressScale } from '@/components/motion';
 import { displayFont, heroChrome, tabBarClearance, type AppColors } from '@/constants/theme';
 import { useColors, useTheme } from '@/context/ThemeContext';
 import { useUiState } from '@/context/UiStateContext';
@@ -14,31 +14,40 @@ import {
   promoProducts,
   searchCategories,
   searchCategoryRoute,
-  trendingSearches,
-} from '@/data/catalog';
+  trendingSearches } from '@/data/catalog';
+import { openSearchScreen } from '@/lib/searchNav';
 import { Feather } from '@expo/vector-icons';
+import { LinearGradient } from 'expo-linear-gradient';
 import { router } from 'expo-router';
 import { memo, useEffect, useMemo, useState } from 'react';
 import {
   Dimensions,
+  Platform,
   Pressable,
   ScrollView,
   StyleSheet,
   Text,
-  View,
-} from 'react-native';
+  View } from 'react-native';
+import Animated, {
+  Extrapolation,
+  interpolate,
+  useAnimatedScrollHandler,
+  useAnimatedStyle,
+  useSharedValue } from 'react-native-reanimated';
 
 const PROMO_WIDTH = Dimensions.get('window').width - 40;
 const explorePromo = homePromoBanners[1];
-const HERO_OVERLAP = 28;
+const HERO_OVERLAP = 36;
+const TREND_LIMIT = 5;
 
 function ExploreScreen() {
   const { scheme } = useTheme();
   const colors = useColors();
   const chrome = useMemo(() => heroChrome(scheme), [scheme]);
   const styles = useMemo(() => createStyles(colors), [colors]);
-  const [heroHeight, setHeroHeight] = useState(210);
+  const [heroHeight, setHeroHeight] = useState(220);
   const [trendTick, setTrendTick] = useState(() => Math.floor(Date.now() / 12_000));
+  const scrollY = useSharedValue(0);
 
   const { setSearchQuery, searchRecents } = useUiState();
 
@@ -50,7 +59,7 @@ function ExploreScreen() {
   }, []);
 
   const trends = useMemo(
-    () => trendingSearches({ recents: searchRecents, limit: 8, tick: trendTick }),
+    () => trendingSearches({ recents: searchRecents, limit: TREND_LIMIT, tick: trendTick }),
     [searchRecents, trendTick],
   );
 
@@ -67,12 +76,41 @@ function ExploreScreen() {
 
   const openSearch = (term?: string) => {
     if (term) setSearchQuery(term);
-    router.push('/search');
+    openSearchScreen();
   };
 
   const openPromos = () => {
     router.push('/promotions');
   };
+
+  const onScroll = useAnimatedScrollHandler({
+    onScroll: (event) => {
+      scrollY.value = event.contentOffset.y;
+    } });
+
+  const sheetAnimStyle = useAnimatedStyle(() => {
+    const y = scrollY.value;
+    return {
+      transform: [
+        {
+          translateY: interpolate(y, [0, 140], [0, -16], Extrapolation.CLAMP) },
+      ],
+      borderTopLeftRadius: interpolate(y, [0, 120], [28, 16], Extrapolation.CLAMP),
+      borderTopRightRadius: interpolate(y, [0, 120], [28, 16], Extrapolation.CLAMP),
+      ...Platform.select({
+        ios: {
+          shadowOpacity: interpolate(y, [0, 80], [0.14, 0.05], Extrapolation.CLAMP) },
+        android: {
+          elevation: interpolate(y, [0, 80], [8, 2], Extrapolation.CLAMP) },
+        default: {} }) };
+  });
+
+  const handleAnimStyle = useAnimatedStyle(() => ({
+    opacity: interpolate(scrollY.value, [0, 60], [1, 0.35], Extrapolation.CLAMP),
+    transform: [
+      {
+        scaleX: interpolate(scrollY.value, [0, 80], [1, 0.7], Extrapolation.CLAMP) },
+    ] }));
 
   return (
     <Screen>
@@ -81,17 +119,34 @@ function ExploreScreen() {
           style={styles.heroBackdrop}
           onLayout={(e) => setHeroHeight(e.nativeEvent.layout.height)}
           pointerEvents="box-none">
-          <TabHero
-            title="Explorer"
-            subtitle="Parcourez nos rayons et découvrez les produits du marché."
-            right={
-              <IconCircle
-                name="search"
-                variant="hero"
-                accessibilityLabel="Rechercher"
-                onPress={() => openSearch()}
-              />
-            }>
+          <LinearGradient colors={chrome.gradient} style={styles.hero}>
+            <View style={[styles.heroOrb, { backgroundColor: chrome.orb }]} />
+
+            <View style={styles.header}>
+              <View style={styles.headerText}>
+                <Text style={[styles.eyebrow, { color: chrome.muted }]}>Marché Doré</Text>
+                <Text style={[styles.hello, { color: chrome.ink }]}>Explorer</Text>
+              </View>
+              <View style={styles.actions}>
+                <IconCircle
+                  name="search"
+                  variant="hero"
+                  accessibilityLabel="Rechercher"
+                  onPress={() => openSearch()}
+                />
+                <IconCircle
+                  name="tag"
+                  variant="hero"
+                  accessibilityLabel="Promotions"
+                  onPress={openPromos}
+                />
+              </View>
+            </View>
+
+            <Text style={[styles.subtitle, { color: chrome.muted }]}>
+              Parcourez nos rayons et découvrez les produits du marché.
+            </Text>
+
             <View
               style={[
                 styles.heroStats,
@@ -102,10 +157,10 @@ function ExploreScreen() {
                 onPress={() => openSearch()}
                 scaleTo={0.96}
                 accessibilityLabel={`${exploreCategories.length} rayons`}>
-                <Text style={[styles.heroStatValue, { color: chrome.ink }]}>
-                  {exploreCategories.length}
+                <Feather name="grid" size={15} color={colors.gold} />
+                <Text style={[styles.heroStatText, { color: chrome.ink }]}>
+                  {exploreCategories.length} rayons
                 </Text>
-                <Text style={[styles.heroStatLabel, { color: chrome.muted }]}>Rayons</Text>
               </PressScale>
               <View style={[styles.heroDivider, { backgroundColor: chrome.divider }]} />
               <PressScale
@@ -113,33 +168,43 @@ function ExploreScreen() {
                 onPress={() => openSearch()}
                 scaleTo={0.96}
                 accessibilityLabel={`${products.length} produits`}>
-                <Text style={[styles.heroStatValue, { color: chrome.ink }]}>{products.length}+</Text>
-                <Text style={[styles.heroStatLabel, { color: chrome.muted }]}>Produits</Text>
+                <Feather name="shopping-bag" size={15} color={colors.terracotta} />
+                <Text style={[styles.heroStatText, { color: chrome.ink }]}>
+                  {products.length}+ produits
+                </Text>
               </PressScale>
               <View style={[styles.heroDivider, { backgroundColor: chrome.divider }]} />
               <PressScale
                 style={styles.heroStat}
                 onPress={() => router.push('/tracking')}
                 scaleTo={0.96}
-                accessibilityLabel="Suivi de livraison">
-                <Feather name="truck" size={16} color={colors.gold} />
-                <Text style={[styles.heroStatLabel, { color: chrome.muted }]}>Livraison rapide</Text>
+                accessibilityLabel="Livraison rapide">
+                <Feather name="truck" size={15} color={colors.green} />
+                <Text style={[styles.heroStatText, { color: chrome.ink }]}>Livraison</Text>
               </PressScale>
             </View>
-          </TabHero>
+          </LinearGradient>
         </View>
 
-        <ScrollView
+        <Animated.ScrollView
           style={styles.scrollLayer}
           contentContainerStyle={[
             styles.scrollContent,
             { paddingTop: Math.max(0, heroHeight - HERO_OVERLAP) },
           ]}
-          showsVerticalScrollIndicator={false}>
-          <View style={styles.bodySheet}>
-            <SearchField onPress={() => openSearch()} />
+          showsVerticalScrollIndicator={false}
+          scrollEventThrottle={16}
+          onScroll={onScroll}>
+          <Animated.View style={[styles.bodySheet, sheetAnimStyle]}>
+            <View style={styles.sheetHandle}>
+              <Animated.View style={[styles.sheetHandleBar, handleAnimStyle]} />
+            </View>
 
-            <View style={styles.section}>
+            <MotionView delay={40} preset="up">
+              <SearchField onPress={() => openSearch()} />
+            </MotionView>
+
+            <MotionView delay={80} preset="up" style={styles.section}>
               <View style={styles.sectionHead}>
                 <Text style={styles.sectionTitle}>Accès rapide</Text>
                 <Text style={styles.sectionMeta}>Sélection</Text>
@@ -164,18 +229,20 @@ function ExploreScreen() {
                   );
                 })}
               </ScrollView>
-            </View>
+            </MotionView>
 
-            <PromoBanner
-              title={explorePromo.title}
-              subtitle={explorePromo.subtitle}
-              cta={explorePromo.cta}
-              image={explorePromo.image}
-              width={PROMO_WIDTH}
-              onPress={() => router.push(explorePromo.href)}
-            />
+            <MotionView delay={110} preset="up">
+              <PromoBanner
+                title={explorePromo.title}
+                subtitle={explorePromo.subtitle}
+                cta={explorePromo.cta}
+                image={explorePromo.image}
+                width={PROMO_WIDTH}
+                onPress={() => router.push(explorePromo.href)}
+              />
+            </MotionView>
 
-            <View style={styles.section}>
+            <MotionView delay={140} preset="up" style={styles.section}>
               <View style={styles.sectionHead}>
                 <Text style={styles.sectionTitle}>En promotion</Text>
                 <Pressable onPress={openPromos}>
@@ -190,9 +257,9 @@ function ExploreScreen() {
                   <ProductCard key={product.id} product={product} width={148} imageHeight={130} compact />
                 ))}
               </ScrollView>
-            </View>
+            </MotionView>
 
-            <View style={styles.section}>
+            <MotionView delay={170} preset="up" style={styles.section}>
               <View style={styles.sectionHead}>
                 <Text style={styles.sectionTitle}>Populaires</Text>
                 <Text style={styles.sectionMeta}>Les plus commandés</Text>
@@ -205,61 +272,36 @@ function ExploreScreen() {
                   <ProductCard key={product.id} product={product} width={148} imageHeight={130} compact />
                 ))}
               </ScrollView>
-            </View>
+            </MotionView>
 
-            <View style={styles.suggestCard}>
-              <View style={styles.suggestHead}>
-                <View style={styles.suggestHeadLeft}>
-                  <View style={styles.liveDot} />
-                  <Feather name="zap" size={15} color={colors.gold} />
-                  <Text style={styles.suggestTitle}>Recherches tendance</Text>
+            <MotionView delay={200} preset="up">
+              <View style={styles.suggestCard}>
+                <View style={styles.suggestHead}>
+                  <View style={styles.suggestHeadLeft}>
+                    <Feather name="trending-up" size={15} color={colors.terracotta} />
+                    <Text style={styles.suggestTitle}>Recherches tendance</Text>
+                  </View>
+                  <View style={styles.livePill}>
+                    <View style={styles.liveDot} />
+                    <Text style={styles.trendMeta}>En direct</Text>
+                  </View>
                 </View>
-                <Text style={styles.trendMeta}>En direct</Text>
-              </View>
-              <View style={styles.chips}>
-                {trends.map((item) => {
-                  const hot = item.rank <= 3 || item.heat >= 70;
-                  const deltaColor =
-                    item.delta === 'up' || item.delta === 'new'
-                      ? colors.green
-                      : item.delta === 'down'
-                        ? colors.terracotta
-                        : colors.muted;
-                  const deltaIcon =
-                    item.delta === 'up'
-                      ? 'trending-up'
-                      : item.delta === 'down'
-                        ? 'trending-down'
-                        : item.delta === 'new'
-                          ? 'zap'
-                          : 'minus';
-                  return (
+                <View style={styles.tagWrap}>
+                  {trends.map((item) => (
                     <PressScale
                       key={`${item.rank}-${item.term}`}
-                      style={[styles.chip, hot && styles.chipHot]}
+                      style={styles.tag}
                       onPress={() => openSearch(item.term)}
                       scaleTo={0.96}
                       accessibilityLabel={`Rechercher ${item.term}`}>
-                      <Text style={[styles.chipRank, hot && styles.chipRankHot]}>{item.rank}</Text>
-                      <Text style={[styles.chipText, hot && styles.chipTextHot]} numberOfLines={1}>
-                        {item.term}
-                      </Text>
-                      <View style={styles.chipHeatTrack}>
-                        <View
-                          style={[
-                            styles.chipHeatFill,
-                            { width: `${item.heat}%`, backgroundColor: hot ? colors.gold : colors.muted },
-                          ]}
-                        />
-                      </View>
-                      <Feather name={deltaIcon} size={12} color={deltaColor} />
+                      <Text style={styles.tagText}>{item.term}</Text>
                     </PressScale>
-                  );
-                })}
+                  ))}
+                </View>
               </View>
-            </View>
+            </MotionView>
 
-            <View style={styles.section}>
+            <MotionView delay={230} preset="up" style={styles.section}>
               <View style={styles.sectionHead}>
                 <Text style={styles.sectionTitle}>Tous les rayons</Text>
                 <Text style={styles.sectionMeta}>{exploreCategories.length} catégories</Text>
@@ -274,7 +316,7 @@ function ExploreScreen() {
                           key={cat.id}
                           title={cat.title}
                           image={cat.image}
-                          height={cat.height + 8}
+                          height={Math.round((cat.height + 8) * 1.2)}
                           flex={cat.flex}
                           count={count || undefined}
                           index={idx}
@@ -285,9 +327,9 @@ function ExploreScreen() {
                   </View>
                 ))}
               </View>
-            </View>
-          </View>
-        </ScrollView>
+            </MotionView>
+          </Animated.View>
+        </Animated.ScrollView>
       </Page>
     </Screen>
   );
@@ -303,42 +345,82 @@ function createStyles(colors: AppColors) {
       top: 0,
       left: 0,
       right: 0,
-      zIndex: 0,
-    },
+      zIndex: 0 },
     scrollLayer: {
       flex: 1,
-      zIndex: 1,
-    },
+      zIndex: 1 },
     scrollContent: { paddingBottom: tabBarClearance },
+    hero: {
+      paddingHorizontal: 20,
+      paddingTop: 8,
+      paddingBottom: 44,
+      overflow: 'hidden' },
+    heroOrb: {
+      position: 'absolute',
+      width: 180,
+      height: 180,
+      borderRadius: 90,
+      top: -50,
+      right: -40 },
+    header: {
+      flexDirection: 'row',
+      justifyContent: 'space-between',
+      alignItems: 'center',
+      gap: 12 },
+    headerText: { flex: 1, gap: 2 },
+    eyebrow: { fontSize: 11, fontWeight: '700', letterSpacing: 0.4 },
+    hello: { fontSize: 28, letterSpacing: -0.4, ...displayFont('800') },
+    actions: { flexDirection: 'row', alignItems: 'center', gap: 8 },
+    subtitle: {
+      fontSize: 14,
+      lineHeight: 20,
+      maxWidth: '92%',
+      marginTop: 10 },
     heroStats: {
       flexDirection: 'row',
       alignItems: 'center',
       borderRadius: 16,
       paddingVertical: 12,
-      paddingHorizontal: 16,
-      marginTop: 18,
-      borderWidth: 1,
-    },
-    heroStat: { flex: 1, alignItems: 'center', gap: 4, paddingVertical: 2 },
-    heroStatValue: { fontSize: 18, ...displayFont('800') },
-    heroStatLabel: { fontSize: 11, fontWeight: '600', textAlign: 'center' },
-    heroDivider: { width: 1, height: 28 },
+      paddingHorizontal: 14,
+      marginTop: 18 },
+    heroStat: {
+      flex: 1,
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'center',
+      gap: 6 },
+    heroStatText: { fontSize: 11, fontWeight: '700' },
+    heroDivider: { width: 1, height: 24 },
     bodySheet: {
       backgroundColor: colors.bg,
       borderTopLeftRadius: 28,
       borderTopRightRadius: 28,
       paddingHorizontal: 20,
-      paddingTop: 20,
+      paddingTop: 8,
       gap: 22,
-      // Tall enough so the sheet covers the hero while scrolling.
       minHeight: Dimensions.get('window').height,
-    },
+      ...Platform.select({
+        ios: {
+          shadowColor: '#1c1613',
+          shadowOffset: { width: 0, height: -8 },
+          shadowRadius: 18,
+          shadowOpacity: 0.14 },
+        android: { elevation: 8 },
+        default: {} }) },
+    sheetHandle: {
+      alignItems: 'center',
+      justifyContent: 'center',
+      paddingVertical: 8 },
+    sheetHandleBar: {
+      width: 44,
+      height: 4,
+      borderRadius: 999,
+      backgroundColor: colors.border },
     section: { gap: 12 },
     sectionHead: {
       flexDirection: 'row',
       alignItems: 'baseline',
-      justifyContent: 'space-between',
-    },
+      justifyContent: 'space-between' },
     sectionTitle: { color: colors.text, fontSize: 18, ...displayFont('700') },
     sectionMeta: { color: colors.muted, fontSize: 12, fontWeight: '600' },
     sectionLink: { color: colors.gold, fontSize: 13, fontWeight: '700' },
@@ -346,83 +428,46 @@ function createStyles(colors: AppColors) {
     quickCard: {
       width: 108,
       backgroundColor: colors.white,
-      borderWidth: 1,
-      borderColor: colors.border,
       borderRadius: 18,
       padding: 12,
       alignItems: 'center',
-      gap: 8,
-    },
+      gap: 8 },
     quickImageWrap: {
       width: 64,
       height: 64,
       borderRadius: 32,
       overflow: 'hidden',
-      backgroundColor: colors.cream,
-    },
+      backgroundColor: colors.cream },
     quickImage: { width: '100%', height: '100%' },
     quickLabel: { color: colors.text, fontSize: 13, fontWeight: '700', textAlign: 'center' },
     quickCount: { color: colors.placeholder, fontSize: 10, fontWeight: '600' },
     productRow: { gap: 12, paddingRight: 4 },
     suggestCard: {
       backgroundColor: colors.white,
-      borderWidth: 1,
-      borderColor: colors.border,
       borderRadius: 18,
       padding: 14,
-      gap: 12,
-    },
+      gap: 12 },
     suggestHead: {
       flexDirection: 'row',
       alignItems: 'center',
       justifyContent: 'space-between',
-      gap: 12,
-    },
+      gap: 12 },
     suggestHeadLeft: { flexDirection: 'row', alignItems: 'center', gap: 8, flex: 1 },
+    suggestTitle: { color: colors.text, fontSize: 16, fontWeight: '800' },
+    livePill: { flexDirection: 'row', alignItems: 'center', gap: 6 },
     liveDot: {
-      width: 8,
-      height: 8,
+      width: 7,
+      height: 7,
       borderRadius: 4,
-      backgroundColor: colors.terracotta,
-    },
-    suggestTitle: { color: colors.text, fontSize: 15, fontWeight: '700' },
+      backgroundColor: colors.terracotta },
     trendMeta: { color: colors.muted, fontSize: 11, fontWeight: '600' },
-    chips: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
-    chip: {
-      flexDirection: 'row',
-      alignItems: 'center',
-      gap: 6,
-      maxWidth: '100%',
+    tagWrap: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
+    tag: {
       backgroundColor: colors.bg,
-      borderWidth: 1,
-      borderColor: colors.border,
       borderRadius: 999,
-      paddingHorizontal: 10,
-      paddingVertical: 8,
-    },
-    chipHot: {
-      backgroundColor: colors.cream,
-      borderColor: colors.gold,
-    },
-    chipRank: {
-      minWidth: 14,
-      color: colors.muted,
-      fontSize: 11,
-      fontWeight: '800',
-      textAlign: 'center',
-    },
-    chipRankHot: { color: colors.gold },
-    chipText: { color: colors.text, fontSize: 13, fontWeight: '600', flexShrink: 1 },
-    chipTextHot: { fontWeight: '700' },
-    chipHeatTrack: {
-      width: 28,
-      height: 3,
-      borderRadius: 2,
-      backgroundColor: colors.border,
-      overflow: 'hidden',
-    },
-    chipHeatFill: { height: '100%', borderRadius: 2 },
-    grid: { gap: 12 },
-    gridRow: { flexDirection: 'row', gap: 12, alignItems: 'stretch' },
-  });
+      paddingHorizontal: 14,
+      paddingVertical: 8 },
+    tagText: { color: colors.text, fontSize: 13, fontWeight: '600' },
+    grid: { gap: 6 },
+    gridRow: { flexDirection: 'row', gap: 6, alignItems: 'stretch' } });
 }

@@ -9,28 +9,33 @@ type Props = ImageProps & {
   frameStyle?: StyleProp<ViewStyle>;
 };
 
-/** Catalog image with blurhash + solid frame placeholder. */
+/** Catalog image with blurhash + solid frame placeholder. Local `require()` sources paint instantly. */
 export const AppImage = memo(function AppImage({
   style,
   frameStyle,
   placeholder = imagePlaceholder,
   placeholderContentFit = 'cover',
-  // Cross-dissolve often sticks on web and leaves a blank cream frame.
-  transition = Platform.OS === 'web' ? 0 : 160,
+  transition,
   cachePolicy = 'memory-disk',
   contentFit = 'cover',
+  source,
   ...rest
 }: Props) {
   const colors = useColors();
   const styles = useMemo(() => createStyles(colors), [colors]);
+  const localAsset = typeof source === 'number';
+  // Bundled assets: no fade / no remote fetch — native feel.
+  const resolvedTransition = transition ?? (localAsset || Platform.OS === 'web' ? 0 : 120);
+
   return (
     <View style={[styles.frame, frameStyle]}>
       <Image
         {...rest}
+        source={source}
         style={[styles.image, style]}
-        placeholder={placeholder}
+        placeholder={localAsset ? undefined : placeholder}
         placeholderContentFit={placeholderContentFit}
-        transition={transition}
+        transition={resolvedTransition}
         cachePolicy={cachePolicy}
         contentFit={contentFit}
       />

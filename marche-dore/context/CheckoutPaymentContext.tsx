@@ -1,14 +1,17 @@
+import {
+  formatBeninPhone,
+  isValidBeninPhone,
+  maskBeninPhone,
+} from '@/lib/beninPhone';
+import { usePayments } from '@/context/PaymentsContext';
 import React, { createContext, useCallback, useContext, useMemo, useState } from 'react';
 
 export type PaymentId = 'om' | 'wave' | 'card' | 'cod';
 
 export type PaymentSetup = {
   methodId: PaymentId;
-  /** Display label e.g. Orange Money */
   label: string;
-  /** Masked detail shown in checkout */
   detail: string;
-  /** Raw fields kept in memory for the session (demo — not persisted) */
   phone?: string;
   cardLast4?: string;
   cardBrand?: string;
@@ -27,6 +30,7 @@ const CheckoutPaymentContext = createContext<CheckoutPaymentContextValue | null>
 
 export function CheckoutPaymentProvider({ children }: { children: React.ReactNode }) {
   const [setup, setSetupState] = useState<PaymentSetup | null>(null);
+  const { methodById } = usePayments();
 
   const setSetup = useCallback((next: PaymentSetup | null) => {
     setSetupState(next);
@@ -37,18 +41,21 @@ export function CheckoutPaymentProvider({ children }: { children: React.ReactNod
   const isReady = useCallback(
     (methodId: PaymentId) => {
       if (methodId === 'cod') return true;
-      return Boolean(setup?.methodId === methodId && setup.ready);
+      if (setup?.methodId === methodId && setup.ready) return true;
+      return Boolean(methodById(methodId)?.ready);
     },
-    [setup],
+    [setup, methodById],
   );
 
   const detailFor = useCallback(
     (methodId: PaymentId) => {
       if (methodId === 'cod') return 'Espèces au livreur';
       if (setup?.methodId === methodId && setup.ready) return setup.detail;
+      const wallet = methodById(methodId);
+      if (wallet?.ready) return wallet.detail;
       return null;
     },
-    [setup],
+    [setup, methodById],
   );
 
   const value = useMemo(
@@ -66,11 +73,10 @@ export function useCheckoutPayment() {
 }
 
 export function maskPhone(phone: string) {
+  if (isValidBeninPhone(phone)) return maskBeninPhone(phone);
   const digits = phone.replace(/\D/g, '');
   if (digits.length < 4) return phone;
-  const last = digits.slice(-2);
-  const mid = digits.slice(-4, -2);
-  return `97 *** ${mid} ${last}`.replace(/^97/, digits.startsWith('229') ? '97' : digits.slice(0, 2) || '97');
+  return maskBeninPhone(formatBeninPhone(phone));
 }
 
 export function maskCard(number: string) {

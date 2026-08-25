@@ -2,11 +2,16 @@ import { AppImage } from '@/components/AppImage';
 import { Page, ProductCard, Screen, TabHero } from '@/components/ui';
 import { MotionView, PressScale } from '@/components/motion';
 import { displayFont, heroChrome, tabBarClearance, type AppColors } from '@/constants/theme';
+import { useAddresses } from '@/context/AddressesContext';
 import { useColors, useTheme } from '@/context/ThemeContext';
 import { CartLine, lineListTotal, lineProduct, lineTotal, useCart } from '@/context/CartContext';
+import { useStores } from '@/context/StoresContext';
 import { chipRoute, getProducts, homeCategories, recommendedIds } from '@/data/catalog';
+import { formatDistanceKm, formatDurationMin } from '@/lib/deliveryRouting';
 import { formatFcfa } from '@/lib/format';
 import { navigateTab, tabPaths } from '@/lib/navigation';
+import { openSearchScreen } from '@/lib/searchNav';
+import { useDeliveryEstimate } from '@/lib/useDeliveryEstimate';
 import { Feather } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
 import { router } from 'expo-router';
@@ -20,8 +25,7 @@ import {
   StyleSheet,
   Text,
   TextInput,
-  View,
-} from 'react-native';
+  View } from 'react-native';
 
 const DELETE_WIDTH = 88;
 const OPEN_X = -DELETE_WIDTH;
@@ -34,8 +38,7 @@ const HERO_OVERLAP = 28;
 function SwipeCartItem({
   line,
   onRemove,
-  onSetQty,
-}: {
+  onSetQty }: {
   line: CartLine;
   onRemove: () => void;
   onSetQty: (qty: number) => void;
@@ -51,28 +54,23 @@ function SwipeCartItem({
   const deleteProgress = translateX.interpolate({
     inputRange: [OPEN_X, OPEN_X / 2, 0],
     outputRange: [1, 0.55, 0],
-    extrapolate: 'clamp',
-  });
+    extrapolate: 'clamp' });
   const deleteScale = translateX.interpolate({
     inputRange: [OPEN_X - OVERSWIPE, OPEN_X, OPEN_X / 2, 0],
     outputRange: [1.18, 1, 0.72, 0.45],
-    extrapolate: 'clamp',
-  });
+    extrapolate: 'clamp' });
   const deleteRotate = translateX.interpolate({
     inputRange: [OPEN_X, 0],
     outputRange: ['0deg', '-18deg'],
-    extrapolate: 'clamp',
-  });
+    extrapolate: 'clamp' });
   const railOpacity = translateX.interpolate({
     inputRange: [OPEN_X, 0],
     outputRange: [1, 0.35],
-    extrapolate: 'clamp',
-  });
+    extrapolate: 'clamp' });
   const itemScale = translateX.interpolate({
     inputRange: [OPEN_X, 0],
     outputRange: [0.985, 1],
-    extrapolate: 'clamp',
-  });
+    extrapolate: 'clamp' });
 
   const snapTo = (toValue: number) => {
     offset.current = toValue;
@@ -80,8 +78,7 @@ function SwipeCartItem({
       toValue,
       useNativeDriver: true,
       friction: 7,
-      tension: 68,
-    }).start();
+      tension: 68 }).start();
   };
 
   const animateRemove = () => {
@@ -91,13 +88,11 @@ function SwipeCartItem({
       Animated.timing(translateX, {
         toValue: -420,
         duration: 220,
-        useNativeDriver: true,
-      }),
+        useNativeDriver: true }),
       Animated.timing(rowOpacity, {
         toValue: 0,
         duration: 180,
-        useNativeDriver: true,
-      }),
+        useNativeDriver: true }),
     ]).start(({ finished }) => {
       if (finished) onRemove();
     });
@@ -134,8 +129,7 @@ function SwipeCartItem({
         }
         const open = projected < OPEN_X / 2 || g.vx < -0.35;
         snapTo(open ? OPEN_X : 0);
-      },
-    }),
+      } }),
   ).current;
 
   if (!p) return null;
@@ -153,10 +147,9 @@ function SwipeCartItem({
               styles.deleteIconWrap,
               {
                 opacity: deleteProgress,
-                transform: [{ scale: deleteScale }, { rotate: deleteRotate }],
-              },
+                transform: [{ scale: deleteScale }, { rotate: deleteRotate }] },
             ]}>
-            <Feather name="trash-2" size={20} color={colors.white} />
+            <Feather name="trash-2" size={20} color={colors.onAccent} />
           </Animated.View>
           <Animated.Text style={[styles.deleteLabel, { opacity: deleteProgress }]}>Retirer</Animated.Text>
         </Pressable>
@@ -190,7 +183,7 @@ function SwipeCartItem({
           </Pressable>
           <Text style={styles.qtyVal}>{line.qty}</Text>
           <Pressable style={[styles.qtyBtn, styles.qtyPlus]} onPress={() => onSetQty(line.qty + 1)} hitSlop={8}>
-            <Feather name="plus" size={13} color={colors.white} />
+            <Feather name="plus" size={13} color={colors.onAccent} />
           </Pressable>
         </View>
       </Animated.View>
@@ -215,7 +208,8 @@ function CartScreen() {
   const chrome = useMemo(() => heroChrome(scheme), [scheme]);
   const styles = useMemo(() => createStyles(colors), [colors]);
   const [heroHeight, setHeroHeight] = useState(140);
-
+  const { defaultAddress } = useAddresses();
+  const { selectedStore } = useStores();
   const {
     lines,
     count,
@@ -229,8 +223,18 @@ function CartScreen() {
     applyPromo,
     clearPromo,
     promoCode,
-    promoMessage,
-  } = useCart();
+    promoMessage } = useCart();
+  const routeEstimate = useDeliveryEstimate(
+    selectedStore.coordinate,
+    defaultAddress.coordinate,
+  );
+  const etaText = routeEstimate.loading
+    ? 'Calcul du trajet…'
+    : routeEstimate.unavailable
+      ? formatFcfa(delivery)
+      : routeEstimate.approximated
+        ? `Approx. ${formatDistanceKm(routeEstimate.distanceMeters)} · ~${formatDurationMin(routeEstimate.durationSeconds)} · ${selectedStore.name}`
+        : `${formatDistanceKm(routeEstimate.distanceMeters)} · ~${formatDurationMin(routeEstimate.durationSeconds)} · ${selectedStore.name}`;
   const [promo, setPromo] = useState('');
   const [summaryOpen, setSummaryOpen] = useState(false);
 
@@ -327,11 +331,11 @@ function CartScreen() {
                     start={{ x: 0, y: 0 }}
                     end={{ x: 1, y: 0 }}
                     style={styles.emptyCtaGradient}>
-                    <Feather name="compass" size={16} color={colors.white} />
+                    <Feather name="compass" size={16} color={colors.onAccent} />
                     <Text style={styles.emptyCtaText}>Découvrir les produits</Text>
                   </LinearGradient>
                 </PressScale>
-                <Pressable style={styles.emptySecondary} onPress={() => router.push('/search')}>
+                <Pressable style={styles.emptySecondary} onPress={openSearchScreen}>
                   <Feather name="search" size={15} color={colors.gold} />
                   <Text style={styles.emptySecondaryText}>Rechercher un produit</Text>
                 </Pressable>
@@ -412,14 +416,13 @@ function CartScreen() {
               showsVerticalScrollIndicator={false}
               keyboardShouldPersistTaps="handled">
               <View style={styles.bodySheet}>
-                <Pressable style={styles.deliveryCard} onPress={() => router.push('/checkout')}>
+                <Pressable style={styles.deliveryCard} onPress={() => router.push('/account/addresses')}>
                   <View style={styles.deliveryIcon}>
                     <Feather name="map-pin" size={17} color={colors.gold} />
                   </View>
                   <View style={styles.deliveryText}>
-                    <Text style={styles.deliveryLabel}>Livraison à</Text>
-                    <Text style={styles.deliveryAddress}>Rue 12, Ganhi</Text>
-                    <Text style={styles.deliveryEta}>Demain, 14h – 16h · {formatFcfa(delivery)}</Text>
+                    <Text style={styles.deliveryLabel}>Livraison · {defaultAddress.label}</Text>
+                    <Text style={styles.deliveryEta}>{etaText}</Text>
                   </View>
                   <Feather name="chevron-right" size={18} color={colors.placeholder} />
                 </Pressable>
@@ -611,31 +614,25 @@ function createStyles(colors: AppColors) {
     top: 0,
     left: 0,
     right: 0,
-    zIndex: 0,
-  },
+    zIndex: 0 },
   scrollLayer: {
     flex: 1,
-    zIndex: 1,
-  },
+    zIndex: 1 },
   countPill: {
     minWidth: 28,
     height: 28,
     borderRadius: 14,
-    borderWidth: 1,
     alignItems: 'center',
     justifyContent: 'center',
-    paddingHorizontal: 8,
-  },
+    paddingHorizontal: 8 },
   countPillText: { fontSize: 13, fontWeight: '800' },
   continueBtn: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 2,
-    borderWidth: 1,
     borderRadius: 999,
     paddingHorizontal: 12,
-    paddingVertical: 8,
-  },
+    paddingVertical: 8 },
   continueText: { fontSize: 13, fontWeight: '700' },
   bodySheet: {
     backgroundColor: colors.bg,
@@ -644,26 +641,20 @@ function createStyles(colors: AppColors) {
     paddingHorizontal: 20,
     paddingTop: 18,
     gap: 12,
-    minHeight: Dimensions.get('window').height,
-  },
+    minHeight: Dimensions.get('window').height },
   content: {
-    paddingBottom: tabBarClearance + 132,
-  },
+    paddingBottom: tabBarClearance + 132 },
   emptyScroll: {
-    paddingBottom: tabBarClearance + 24,
-  },
+    paddingBottom: tabBarClearance + 24 },
   checkoutDock: {
     position: 'absolute',
     left: 0,
     right: 0,
     bottom: 96,
     zIndex: 30,
-    paddingHorizontal: 16,
-  },
+    paddingHorizontal: 16 },
   checkoutBar: {
     backgroundColor: colors.white,
-    borderWidth: 1,
-    borderColor: colors.border,
     borderRadius: 22,
     paddingHorizontal: 16,
     paddingTop: 12,
@@ -673,13 +664,11 @@ function createStyles(colors: AppColors) {
     shadowOffset: { width: 0, height: 8 },
     shadowOpacity: 0.14,
     shadowRadius: 18,
-    elevation: 10,
-  },
+    elevation: 10 },
   checkoutSummary: {
     flexDirection: 'row',
     alignItems: 'center',
-    justifyContent: 'space-between',
-  },
+    justifyContent: 'space-between' },
   checkoutLabel: { color: colors.muted, fontSize: 11, fontWeight: '600' },
   checkoutTotalRow: { flexDirection: 'row', alignItems: 'baseline', gap: 8 },
   checkoutTotal: { color: colors.text, fontSize: 22, fontWeight: '800' },
@@ -687,8 +676,7 @@ function createStyles(colors: AppColors) {
     color: colors.placeholder,
     fontSize: 13,
     fontWeight: '500',
-    textDecorationLine: 'line-through',
-  },
+    textDecorationLine: 'line-through' },
   checkoutToggle: { flexDirection: 'row', alignItems: 'center', gap: 3 },
   checkoutToggleText: { color: colors.muted, fontSize: 12, fontWeight: '600' },
   checkoutBtn: { borderRadius: 14, overflow: 'hidden' },
@@ -698,33 +686,27 @@ function createStyles(colors: AppColors) {
     justifyContent: 'space-between',
     gap: 12,
     paddingVertical: 14,
-    paddingHorizontal: 18,
-  },
+    paddingHorizontal: 18 },
   checkoutBtnText: { color: '#ffffff', fontSize: 15, fontWeight: '800' },
   checkoutBtnRight: { flexDirection: 'row', alignItems: 'center', gap: 8 },
   checkoutBtnPrice: {
     color: '#ffffff',
     fontSize: 15,
-    fontWeight: '700',
-  },
+    fontWeight: '700' },
   emptyHeroCard: {
     backgroundColor: colors.white,
     borderRadius: 28,
-    borderWidth: 1,
-    borderColor: colors.border,
     paddingHorizontal: 22,
     paddingTop: 28,
     paddingBottom: 22,
     alignItems: 'center',
-    gap: 10,
-  },
+    gap: 10 },
   emptyArt: {
     width: 160,
     height: 120,
     alignItems: 'center',
     justifyContent: 'center',
-    marginBottom: 4,
-  },
+    marginBottom: 4 },
   emptyBlobA: {
     position: 'absolute',
     width: 118,
@@ -732,8 +714,7 @@ function createStyles(colors: AppColors) {
     borderRadius: 59,
     backgroundColor: colors.cream,
     top: 0,
-    left: 8,
-  },
+    left: 8 },
   emptyBlobB: {
     position: 'absolute',
     width: 72,
@@ -741,19 +722,15 @@ function createStyles(colors: AppColors) {
     borderRadius: 36,
     backgroundColor: colors.blush,
     right: 6,
-    bottom: 8,
-  },
+    bottom: 8 },
   emptyIconRing: {
     width: 78,
     height: 78,
     borderRadius: 26,
     backgroundColor: colors.white,
-    borderWidth: 1,
-    borderColor: colors.border,
     alignItems: 'center',
     justifyContent: 'center',
-    zIndex: 1,
-  },
+    zIndex: 1 },
   emptyBadge: {
     position: 'absolute',
     bottom: 2,
@@ -764,10 +741,7 @@ function createStyles(colors: AppColors) {
     borderRadius: 999,
     paddingHorizontal: 10,
     paddingVertical: 5,
-    borderWidth: 1,
-    borderColor: colors.border,
-    zIndex: 2,
-  },
+    zIndex: 2 },
   emptyBadgeText: { color: colors.gold, fontSize: 11, fontWeight: '800' },
   emptyTitle: {
     color: colors.text,
@@ -775,55 +749,46 @@ function createStyles(colors: AppColors) {
     textAlign: 'center',
     letterSpacing: -0.4,
     lineHeight: 30,
-    ...displayFont('800'),
-  },
+    ...displayFont('800') },
   emptySub: {
     color: colors.muted,
     fontSize: 14,
     textAlign: 'center',
     lineHeight: 21,
     marginBottom: 4,
-    maxWidth: 300,
-  },
+    maxWidth: 300 },
   emptyCta: {
     alignSelf: 'stretch',
     borderRadius: 16,
     overflow: 'hidden',
-    marginTop: 4,
-  },
+    marginTop: 4 },
   emptyCtaGradient: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
     gap: 8,
     paddingVertical: 15,
-    minHeight: 52,
-  },
-  emptyCtaText: { color: colors.white, fontSize: 15, fontWeight: '800' },
+    minHeight: 52 },
+  emptyCtaText: { color: colors.onAccent, fontSize: 15, fontWeight: '800' },
   emptySecondary: { flexDirection: 'row', alignItems: 'center', gap: 8, paddingVertical: 8 },
   emptySecondaryText: { color: colors.gold, fontSize: 14, fontWeight: '600' },
   emptyPerks: {
     flexDirection: 'row',
-    gap: 8,
-  },
+    gap: 8 },
   emptyPerk: {
     flex: 1,
     alignItems: 'center',
     gap: 6,
     backgroundColor: colors.white,
-    borderWidth: 1,
-    borderColor: colors.border,
     borderRadius: 16,
     paddingVertical: 12,
-    paddingHorizontal: 6,
-  },
+    paddingHorizontal: 6 },
   emptyPerkText: { color: colors.muted, fontSize: 10, fontWeight: '600', textAlign: 'center' },
   emptySection: { gap: 12 },
   emptySectionHead: {
     flexDirection: 'row',
     alignItems: 'baseline',
-    justifyContent: 'space-between',
-  },
+    justifyContent: 'space-between' },
   emptySectionTitle: { color: colors.text, fontSize: 17, fontWeight: '800' },
   emptySectionLink: { color: colors.gold, fontSize: 13, fontWeight: '700' },
   emptySectionMeta: { color: colors.muted, fontSize: 12, fontWeight: '600' },
@@ -833,10 +798,7 @@ function createStyles(colors: AppColors) {
     width: 68,
     height: 68,
     borderRadius: 34,
-    borderWidth: 1,
-    borderColor: colors.border,
-    backgroundColor: colors.white,
-  },
+    backgroundColor: colors.white },
   emptyCatLabel: { color: colors.text, fontSize: 12, fontWeight: '600', textAlign: 'center' },
   emptyProductsRow: { gap: 12, paddingRight: 4, paddingBottom: 4 },
   deliveryCard: {
@@ -844,55 +806,44 @@ function createStyles(colors: AppColors) {
     alignItems: 'center',
     gap: 12,
     backgroundColor: colors.white,
-    borderWidth: 1,
-    borderColor: colors.border,
     borderRadius: 18,
-    padding: 14,
-  },
+    padding: 14 },
   deliveryIcon: {
     width: 40,
     height: 40,
     borderRadius: 12,
     backgroundColor: colors.cream,
     alignItems: 'center',
-    justifyContent: 'center',
-  },
+    justifyContent: 'center' },
   deliveryText: { flex: 1, gap: 2 },
   deliveryLabel: {
     color: colors.placeholder,
     fontSize: 10,
     fontWeight: '700',
     textTransform: 'uppercase',
-    letterSpacing: 0.4,
-  },
-  deliveryAddress: { color: colors.text, fontSize: 15, fontWeight: '700' },
-  deliveryEta: { color: colors.muted, fontSize: 12 },
+    letterSpacing: 0.4 },
+  deliveryEta: { color: colors.text, fontSize: 14, fontWeight: '700' },
   savingsBanner: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 8,
-    backgroundColor: '#edf7ef',
+    backgroundColor: colors.successSoft,
     borderRadius: 14,
     paddingHorizontal: 14,
-    paddingVertical: 11,
-  },
+    paddingVertical: 11 },
   savingsText: { color: colors.green, fontSize: 13, fontWeight: '600', flex: 1 },
   progressCard: {
     backgroundColor: colors.white,
-    borderWidth: 1,
-    borderColor: colors.border,
     borderRadius: 16,
     padding: 13,
-    gap: 8,
-  },
+    gap: 8 },
   progressHead: { flexDirection: 'row', alignItems: 'center', gap: 8 },
   progressTitle: { color: colors.text, fontSize: 13, fontWeight: '600', flex: 1 },
   progressTrack: {
     height: 5,
     borderRadius: 3,
     backgroundColor: colors.border,
-    overflow: 'hidden',
-  },
+    overflow: 'hidden' },
   progressFill: { height: '100%', borderRadius: 3, backgroundColor: colors.gold },
   progressFillGreen: { height: '100%', borderRadius: 3, backgroundColor: colors.green },
   progressSub: { color: colors.muted, fontSize: 11, fontWeight: '500' },
@@ -900,62 +851,51 @@ function createStyles(colors: AppColors) {
     flexDirection: 'row',
     alignItems: 'baseline',
     justifyContent: 'space-between',
-    marginTop: 4,
-  },
+    marginTop: 4 },
   sectionTitle: { color: colors.text, fontSize: 17, fontWeight: '800' },
   sectionMeta: { color: colors.muted, fontSize: 12, fontWeight: '600' },
   itemsCard: {
     backgroundColor: colors.white,
-    borderWidth: 1,
-    borderColor: colors.border,
     borderRadius: 20,
-    overflow: 'hidden',
-  },
+    overflow: 'hidden' },
   itemDivider: { height: 1, backgroundColor: colors.border, marginLeft: 96 },
   swipeHint: {
     color: colors.placeholder,
     fontSize: 11,
     textAlign: 'center',
-    marginTop: -2,
-  },
+    marginTop: -2 },
   swipeWrap: {
     backgroundColor: colors.terracotta,
-    overflow: 'hidden',
-  },
+    overflow: 'hidden' },
   deleteRail: {
     ...StyleSheet.absoluteFillObject,
     alignItems: 'flex-end',
     justifyContent: 'center',
-    paddingRight: 18,
-  },
+    paddingRight: 18 },
   deleteBtn: {
     width: 64,
     alignItems: 'center',
     justifyContent: 'center',
-    gap: 5,
-  },
+    gap: 5 },
   deleteIconWrap: {
     width: 40,
     height: 40,
     borderRadius: 20,
     backgroundColor: 'rgba(255,255,255,0.18)',
     alignItems: 'center',
-    justifyContent: 'center',
-  },
+    justifyContent: 'center' },
   deleteLabel: { color: colors.white, fontSize: 10, fontWeight: '700' },
   item: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 10,
     backgroundColor: colors.white,
-    padding: 12,
-  },
+    padding: 12 },
   itemLink: {
     flex: 1,
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 12,
-  },
+    gap: 12 },
   thumbWrap: { position: 'relative' },
   thumb: { width: 72, height: 72, borderRadius: 14, backgroundColor: colors.bg },
   discountBadge: {
@@ -965,9 +905,8 @@ function createStyles(colors: AppColors) {
     backgroundColor: colors.terracotta,
     borderRadius: 6,
     paddingHorizontal: 5,
-    paddingVertical: 2,
-  },
-  discountText: { color: colors.white, fontSize: 9, fontWeight: '800' },
+    paddingVertical: 2 },
+  discountText: { color: colors.onAccent, fontSize: 9, fontWeight: '800' },
   itemInfo: { flex: 1, gap: 3 },
   name: { color: colors.text, fontWeight: '700', fontSize: 14, lineHeight: 18 },
   unit: { color: colors.muted, fontSize: 12 },
@@ -977,37 +916,29 @@ function createStyles(colors: AppColors) {
     color: colors.placeholder,
     fontSize: 12,
     fontWeight: '500',
-    textDecorationLine: 'line-through',
-  },
+    textDecorationLine: 'line-through' },
   qty: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 8,
     backgroundColor: colors.bg,
     borderRadius: 12,
-    padding: 4,
-  },
+    padding: 4 },
   qtyBtn: {
     width: 28,
     height: 28,
     borderRadius: 9,
     backgroundColor: colors.white,
-    borderWidth: 1,
-    borderColor: colors.border,
     alignItems: 'center',
-    justifyContent: 'center',
-  },
-  qtyPlus: { backgroundColor: colors.gold, borderColor: colors.gold },
+    justifyContent: 'center' },
+  qtyPlus: { backgroundColor: colors.gold },
   qtySign: { color: colors.text, fontWeight: '700', fontSize: 15 },
   qtyVal: { color: colors.text, fontWeight: '800', fontSize: 14, minWidth: 16, textAlign: 'center' },
   promoCard: {
     backgroundColor: colors.white,
-    borderWidth: 1,
-    borderColor: colors.border,
     borderRadius: 18,
     padding: 14,
-    gap: 12,
-  },
+    gap: 12 },
   promoHead: { flexDirection: 'row', alignItems: 'center', gap: 10 },
   promoIcon: {
     width: 32,
@@ -1015,8 +946,7 @@ function createStyles(colors: AppColors) {
     borderRadius: 10,
     backgroundColor: colors.cream,
     alignItems: 'center',
-    justifyContent: 'center',
-  },
+    justifyContent: 'center' },
   promoTitle: { color: colors.text, fontSize: 15, fontWeight: '700' },
   promoRow: {
     flexDirection: 'row',
@@ -1024,39 +954,29 @@ function createStyles(colors: AppColors) {
     gap: 8,
     backgroundColor: colors.bg,
     borderRadius: 14,
-    borderWidth: 1,
-    borderColor: colors.border,
     paddingLeft: 14,
     paddingRight: 6,
-    height: 48,
-  },
-  promoInput: { flex: 1, color: colors.text, fontSize: 14, fontWeight: '600' },
+    height: 48 },
+  promoInput: { flex: 1, color: colors.text, fontSize: 16, fontWeight: '600' },
   promoApply: {
     backgroundColor: colors.gold,
     borderRadius: 10,
     paddingHorizontal: 14,
-    paddingVertical: 9,
-  },
+    paddingVertical: 9 },
   promoApplyText: { color: colors.white, fontWeight: '700', fontSize: 13 },
   promoClear: {
     width: 34,
     height: 34,
     borderRadius: 10,
     backgroundColor: colors.white,
-    borderWidth: 1,
-    borderColor: colors.border,
     alignItems: 'center',
-    justifyContent: 'center',
-  },
+    justifyContent: 'center' },
   promoChips: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
   promoChip: {
-    borderWidth: 1,
-    borderColor: colors.border,
     borderRadius: 999,
     paddingHorizontal: 12,
     paddingVertical: 7,
-    backgroundColor: colors.cream,
-  },
+    backgroundColor: colors.cream },
   promoChipText: { color: colors.gold, fontSize: 12, fontWeight: '700' },
   promoError: { color: colors.terracotta, fontSize: 12, fontWeight: '600' },
   promoOk: { flexDirection: 'row', alignItems: 'center', gap: 6 },
@@ -1065,11 +985,9 @@ function createStyles(colors: AppColors) {
     backgroundColor: colors.bg,
     borderRadius: 14,
     padding: 12,
-    gap: 8,
-  },
+    gap: 8 },
   sumRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
   sumLabel: { color: colors.muted, fontSize: 14 },
   sumVal: { color: colors.text, fontWeight: '600', fontSize: 14 },
-  sumValGreen: { color: colors.green },
-});
+  sumValGreen: { color: colors.green } });
 }

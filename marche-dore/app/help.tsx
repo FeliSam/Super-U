@@ -64,7 +64,7 @@ export default function HelpCenterScreen() {
           </View>
 
           <Pressable style={styles.cta} onPress={() => router.push('/chat/support' as Href)}>
-            <Feather name="message-circle" size={18} color={colors.white} />
+            <Feather name="message-circle" size={18} color={colors.onAccent} />
             <Text style={styles.ctaText}>Parler à l’assistance</Text>
           </Pressable>
           <Pressable style={styles.secondary} onPress={() => router.push('/contact')}>
@@ -84,8 +84,7 @@ function createStyles(colors: AppColors) {
     alignItems: 'center',
     justifyContent: 'space-between',
     paddingHorizontal: 20,
-    paddingVertical: 12,
-  },
+    paddingVertical: 12 },
   headerSpacer: { width: 40 },
   title: { color: colors.text, fontSize: 17, ...displayFont('700') },
   content: { padding: 20, gap: 14, paddingBottom: 40 },
@@ -95,8 +94,7 @@ function createStyles(colors: AppColors) {
     alignItems: 'center',
     backgroundColor: colors.cream,
     borderRadius: 16,
-    padding: 14,
-  },
+    padding: 14 },
   introTitle: { color: colors.text, fontSize: 15, fontWeight: '700' },
   introSub: { color: colors.muted, fontSize: 12, marginTop: 2 },
   chips: { gap: 8 },
@@ -104,27 +102,20 @@ function createStyles(colors: AppColors) {
     borderRadius: 999,
     paddingHorizontal: 12,
     paddingVertical: 8,
-    backgroundColor: colors.white,
-    borderWidth: 1,
-    borderColor: colors.border,
-  },
+    backgroundColor: colors.white },
   chipOn: { backgroundColor: colors.cream, borderColor: colors.gold },
   chipText: { color: colors.muted, fontSize: 12, fontWeight: '600' },
   chipTextOn: { color: colors.text },
   list: {
     backgroundColor: colors.white,
     borderRadius: 18,
-    borderWidth: 1,
-    borderColor: colors.border,
-    overflow: 'hidden',
-  },
+    overflow: 'hidden' },
   item: {
     paddingHorizontal: 14,
     paddingVertical: 14,
     borderBottomWidth: 1,
     borderBottomColor: colors.border,
-    gap: 8,
-  },
+    gap: 8 },
   itemHead: { flexDirection: 'row', alignItems: 'center', gap: 10 },
   itemQ: { flex: 1, color: colors.text, fontSize: 14, fontWeight: '700' },
   itemA: { color: colors.muted, fontSize: 13, lineHeight: 19 },
@@ -135,10 +126,8 @@ function createStyles(colors: AppColors) {
     gap: 8,
     backgroundColor: colors.terracotta,
     borderRadius: 16,
-    paddingVertical: 14,
-  },
-  ctaText: { color: colors.white, fontSize: 15, fontWeight: '800' },
+    paddingVertical: 14 },
+  ctaText: { color: colors.onAccent, fontSize: 15, fontWeight: '800' },
   secondary: { alignItems: 'center', paddingVertical: 8 },
-  secondaryText: { color: colors.gold, fontSize: 14, fontWeight: '700' },
-});
+  secondaryText: { color: colors.gold, fontSize: 14, fontWeight: '700' } });
 }

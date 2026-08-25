@@ -1,4 +1,5 @@
 import { appLocation } from '@/constants/location';
+import type { LngLat } from '@/constants/map';
 
 export type UserProfile = {
   firstName: string;
@@ -15,6 +16,8 @@ export type DeliveryAddress = {
   city: string;
   phone: string;
   default: boolean;
+  /** [lng, lat] — pin MapLibre / simulation livreur */
+  coordinate: LngLat;
 };
 
 export type PaymentMethod = {
@@ -41,6 +44,7 @@ export const deliveryAddresses: DeliveryAddress[] = [
     city: appLocation.city,
     phone: appLocation.phone,
     default: true,
+    coordinate: [appLocation.longitude, appLocation.latitude],
   },
   {
     id: 'work',
@@ -49,6 +53,7 @@ export const deliveryAddresses: DeliveryAddress[] = [
     city: appLocation.city,
     phone: appLocation.phone,
     default: false,
+    coordinate: [2.3905, 6.3558],
   },
 ];
 

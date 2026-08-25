@@ -9,7 +9,14 @@ export const lightColors = {
   cream: '#fdf0d5',
   blush: '#fceae6',
   green: '#498c53',
+  /** Card / elevated surface (flips dark in dark mode). */
   white: '#ffffff',
+  /** Always-light ink for text/icons on gold, terracotta, green, dark gradients. */
+  onAccent: '#ffffff',
+  /** Soft success / “in stock” wash. */
+  successSoft: '#edf7ef',
+  /** Soft selected / unread wash. */
+  selectSoft: '#fffdfb',
   overlay: 'rgba(28,22,19,0.45)',
 } as const;
 
@@ -25,6 +32,9 @@ export const darkColors = {
   blush: '#3a221e',
   green: '#6aad74',
   white: '#1e1a17',
+  onAccent: '#ffffff',
+  successSoft: 'rgba(106,173,116,0.18)',
+  selectSoft: 'rgba(232,166,58,0.14)',
   overlay: 'rgba(0,0,0,0.55)',
 } as const;
 

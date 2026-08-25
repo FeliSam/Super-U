@@ -4,10 +4,10 @@ import { displayFont, type AppColors } from '@/constants/theme';
 import { useColors } from '@/context/ThemeContext';
 import {
   getConversation,
-  getThread,
   quickRepliesByKind,
   type ChatMessage,
 } from '@/data/messages';
+import { useChat } from '@/context/ChatContext';
 import { Feather } from '@expo/vector-icons';
 import { Href, router, useLocalSearchParams } from 'expo-router';
 import { useEffect, useMemo, useRef, useState } from 'react';
@@ -32,15 +32,17 @@ export default function ChatThreadScreen() {
   const insets = useSafeAreaInsets();
   const conversationId = id === 'MD-2024-0847' ? 'courier-moussa' : (id ?? 'support');
   const conversation = getConversation(conversationId) ?? getConversation('support')!;
-  const [messages, setMessages] = useState<ChatMessage[]>(() => getThread(conversation.id));
+  const { getMessages, appendMessage, ready } = useChat();
+  const [messages, setMessages] = useState<ChatMessage[]>(() => getMessages(conversation.id));
   const [draft, setDraft] = useState('');
   const scrollRef = useRef<ScrollView>(null);
   const quickReplies = useMemo(() => quickRepliesByKind[conversation.kind], [conversation.kind]);
 
   useEffect(() => {
-    setMessages(getThread(conversation.id));
+    if (!ready) return;
+    setMessages(getMessages(conversation.id));
     setDraft('');
-  }, [conversation.id]);
+  }, [conversation.id, ready, getMessages]);
 
   useEffect(() => {
     const t = setTimeout(() => scrollRef.current?.scrollToEnd({ animated: false }), 50);
@@ -52,7 +54,9 @@ export default function ChatThreadScreen() {
     if (!trimmed) return;
     const now = new Date();
     const time = `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`;
-    setMessages((prev) => [...prev, { id: `m-${Date.now()}`, from: 'me', text: trimmed, time }]);
+    const mine: ChatMessage = { id: `m-${Date.now()}`, from: 'me', text: trimmed, time };
+    appendMessage(conversation.id, mine);
+    setMessages((prev) => [...prev, mine]);
     setDraft('');
 
     setTimeout(() => {
@@ -62,15 +66,14 @@ export default function ChatThreadScreen() {
           : conversation.kind === 'courier'
             ? 'Parfait, c’est noté. À tout à l’heure !'
             : 'Merci, nous restons disponibles si besoin.';
-      setMessages((prev) => [
-        ...prev,
-        {
-          id: `c-${Date.now()}`,
-          from: 'them',
-          text: reply,
-          time: `${String(new Date().getHours()).padStart(2, '0')}:${String(new Date().getMinutes()).padStart(2, '0')}`,
-        },
-      ]);
+      const theirs: ChatMessage = {
+        id: `c-${Date.now()}`,
+        from: 'them',
+        text: reply,
+        time: `${String(new Date().getHours()).padStart(2, '0')}:${String(new Date().getMinutes()).padStart(2, '0')}`,
+      };
+      appendMessage(conversation.id, theirs);
+      setMessages((prev) => [...prev, theirs]);
     }, 1100);
   };
 
@@ -214,8 +217,7 @@ function createStyles(colors: AppColors) {
     paddingVertical: 10,
     borderBottomWidth: 1,
     borderBottomColor: colors.border,
-    backgroundColor: colors.white,
-  },
+    backgroundColor: colors.white },
   headerCenter: { flex: 1, flexDirection: 'row', alignItems: 'center', gap: 10 },
   headerAvatar: { width: 40, height: 40, borderRadius: 20 },
   headerAvatarFallback: {
@@ -224,8 +226,7 @@ function createStyles(colors: AppColors) {
     borderRadius: 20,
     backgroundColor: colors.cream,
     alignItems: 'center',
-    justifyContent: 'center',
-  },
+    justifyContent: 'center' },
   headerAvatarSupport: { backgroundColor: colors.terracotta },
   headerText: { flex: 1, gap: 2 },
   headerName: { color: colors.text, fontSize: 15, ...displayFont('700') },
@@ -243,8 +244,7 @@ function createStyles(colors: AppColors) {
     borderRadius: 999,
     paddingHorizontal: 12,
     paddingVertical: 7,
-    marginBottom: 4,
-  },
+    marginBottom: 4 },
   bannerText: { color: colors.muted, fontSize: 12, fontWeight: '600' },
   bubbleWrap: { flexDirection: 'row', alignItems: 'flex-end', gap: 8, maxWidth: '92%' },
   bubbleWrapMe: { alignSelf: 'flex-end' },
@@ -256,25 +256,19 @@ function createStyles(colors: AppColors) {
     borderRadius: 14,
     backgroundColor: colors.cream,
     alignItems: 'center',
-    justifyContent: 'center',
-  },
+    justifyContent: 'center' },
   bubble: {
     borderRadius: 18,
     paddingHorizontal: 14,
     paddingVertical: 10,
     gap: 4,
-    maxWidth: 280,
-  },
+    maxWidth: 280 },
   bubbleMe: {
     backgroundColor: colors.terracotta,
-    borderBottomRightRadius: 6,
-  },
+    borderBottomRightRadius: 6 },
   bubbleThem: {
     backgroundColor: colors.white,
-    borderWidth: 1,
-    borderColor: colors.border,
-    borderBottomLeftRadius: 6,
-  },
+    borderBottomLeftRadius: 6 },
   bubbleText: { color: colors.text, fontSize: 14, lineHeight: 20 },
   bubbleTextMe: { color: colors.white },
   bubbleTime: { color: colors.placeholder, fontSize: 10, alignSelf: 'flex-end' },
@@ -285,17 +279,13 @@ function createStyles(colors: AppColors) {
     backgroundColor: colors.white,
     paddingTop: 10,
     paddingHorizontal: 12,
-    gap: 10,
-  },
+    gap: 10 },
   quickRow: { gap: 8, paddingHorizontal: 4 },
   quickChip: {
     backgroundColor: colors.bg,
-    borderWidth: 1,
-    borderColor: colors.border,
     borderRadius: 999,
     paddingHorizontal: 12,
-    paddingVertical: 8,
-  },
+    paddingVertical: 8 },
   quickChipText: { color: colors.muted, fontSize: 12, fontWeight: '600' },
   inputRow: { flexDirection: 'row', alignItems: 'flex-end', gap: 10 },
   input: {
@@ -303,24 +293,19 @@ function createStyles(colors: AppColors) {
     minHeight: 44,
     maxHeight: 110,
     backgroundColor: colors.bg,
-    borderWidth: 1,
-    borderColor: colors.border,
     borderRadius: 16,
     paddingHorizontal: 14,
     paddingVertical: 10,
     color: colors.text,
     fontSize: 16,
     lineHeight: 22,
-    ...(Platform.OS === 'web' ? { outlineStyle: 'none' as never } : {}),
-  },
+    ...(Platform.OS === 'web' ? { outlineStyle: 'none' as never } : {}) },
   sendBtn: {
     width: 44,
     height: 44,
     borderRadius: 14,
     backgroundColor: colors.gold,
     alignItems: 'center',
-    justifyContent: 'center',
-  },
-  sendBtnDisabled: { opacity: 0.45 },
-});
+    justifyContent: 'center' },
+  sendBtnDisabled: { opacity: 0.45 } });
 }

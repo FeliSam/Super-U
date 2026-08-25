@@ -1,5 +1,6 @@
 import { AppImage } from '@/components/AppImage';
-import { CtaButton, IconCircle, Page, ProductCard, Screen } from '@/components/ui';
+import { EmptyStateHero } from '@/components/EmptyStateHero';
+import { IconCircle, Page, ProductCard, Screen } from '@/components/ui';
 import { type AppColors } from '@/constants/theme';
 import { useColors } from '@/context/ThemeContext';
 import { useCart } from '@/context/CartContext';
@@ -21,8 +22,7 @@ import {
   StyleSheet,
   Text,
   useWindowDimensions,
-  View,
-} from 'react-native';
+  View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 type FilterId = 'all' | 'promo';
@@ -38,6 +38,16 @@ function FavoriteRow({
 }) {
   const colors = useColors();
   const styles = useMemo(() => createStyles(colors), [colors]);
+  const [justAdded, setJustAdded] = useState(false);
+  const addedTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const handleAdd = () => {
+    onAdd();
+    setJustAdded(true);
+    if (addedTimer.current) clearTimeout(addedTimer.current);
+    addedTimer.current = setTimeout(() => setJustAdded(false), 1200);
+  };
+
   return (
     <View style={styles.row}>
       <Pressable style={styles.rowMain} onPress={() => router.push(`/product/${product.id}`)}>
@@ -58,15 +68,25 @@ function FavoriteRow({
         </View>
       </Pressable>
       <View style={styles.rowActions}>
-        <Pressable style={styles.iconBtn} onPress={onAdd} hitSlop={6} accessibilityLabel="Ajouter au panier">
-          <Feather name="plus" size={16} color={colors.white} />
+        <Pressable
+          style={[styles.iconBtn, justAdded && styles.iconBtnDone]}
+          onPress={handleAdd}
+          hitSlop={8}
+          accessibilityLabel={justAdded ? 'Ajouté au panier' : 'Ajouter au panier'}
+          accessibilityRole="button">
+          <Feather
+            name={justAdded ? 'check' : 'shopping-bag'}
+            size={15}
+            color={colors.onAccent}
+          />
         </Pressable>
         <Pressable
           style={styles.iconBtnGhost}
           onPress={onRemove}
-          hitSlop={6}
-          accessibilityLabel="Retirer des favoris">
-          <Feather name="heart" size={16} color={colors.terracotta} />
+          hitSlop={8}
+          accessibilityLabel="Retirer des favoris"
+          accessibilityRole="button">
+          <Feather name="heart" size={15} color={colors.terracotta} />
         </Pressable>
       </View>
     </View>
@@ -110,8 +130,7 @@ export default function FavoritesScreen() {
         toValue: 1,
         duration: 700,
         easing: Easing.linear,
-        useNativeDriver: true,
-      }),
+        useNativeDriver: true }),
     );
     loop.start();
     try {
@@ -134,11 +153,8 @@ export default function FavoritesScreen() {
       {
         rotate: spin.interpolate({
           inputRange: [0, 1],
-          outputRange: ['0deg', '360deg'],
-        }),
-      },
-    ],
-  };
+          outputRange: ['0deg', '360deg'] }) },
+    ] };
 
   return (
     <Screen>
@@ -155,9 +171,9 @@ export default function FavoritesScreen() {
               colors={[colors.terracotta]}
             />
           }>
-          <LinearGradient colors={['#fceae6', colors.cream, colors.bg]} style={[styles.hero, { paddingTop: insets.top + 8 }]}>
+          <LinearGradient colors={[colors.blush, colors.cream, colors.bg]} style={[styles.hero, { paddingTop: insets.top + 8 }]}>
             <View style={styles.heroBar}>
-              <IconCircle name="chevron-left" onPress={() => router.back()} bg="rgba(255,255,255,0.88)" />
+              <IconCircle name="chevron-left" onPress={() => router.back()} variant="hero" />
               <Text style={styles.heroTitle}>Mes favoris</Text>
               <Pressable
                 style={styles.refreshBtn}
@@ -219,16 +235,23 @@ export default function FavoritesScreen() {
             ) : null}
 
             {count === 0 && !refreshing ? (
-              <View style={styles.empty}>
-                <View style={styles.emptyIcon}>
-                  <Feather name="heart" size={32} color={colors.placeholder} style={{ opacity: 0.55 }} />
-                </View>
-                <Text style={styles.emptyTitle}>Aucun favori</Text>
-                <Text style={styles.emptySub}>
-                  Touchez le cœur sur une fiche produit pour l’ajouter ici.
-                </Text>
-                <CtaButton label="Explorer le marché" onPress={() => navigateTab(tabPaths.explore)} />
-              </View>
+              <EmptyStateHero
+                icon="heart"
+                badge="Favoris"
+                title={'Aucun favori\npour l’instant'}
+                subtitle="Touchez le cœur sur une fiche produit pour le retrouver ici et le rajouter vite au panier."
+                primaryLabel="Explorer le marché"
+                primaryIcon="compass"
+                onPrimary={() => navigateTab(tabPaths.explore)}
+                secondaryLabel="Voir les promotions"
+                secondaryIcon="tag"
+                onSecondary={() => router.push('/promotions')}
+                perks={[
+                  { icon: 'zap', label: 'Accès rapide', color: colors.gold },
+                  { icon: 'bell', label: 'Alertes prix', color: colors.green },
+                  { icon: 'shopping-bag', label: 'Ajout 1 tap', color: colors.terracotta },
+                ]}
+              />
             ) : count > 0 ? (
               <>
                 <View style={styles.toolbar}>
@@ -293,7 +316,7 @@ export default function FavoritesScreen() {
                 )}
 
                 <Pressable style={styles.addAll} onPress={addAll}>
-                  <Feather name="shopping-bag" size={18} color={colors.white} />
+                  <Feather name="shopping-bag" size={18} color={colors.onAccent} />
                   <Text style={styles.addAllText}>
                     Ajouter {filtered.length} article{filtered.length > 1 ? 's' : ''} au panier
                   </Text>
@@ -333,14 +356,12 @@ function createStyles(colors: AppColors) {
   hero: {
     paddingHorizontal: 20,
     paddingBottom: 28,
-    gap: 16,
-  },
+    gap: 16 },
   heroBar: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    gap: 8,
-  },
+    gap: 8 },
   heroTitle: { color: colors.text, fontSize: 18, fontWeight: '700', flex: 1, textAlign: 'center' },
   refreshBtn: {
     flexDirection: 'row',
@@ -349,16 +370,14 @@ function createStyles(colors: AppColors) {
     paddingHorizontal: 10,
     paddingVertical: 8,
     borderRadius: 12,
-    backgroundColor: 'rgba(255,255,255,0.72)',
-  },
+    backgroundColor: colors.white },
   refreshText: { color: colors.terracotta, fontSize: 12, fontWeight: '700' },
   clearBtn: {
     marginTop: 4,
     paddingHorizontal: 12,
     paddingVertical: 8,
     borderRadius: 12,
-    backgroundColor: 'rgba(255,255,255,0.72)',
-  },
+    backgroundColor: colors.white },
   clearText: { color: colors.terracotta, fontSize: 13, fontWeight: '700' },
   heroBody: { alignItems: 'center', gap: 8, paddingTop: 4 },
   heroIcon: {
@@ -367,18 +386,14 @@ function createStyles(colors: AppColors) {
     borderRadius: 32,
     backgroundColor: colors.white,
     alignItems: 'center',
-    justifyContent: 'center',
-  },
+    justifyContent: 'center' },
   heroCount: { color: colors.text, fontSize: 28, fontWeight: '800' },
   heroSub: { color: colors.muted, fontSize: 13, textAlign: 'center', paddingHorizontal: 12 },
   heroStats: {
     flexDirection: 'row',
-    backgroundColor: 'rgba(255,255,255,0.78)',
+    backgroundColor: colors.white,
     borderRadius: 18,
-    paddingVertical: 14,
-    borderWidth: 1,
-    borderColor: colors.border,
-  },
+    paddingVertical: 14 },
   heroStat: { flex: 1, alignItems: 'center', gap: 2 },
   heroStatValue: { color: colors.text, fontSize: 16, fontWeight: '800' },
   heroStatLabel: { color: colors.muted, fontSize: 11, fontWeight: '600' },
@@ -390,40 +405,31 @@ function createStyles(colors: AppColors) {
     borderTopRightRadius: 28,
     paddingHorizontal: 20,
     paddingTop: 20,
-    gap: 16,
-  },
+    gap: 16 },
   refreshingEmpty: {
     alignItems: 'center',
     gap: 10,
-    paddingVertical: 24,
-  },
+    paddingVertical: 24 },
   refreshingText: { color: colors.muted, fontSize: 13, fontWeight: '600' },
   toolbar: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    gap: 10,
-  },
+    gap: 10 },
   filters: { flexDirection: 'row', gap: 8, flex: 1 },
   chip: {
     borderRadius: 999,
     paddingHorizontal: 12,
     paddingVertical: 8,
-    backgroundColor: colors.white,
-    borderWidth: 1,
-    borderColor: colors.border,
-  },
+    backgroundColor: colors.white },
   chipOn: { backgroundColor: colors.terracotta, borderColor: colors.terracotta },
   chipText: { color: colors.muted, fontSize: 12, fontWeight: '700' },
-  chipTextOn: { color: colors.white },
+  chipTextOn: { color: colors.onAccent },
   viewToggle: {
     flexDirection: 'row',
     backgroundColor: colors.white,
     borderRadius: 12,
-    borderWidth: 1,
-    borderColor: colors.border,
-    overflow: 'hidden',
-  },
+    overflow: 'hidden' },
   viewBtn: { paddingHorizontal: 10, paddingVertical: 8 },
   viewBtnOn: { backgroundColor: colors.terracotta },
   list: { gap: 10 },
@@ -434,10 +440,7 @@ function createStyles(colors: AppColors) {
     gap: 10,
     backgroundColor: colors.white,
     borderRadius: 18,
-    padding: 10,
-    borderWidth: 1,
-    borderColor: colors.border,
-  },
+    padding: 10 },
   rowMain: { flex: 1, flexDirection: 'row', alignItems: 'center', gap: 12 },
   rowImage: { width: 64, height: 64, borderRadius: 14, backgroundColor: colors.cream },
   rowText: { flex: 1, gap: 2 },
@@ -446,26 +449,28 @@ function createStyles(colors: AppColors) {
   rowPriceLine: { flexDirection: 'row', alignItems: 'center', gap: 8, marginTop: 2 },
   rowPrice: { color: colors.text, fontSize: 15, fontWeight: '800' },
   promoPill: {
-    backgroundColor: '#fceae6',
+    backgroundColor: colors.blush,
     borderRadius: 8,
     paddingHorizontal: 6,
-    paddingVertical: 2,
-  },
+    paddingVertical: 2 },
   promoPillText: { color: colors.terracotta, fontSize: 10, fontWeight: '800' },
-  rowActions: { flexDirection: 'row', gap: 6 },
+  rowActions: { flexDirection: 'row', alignItems: 'center', gap: 8 },
   iconBtn: {
-    width: 34,
-    height: 34,
-    borderRadius: 17,
-    backgroundColor: colors.terracotta,
+    width: 40,
+    height: 40,
+    borderRadius: 14,
+    backgroundColor: colors.gold,
     alignItems: 'center',
     justifyContent: 'center',
   },
+  iconBtnDone: {
+    backgroundColor: colors.green,
+  },
   iconBtnGhost: {
-    width: 34,
-    height: 34,
-    borderRadius: 17,
-    backgroundColor: '#fceae6',
+    width: 40,
+    height: 40,
+    borderRadius: 14,
+    backgroundColor: colors.blush,
     alignItems: 'center',
     justifyContent: 'center',
   },
@@ -476,9 +481,8 @@ function createStyles(colors: AppColors) {
     gap: 10,
     backgroundColor: colors.terracotta,
     borderRadius: 16,
-    paddingVertical: 14,
-  },
-  addAllText: { color: colors.white, fontSize: 14, fontWeight: '800' },
+    paddingVertical: 14 },
+  addAllText: { color: colors.onAccent, fontSize: 14, fontWeight: '800' },
   empty: { alignItems: 'center', gap: 12, paddingVertical: 28, paddingHorizontal: 12 },
   emptyIcon: {
     width: 72,
@@ -486,10 +490,7 @@ function createStyles(colors: AppColors) {
     borderRadius: 36,
     backgroundColor: colors.white,
     alignItems: 'center',
-    justifyContent: 'center',
-    borderWidth: 1,
-    borderColor: colors.border,
-  },
+    justifyContent: 'center' },
   emptyTitle: { color: colors.text, fontSize: 18, fontWeight: '800' },
   emptySub: { color: colors.muted, fontSize: 13, textAlign: 'center', lineHeight: 19 },
   filterEmpty: { alignItems: 'center', gap: 8, paddingVertical: 20 },
@@ -499,6 +500,5 @@ function createStyles(colors: AppColors) {
   suggestHead: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
   suggestTitle: { color: colors.text, fontSize: 16, fontWeight: '800' },
   suggestLink: { color: colors.gold, fontSize: 13, fontWeight: '700' },
-  suggestRow: { gap: 12, paddingRight: 4 },
-});
+  suggestRow: { gap: 12, paddingRight: 4 } });
 }

@@ -30,8 +30,7 @@ const THEME_OPTIONS: {
 function SettingToggle({
   item,
   colors,
-  styles,
-}: {
+  styles }: {
   item: ToggleRow;
   colors: AppColors;
   styles: ReturnType<typeof createStyles>;
@@ -65,8 +64,7 @@ function createStyles(colors: AppColors) {
       alignItems: 'center',
       justifyContent: 'space-between',
       paddingHorizontal: 20,
-      paddingVertical: 12,
-    },
+      paddingVertical: 12 },
     headerSpacer: { width: 40 },
     title: { color: colors.text, fontSize: 17, ...displayFont('700') },
     content: { padding: 20, gap: 22, paddingBottom: 40 },
@@ -76,32 +74,26 @@ function createStyles(colors: AppColors) {
       fontSize: 13,
       fontWeight: '700',
       textTransform: 'uppercase',
-      letterSpacing: 0.4,
-    },
+      letterSpacing: 0.4 },
     sectionHint: { color: colors.placeholder, fontSize: 13, marginBottom: 2 },
     card: {
       backgroundColor: colors.white,
-      borderWidth: 1,
-      borderColor: colors.border,
       borderRadius: 18,
-      overflow: 'hidden',
-    },
+      overflow: 'hidden' },
     row: {
       flexDirection: 'row',
       alignItems: 'center',
       justifyContent: 'space-between',
       paddingHorizontal: 14,
       paddingVertical: 13,
-      gap: 12,
-    },
+      gap: 12 },
     option: {
       flexDirection: 'row',
       alignItems: 'center',
       justifyContent: 'space-between',
       paddingHorizontal: 14,
       paddingVertical: 13,
-      gap: 12,
-    },
+      gap: 12 },
     optionActive: { backgroundColor: colors.cream },
     rowPressed: { backgroundColor: colors.bg },
     rowLeft: { flexDirection: 'row', alignItems: 'center', gap: 12, flex: 1 },
@@ -112,8 +104,7 @@ function createStyles(colors: AppColors) {
       borderRadius: 12,
       backgroundColor: colors.cream,
       alignItems: 'center',
-      justifyContent: 'center',
-    },
+      justifyContent: 'center' },
     iconActive: { backgroundColor: colors.gold },
     rowLabel: { color: colors.text, fontSize: 15, fontWeight: '600' },
     rowSub: { color: colors.muted, fontSize: 12 },
@@ -122,8 +113,7 @@ function createStyles(colors: AppColors) {
       width: 20,
       height: 20,
       borderRadius: 10,
-      borderWidth: 1.5,
-      borderColor: colors.border,
+      backgroundColor: colors.bg,
     },
     note: {
       flexDirection: 'row',
@@ -131,10 +121,8 @@ function createStyles(colors: AppColors) {
       gap: 10,
       backgroundColor: colors.cream,
       borderRadius: 14,
-      padding: 14,
-    },
-    noteText: { flex: 1, color: colors.muted, fontSize: 13, lineHeight: 18 },
-  });
+      padding: 14 },
+    noteText: { flex: 1, color: colors.muted, fontSize: 13, lineHeight: 18 } });
 }
 
 export default function SettingsScreen() {
@@ -146,7 +134,6 @@ export default function SettingsScreen() {
   const [smsEnabled, setSmsEnabled] = useState(false);
   const [emailEnabled, setEmailEnabled] = useState(true);
   const [promoEnabled, setPromoEnabled] = useState(true);
-  const [language, setLanguage] = useState<'fr' | 'en'>('fr');
 
   const notificationToggles: ToggleRow[] = [
     {
@@ -154,29 +141,25 @@ export default function SettingsScreen() {
       label: 'Notifications push',
       subtitle: 'Alertes de livraison et commandes',
       value: pushEnabled,
-      onToggle: setPushEnabled,
-    },
+      onToggle: setPushEnabled },
     {
       icon: 'message-circle',
       label: 'Offres par SMS',
       subtitle: 'Promos et rappels sur votre mobile',
       value: smsEnabled,
-      onToggle: setSmsEnabled,
-    },
+      onToggle: setSmsEnabled },
     {
       icon: 'mail',
       label: 'Newsletter',
       subtitle: 'Actualités et recettes par e-mail',
       value: emailEnabled,
-      onToggle: setEmailEnabled,
-    },
+      onToggle: setEmailEnabled },
     {
       icon: 'tag',
       label: 'Offres personnalisées',
       subtitle: 'Suggestions selon vos achats',
       value: promoEnabled,
-      onToggle: setPromoEnabled,
-    },
+      onToggle: setPromoEnabled },
   ];
 
   return (
@@ -209,7 +192,7 @@ export default function SettingsScreen() {
                       onPress={() => setPreference(option.id)}>
                       <View style={styles.rowLeft}>
                         <View style={[styles.icon, active && styles.iconActive]}>
-                          <Feather name={option.icon} size={18} color={active ? '#fff' : colors.gold} />
+                          <Feather name={option.icon} size={18} color={active ? colors.onAccent : colors.gold} />
                         </View>
                         <View style={styles.rowText}>
                           <Text style={styles.rowLabel}>{option.label}</Text>
@@ -245,51 +228,18 @@ export default function SettingsScreen() {
           <View style={styles.section}>
             <Text style={styles.sectionTitle}>Langue</Text>
             <View style={styles.card}>
-              <Pressable
-                style={({ pressed }) => [
-                  styles.option,
-                  language === 'fr' && styles.optionActive,
-                  pressed && styles.rowPressed,
-                ]}
-                onPress={() => setLanguage('fr')}>
+              <View style={styles.option}>
                 <View style={styles.rowLeft}>
-                  <View style={[styles.icon, language === 'fr' && styles.iconActive]}>
-                    <Feather name="globe" size={18} color={language === 'fr' ? '#fff' : colors.gold} />
+                  <View style={[styles.icon, styles.iconActive]}>
+                    <Feather name="globe" size={18} color={colors.onAccent} />
                   </View>
                   <View style={styles.rowText}>
                     <Text style={styles.rowLabel}>Français</Text>
-                    <Text style={styles.rowSub}>Langue par défaut</Text>
+                    <Text style={styles.rowSub}>Langue de l’application</Text>
                   </View>
                 </View>
-                {language === 'fr' ? (
-                  <Feather name="check-circle" size={20} color={colors.gold} />
-                ) : (
-                  <View style={styles.radio} />
-                )}
-              </Pressable>
-              <View style={styles.separator} />
-              <Pressable
-                style={({ pressed }) => [
-                  styles.option,
-                  language === 'en' && styles.optionActive,
-                  pressed && styles.rowPressed,
-                ]}
-                onPress={() => setLanguage('en')}>
-                <View style={styles.rowLeft}>
-                  <View style={[styles.icon, language === 'en' && styles.iconActive]}>
-                    <Feather name="globe" size={18} color={language === 'en' ? '#fff' : colors.gold} />
-                  </View>
-                  <View style={styles.rowText}>
-                    <Text style={styles.rowLabel}>English</Text>
-                    <Text style={styles.rowSub}>Coming soon</Text>
-                  </View>
-                </View>
-                {language === 'en' ? (
-                  <Feather name="check-circle" size={20} color={colors.gold} />
-                ) : (
-                  <View style={styles.radio} />
-                )}
-              </Pressable>
+                <Feather name="check-circle" size={20} color={colors.gold} />
+              </View>
             </View>
           </View>
 

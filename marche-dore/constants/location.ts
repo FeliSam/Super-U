@@ -10,6 +10,9 @@ export const appLocation = {
   fullAddress: 'Rue 12, Ganhi, Cotonou',
   countryLine: 'Cotonou · Bénin',
   footerLine: 'Cotonou, Bénin',
+  /** Approx. Ganhi — used by MapLibre delivery map */
+  latitude: 6.3604,
+  longitude: 2.4178,
   phone: '+229 97 12 34 56',
   phoneDigits: '+229971234567',
   supportLandline: '+229 21 00 00 00',

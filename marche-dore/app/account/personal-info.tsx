@@ -1,11 +1,11 @@
 import { CtaButton, IconCircle, Screen, Page } from '@/components/ui';
 import { displayFont, type AppColors } from '@/constants/theme';
+import { useProfile } from '@/context/ProfileContext';
 import { useColors } from '@/context/ThemeContext';
-import { userProfile } from '@/data/account';
 import { avatar } from '@/data/catalog';
 import { Feather } from '@expo/vector-icons';
 import { router } from 'expo-router';
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { Image, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
 
 function Field({
@@ -41,11 +41,20 @@ function Field({
 export default function PersonalInfoScreen() {
   const colors = useColors();
   const styles = useMemo(() => createStyles(colors), [colors]);
+  const { profile, setProfile } = useProfile();
+  const [form, setForm] = useState(profile);
 
-  const [form, setForm] = useState(userProfile);
+  useEffect(() => {
+    setForm(profile);
+  }, [profile]);
 
   const update = (key: keyof typeof form) => (value: string) => {
     setForm((prev) => ({ ...prev, [key]: value }));
+  };
+
+  const save = () => {
+    setProfile(form);
+    router.back();
   };
 
   return (
@@ -89,7 +98,7 @@ export default function PersonalInfoScreen() {
         </ScrollView>
 
         <View style={styles.footer}>
-          <CtaButton label="Enregistrer les modifications" onPress={() => router.back()} />
+          <CtaButton label="Enregistrer les modifications" onPress={save} />
         </View>
       </Page>
     </Screen>
@@ -98,56 +107,50 @@ export default function PersonalInfoScreen() {
 
 function createStyles(colors: AppColors) {
   return StyleSheet.create({
-  flex: { flex: 1 },
-  header: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    paddingHorizontal: 20,
-    paddingVertical: 12,
-  },
-  headerSpacer: { width: 40 },
-  title: { color: colors.text, fontSize: 17, ...displayFont('700') },
-  content: { padding: 20, gap: 16, paddingBottom: 24 },
-  avatarSection: { alignItems: 'center', gap: 10 },
-  avatar: { width: 88, height: 88, borderRadius: 44, borderWidth: 3, borderColor: colors.white },
-  changePhoto: { flexDirection: 'row', alignItems: 'center', gap: 6 },
-  changePhotoText: { color: colors.gold, fontSize: 14, fontWeight: '600' },
-  card: {
-    backgroundColor: colors.white,
-    borderWidth: 1,
-    borderColor: colors.border,
-    borderRadius: 18,
-    padding: 16,
-    gap: 14,
-  },
-  field: { gap: 6 },
-  fieldLabel: { color: colors.muted, fontSize: 12, fontWeight: '600' },
-  input: {
-    backgroundColor: colors.bg,
-    borderWidth: 1,
-    borderColor: colors.border,
-    borderRadius: 12,
-    paddingHorizontal: 14,
-    paddingVertical: 12,
-    color: colors.text,
-    fontSize: 15,
-    fontWeight: '500',
-  },
-  note: {
-    flexDirection: 'row',
-    alignItems: 'flex-start',
-    gap: 10,
-    backgroundColor: colors.cream,
-    borderRadius: 14,
-    padding: 14,
-  },
-  noteText: { flex: 1, color: colors.muted, fontSize: 13, lineHeight: 19 },
-  footer: {
-    padding: 20,
-    borderTopWidth: 1,
-    borderTopColor: colors.border,
-    backgroundColor: colors.white,
-  },
-});
+    flex: { flex: 1 },
+    header: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'space-between',
+      paddingHorizontal: 20,
+      paddingVertical: 12,
+    },
+    headerSpacer: { width: 40 },
+    title: { color: colors.text, fontSize: 17, ...displayFont('700') },
+    content: { padding: 20, gap: 16, paddingBottom: 24 },
+    avatarSection: { alignItems: 'center', gap: 10 },
+    avatar: { width: 88, height: 88, borderRadius: 44 },
+    changePhoto: { flexDirection: 'row', alignItems: 'center', gap: 6 },
+    changePhotoText: { color: colors.gold, fontSize: 14, fontWeight: '600' },
+    card: {
+      backgroundColor: colors.white,
+      borderRadius: 18,
+      padding: 16,
+      gap: 14,
+    },
+    field: { gap: 6 },
+    fieldLabel: { color: colors.muted, fontSize: 12, fontWeight: '600' },
+    input: {
+      backgroundColor: colors.bg,
+      borderRadius: 12,
+      paddingHorizontal: 14,
+      paddingVertical: 12,
+      color: colors.text,
+      fontSize: 16,
+      fontWeight: '500',
+    },
+    note: {
+      flexDirection: 'row',
+      alignItems: 'flex-start',
+      gap: 10,
+      backgroundColor: colors.cream,
+      borderRadius: 14,
+      padding: 14,
+    },
+    noteText: { flex: 1, color: colors.muted, fontSize: 13, lineHeight: 19 },
+    footer: {
+      padding: 20,
+      backgroundColor: colors.white,
+    },
+  });
 }

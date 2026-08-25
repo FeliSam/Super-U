@@ -43,8 +43,7 @@ function createStyles(colors: AppColors) {
     alignItems: 'center',
     justifyContent: 'space-between',
     paddingHorizontal: 20,
-    paddingVertical: 12,
-  },
+    paddingVertical: 12 },
   headerSpacer: { width: 40 },
   title: { color: colors.text, fontSize: 16, fontWeight: '700', maxWidth: 220, textAlign: 'center' },
   content: { padding: 20, gap: 12, paddingBottom: 40 },
@@ -52,12 +51,8 @@ function createStyles(colors: AppColors) {
   card: {
     backgroundColor: colors.white,
     borderRadius: 16,
-    borderWidth: 1,
-    borderColor: colors.border,
     padding: 16,
-    gap: 8,
-  },
+    gap: 8 },
   cardTitle: { color: colors.text, fontSize: 15, fontWeight: '800' },
-  cardBody: { color: colors.muted, fontSize: 13, lineHeight: 20 },
-});
+  cardBody: { color: colors.muted, fontSize: 13, lineHeight: 20 } });
 }

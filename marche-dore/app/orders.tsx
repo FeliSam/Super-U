@@ -1,4 +1,5 @@
 import { AppImage } from '@/components/AppImage';
+import { EmptyStateHero } from '@/components/EmptyStateHero';
 import { IconCircle, Screen, Page } from '@/components/ui';
 import { MotionView, PressScale } from '@/components/motion';
 import { displayFont, type AppColors } from '@/constants/theme';
@@ -10,10 +11,11 @@ import {
   statusLabel,
   useOrders,
   type Order,
-  type OrderStatus,
-} from '@/context/OrdersContext';
+  type OrderStatus } from '@/context/OrdersContext';
 import { formatFcfa } from '@/lib/format';
+import { navigateTab, tabPaths } from '@/lib/navigation';
 import { softShadow } from '@/lib/shadow';
+import { statusTone } from '@/lib/statusTone';
 import { Feather } from '@expo/vector-icons';
 import { Href, router } from 'expo-router';
 import { useMemo, useRef, useState } from 'react';
@@ -24,8 +26,7 @@ import {
   ScrollView,
   StyleSheet,
   Text,
-  View,
-} from 'react-native';
+  View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 type FilterId = 'all' | 'active' | 'done';
@@ -43,23 +44,6 @@ const OVERSWIPE = 24;
 
 function isActiveStatus(status: OrderStatus) {
   return status === 'confirmed' || status === 'preparing' || status === 'shipping';
-}
-
-function statusTone(status: OrderStatus, colors: AppColors) {
-  switch (status) {
-    case 'confirmed':
-      return { bg: '#eaf4ec', text: colors.green, icon: 'check-circle' as const };
-    case 'preparing':
-      return { bg: colors.cream, text: colors.gold, icon: 'package' as const };
-    case 'shipping':
-      return { bg: colors.blush, text: colors.terracotta, icon: 'truck' as const };
-    case 'delivered':
-      return { bg: '#eaf4ec', text: colors.green, icon: 'home' as const };
-    case 'cancelled':
-      return { bg: '#f3eeeb', text: colors.muted, icon: 'x-circle' as const };
-    default:
-      return { bg: colors.cream, text: colors.gold, icon: 'package' as const };
-  }
 }
 
 function formatOrderDate(iso: string) {
@@ -87,8 +71,7 @@ function OrderCard({ order, index }: { order: Order; index: number }) {
       toValue,
       useNativeDriver: true,
       friction: 7,
-      tension: 68,
-    }).start();
+      tension: 68 }).start();
   };
 
   const close = () => snapTo(0);
@@ -119,13 +102,11 @@ function OrderCard({ order, index }: { order: Order; index: number }) {
   const leftProgress = translateX.interpolate({
     inputRange: [0, OPEN_LEFT],
     outputRange: [0, 1],
-    extrapolate: 'clamp',
-  });
+    extrapolate: 'clamp' });
   const rightProgress = translateX.interpolate({
     inputRange: [OPEN_RIGHT, 0],
     outputRange: [1, 0],
-    extrapolate: 'clamp',
-  });
+    extrapolate: 'clamp' });
 
   const panResponder = useRef(
     PanResponder.create({
@@ -158,8 +139,7 @@ function OrderCard({ order, index }: { order: Order; index: number }) {
           return;
         }
         snapTo(0);
-      },
-    }),
+      } }),
   ).current;
 
   const primaryLabel = active ? 'Suivre' : 'Recommander';
@@ -171,14 +151,14 @@ function OrderCard({ order, index }: { order: Order; index: number }) {
       <View style={styles.swipeWrap}>
         <Animated.View style={[styles.leftRail, { opacity: leftProgress }]}>
           <Pressable style={styles.helpBtn} onPress={onHelp}>
-            <Feather name="help-circle" size={20} color={colors.white} />
+            <Feather name="help-circle" size={20} color={colors.onAccent} />
             <Text style={styles.railLabel}>Aide</Text>
           </Pressable>
         </Animated.View>
 
         <Animated.View style={[styles.rightRail, { opacity: rightProgress }]}>
           <Pressable style={[styles.primaryBtn, { backgroundColor: primaryBg }]} onPress={onPrimaryAction}>
-            <Feather name={primaryIcon} size={18} color={colors.white} />
+            <Feather name={primaryIcon} size={18} color={colors.onAccent} />
             <Text style={styles.railLabel}>{primaryLabel}</Text>
           </Pressable>
         </Animated.View>
@@ -307,33 +287,44 @@ export default function OrdersScreen() {
           contentContainerStyle={[styles.content, { paddingBottom: Math.max(28, insets.bottom + 16) }]}
           showsVerticalScrollIndicator={false}>
           {!ready ? null : orders.length === 0 ? (
-            <View style={styles.empty}>
-              <View style={styles.emptyIcon}>
-                <Feather name="shopping-bag" size={28} color={colors.gold} />
-              </View>
-              <Text style={styles.emptyTitle}>Pas encore de commande</Text>
-              <Text style={styles.emptyText}>
-                Vos livraisons apparaîtront ici dès que vous aurez finalisé un panier.
-              </Text>
-              <PressScale style={styles.emptyBtn} onPress={() => router.replace('/(tabs)')} scaleTo={0.98}>
-                <Text style={styles.emptyBtnText}>Découvrir le catalogue</Text>
-              </PressScale>
-            </View>
+            <EmptyStateHero
+              icon="clock"
+              badge="Historique"
+              title={'Pas encore\nde commande'}
+              subtitle="Vos livraisons apparaîtront ici dès que vous aurez finalisé un panier — suivi live inclus."
+              primaryLabel="Découvrir les produits"
+              primaryIcon="compass"
+              onPrimary={() => navigateTab(tabPaths.home)}
+              secondaryLabel="Voir mon panier"
+              secondaryIcon="shopping-bag"
+              onSecondary={() => navigateTab(tabPaths.cart)}
+              perks={[
+                { icon: 'package', label: 'Préparation', color: colors.gold },
+                { icon: 'truck', label: 'Livraison', color: colors.green },
+                { icon: 'award', label: 'Points fidélité', color: colors.terracotta },
+              ]}
+            />
           ) : filtered.length === 0 ? (
-            <View style={styles.empty}>
-              <View style={styles.emptyIconSoft}>
-                <Feather name="inbox" size={24} color={colors.muted} />
-              </View>
-              <Text style={styles.emptyTitle}>Aucune commande ici</Text>
-              <Text style={styles.emptyText}>
-                {filter === 'active'
-                  ? 'Pas de livraison en cours pour le moment.'
-                  : 'Pas encore de commande terminée.'}
-              </Text>
-              <PressScale style={styles.emptyGhost} onPress={() => setFilter('all')} scaleTo={0.98}>
-                <Text style={styles.emptyGhostText}>Voir toutes les commandes</Text>
-              </PressScale>
-            </View>
+            <EmptyStateHero
+              icon="inbox"
+              badge="Filtres"
+              title={
+                filter === 'active'
+                  ? 'Aucune livraison\nen cours'
+                  : 'Aucune commande\nterminée'
+              }
+              subtitle={
+                filter === 'active'
+                  ? 'Passez une nouvelle commande pour activer le suivi live.'
+                  : 'Dès qu’une commande sera livrée, elle apparaîtra ici.'
+              }
+              primaryLabel="Voir toutes les commandes"
+              primaryIcon="list"
+              onPrimary={() => setFilter('all')}
+              secondaryLabel="Suivi de commande"
+              secondaryIcon="truck"
+              onSecondary={() => router.push('/tracking' as Href)}
+            />
           ) : (
             <View style={styles.list}>
               {filtered.map((order, i) => (
@@ -356,8 +347,7 @@ function createStyles(colors: AppColors) {
     justifyContent: 'space-between',
     paddingHorizontal: 20,
     paddingBottom: 8,
-    gap: 10,
-  },
+    gap: 10 },
   headerCenter: { flex: 1, alignItems: 'center' },
   headerSpacer: { width: 40 },
   title: { ...displayFont('700'), color: colors.text, fontSize: 18 },
@@ -369,15 +359,12 @@ function createStyles(colors: AppColors) {
     alignItems: 'center',
     gap: 8,
     backgroundColor: colors.white,
-    borderWidth: 1,
-    borderColor: colors.border,
     borderRadius: 999,
     paddingVertical: 8,
-    paddingHorizontal: 14,
-  },
+    paddingHorizontal: 14 },
   chipOn: { backgroundColor: colors.text, borderColor: colors.text },
   chipText: { color: colors.muted, fontSize: 13, fontWeight: '700' },
-  chipTextOn: { color: colors.white },
+  chipTextOn: { color: colors.onAccent },
   chipCount: {
     minWidth: 22,
     height: 22,
@@ -385,64 +372,54 @@ function createStyles(colors: AppColors) {
     paddingHorizontal: 6,
     backgroundColor: colors.bg,
     alignItems: 'center',
-    justifyContent: 'center',
-  },
+    justifyContent: 'center' },
   chipCountOn: { backgroundColor: 'rgba(255,255,255,0.18)' },
   chipCountText: { color: colors.muted, fontSize: 11, fontWeight: '800' },
-  chipCountTextOn: { color: colors.white },
+  chipCountTextOn: { color: colors.onAccent },
   content: { paddingHorizontal: 20, flexGrow: 1 },
   list: { gap: 12 },
   swipeWrap: {
     position: 'relative',
     borderRadius: 22,
-    overflow: 'hidden',
-  },
+    overflow: 'hidden' },
   leftRail: {
     ...StyleSheet.absoluteFillObject,
     right: undefined,
     width: ACTION_W,
     justifyContent: 'center',
-    alignItems: 'stretch',
-  },
+    alignItems: 'stretch' },
   rightRail: {
     ...StyleSheet.absoluteFillObject,
     left: undefined,
     width: ACTION_W,
     justifyContent: 'center',
-    alignItems: 'stretch',
-  },
+    alignItems: 'stretch' },
   helpBtn: {
     flex: 1,
     backgroundColor: colors.muted,
     alignItems: 'center',
     justifyContent: 'center',
     gap: 6,
-    borderRadius: 22,
-  },
+    borderRadius: 22 },
   primaryBtn: {
     flex: 1,
     alignItems: 'center',
     justifyContent: 'center',
     gap: 6,
-    borderRadius: 22,
-  },
+    borderRadius: 22 },
   railLabel: { color: colors.white, fontSize: 11, fontWeight: '800' },
   card: {
     backgroundColor: colors.white,
-    borderWidth: 1,
-    borderColor: colors.border,
     borderRadius: 22,
     padding: 14,
-    gap: 12,
-  },
+    gap: 12 },
   cardTop: { flexDirection: 'row', gap: 12 },
   thumbs: { position: 'relative' },
   thumb: { width: 64, height: 64, borderRadius: 16 },
   thumbFallback: {
     backgroundColor: colors.cream,
     alignItems: 'center',
-    justifyContent: 'center',
-  },
+    justifyContent: 'center' },
   thumbBadge: {
     position: 'absolute',
     right: -6,
@@ -454,10 +431,8 @@ function createStyles(colors: AppColors) {
     backgroundColor: colors.text,
     alignItems: 'center',
     justifyContent: 'center',
-    borderWidth: 2,
-    borderColor: colors.white,
-  },
-  thumbBadgeText: { color: colors.white, fontSize: 11, fontWeight: '800' },
+    borderColor: colors.white },
+  thumbBadgeText: { color: colors.onAccent, fontSize: 11, fontWeight: '800' },
   cardBody: { flex: 1, gap: 6 },
   idRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', gap: 8 },
   id: { ...displayFont('700'), color: colors.text, fontSize: 16, flexShrink: 1 },
@@ -469,8 +444,7 @@ function createStyles(colors: AppColors) {
     gap: 6,
     borderRadius: 999,
     paddingHorizontal: 10,
-    paddingVertical: 5,
-  },
+    paddingVertical: 5 },
   badgeDot: { width: 6, height: 6, borderRadius: 3 },
   badgeText: { fontSize: 11, fontWeight: '800' },
   slot: { color: colors.text, fontSize: 13, fontWeight: '600' },
@@ -482,8 +456,7 @@ function createStyles(colors: AppColors) {
     borderTopWidth: 1,
     borderTopColor: colors.border,
     paddingTop: 12,
-    gap: 8,
-  },
+    gap: 8 },
   footerHint: { flex: 1, color: colors.muted, fontSize: 12, fontWeight: '600' },
   footerBtn: {
     width: 32,
@@ -491,8 +464,7 @@ function createStyles(colors: AppColors) {
     borderRadius: 16,
     backgroundColor: colors.bg,
     alignItems: 'center',
-    justifyContent: 'center',
-  },
+    justifyContent: 'center' },
   footerBtnActive: { backgroundColor: colors.terracotta },
   empty: {
     flex: 1,
@@ -500,8 +472,7 @@ function createStyles(colors: AppColors) {
     justifyContent: 'center',
     paddingHorizontal: 28,
     gap: 10,
-    paddingTop: 48,
-  },
+    paddingTop: 48 },
   emptyIcon: {
     width: 72,
     height: 72,
@@ -509,19 +480,15 @@ function createStyles(colors: AppColors) {
     backgroundColor: colors.cream,
     alignItems: 'center',
     justifyContent: 'center',
-    marginBottom: 6,
-  },
+    marginBottom: 6 },
   emptyIconSoft: {
     width: 64,
     height: 64,
     borderRadius: 32,
     backgroundColor: colors.white,
-    borderWidth: 1,
-    borderColor: colors.border,
     alignItems: 'center',
     justifyContent: 'center',
-    marginBottom: 6,
-  },
+    marginBottom: 6 },
   emptyTitle: { ...displayFont('700'), color: colors.text, fontSize: 18 },
   emptyText: { color: colors.muted, fontSize: 14, textAlign: 'center', lineHeight: 20 },
   emptyBtn: {
@@ -529,10 +496,8 @@ function createStyles(colors: AppColors) {
     backgroundColor: colors.gold,
     borderRadius: 14,
     paddingHorizontal: 20,
-    paddingVertical: 14,
-  },
-  emptyBtnText: { color: colors.white, fontSize: 14, fontWeight: '800' },
+    paddingVertical: 14 },
+  emptyBtnText: { color: colors.onAccent, fontSize: 14, fontWeight: '800' },
   emptyGhost: { paddingVertical: 10, paddingHorizontal: 12 },
-  emptyGhostText: { color: colors.gold, fontSize: 14, fontWeight: '700' },
-});
+  emptyGhostText: { color: colors.gold, fontSize: 14, fontWeight: '700' } });
 }
