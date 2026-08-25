@@ -19,28 +19,23 @@ import {
   type Product,
 } from '@/data/catalog';
 import { openSearchScreen } from '@/lib/searchNav';
-import { softShadow } from '@/lib/shadow';
+import { useExpandableSheet } from '@/lib/expandableSheet';
 import { Feather } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
 import { router, useLocalSearchParams } from 'expo-router';
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import {
-  Dimensions,
   Modal,
   Platform,
   Pressable,
+  ScrollView,
   StyleSheet,
   Text,
   useWindowDimensions,
   View,
 } from 'react-native';
-import { Gesture, GestureDetector, GestureHandlerRootView, ScrollView as GHScrollView } from 'react-native-gesture-handler';
-import Animated, {
-  runOnJS,
-  useAnimatedStyle,
-  useSharedValue,
-  withSpring,
-} from 'react-native-reanimated';
+import { GestureDetector, GestureHandlerRootView } from 'react-native-gesture-handler';
+import Animated from 'react-native-reanimated';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 type SortKey = 'pertinence' | 'price-asc' | 'price-desc' | 'rating' | 'promo';
@@ -54,10 +49,6 @@ const SORT_OPTIONS: { key: SortKey; label: string; icon: React.ComponentProps<ty
 ];
 
 const GRID_IMAGE_H = 148;
-const WINDOW_H = Dimensions.get('window').height;
-const SHEET_MIN = Math.round(WINDOW_H * 0.58);
-
-const AnimatedGHScrollView = Animated.createAnimatedComponent(GHScrollView);
 
 function filterCategoryList(list: Product[], active: string) {
   if (!active || active === 'Tous') return list;
@@ -110,12 +101,18 @@ export default function CategoryScreen() {
   const colors = useColors();
   const styles = useMemo(() => createStyles(colors), [colors]);
   const insets = useSafeAreaInsets();
-  const { width, height } = useWindowDimensions();
+  const { width } = useWindowDimensions();
   const cellWidth = Math.floor((width - 40 - 12) / 2);
 
-  const sheetMin = Math.round(height * 0.58);
-  const sheetMax = Math.round(Math.min(height * 0.92, height - insets.top - 8));
-  const sheetMid = Math.round((sheetMin + sheetMax) / 2);
+  const {
+    sheetMin,
+    sheetMax,
+    sheetAnimStyle,
+    sheetHandleGesture,
+    onSheetScroll,
+    onSheetScrollBeginDrag,
+    onFiltersScroll,
+  } = useExpandableSheet();
 
   const { id, filter } = useLocalSearchParams<{ id: string; filter?: string }>();
   const cat = exploreCategories.find((c) => c.id === id);
@@ -129,21 +126,6 @@ export default function CategoryScreen() {
   const [active, setActive] = useState(initialFilter);
   const [sort, setSort] = useState<SortKey>('pertinence');
   const [sortOpen, setSortOpen] = useState(false);
-
-  const sheetH = useSharedValue(SHEET_MIN);
-  const dragStartH = useSharedValue(SHEET_MIN);
-  const minH = useSharedValue(sheetMin);
-  const maxH = useSharedValue(sheetMax);
-  const midH = useSharedValue(sheetMid);
-  const expanded = useSharedValue(0);
-
-  useEffect(() => {
-    minH.value = sheetMin;
-    maxH.value = sheetMax;
-    midH.value = sheetMid;
-    const target = expanded.value ? sheetMax : sheetMin;
-    sheetH.value = withSpring(target, { damping: 24, stiffness: 240, mass: 0.85 });
-  }, [sheetMin, sheetMax, sheetMid, sheetH, minH, maxH, midH, expanded]);
 
   useEffect(() => {
     if (typeof filter === 'string' && filters.includes(filter)) setActive(filter);
@@ -162,70 +144,6 @@ export default function CategoryScreen() {
   const sortLabel = SORT_OPTIONS.find((o) => o.key === sort)?.label ?? 'Pertinence';
   const title = cat?.title ?? 'Catégorie';
   const fabBottom = Math.max(16, insets.bottom + 12);
-
-  const snapTo = useCallback(
-    (toMax: boolean) => {
-      expanded.value = toMax ? 1 : 0;
-      sheetH.value = withSpring(toMax ? maxH.value : minH.value, {
-        damping: 24,
-        stiffness: 240,
-        mass: 0.85,
-      });
-    },
-    [expanded, sheetH, maxH, minH],
-  );
-
-  const toggleSheet = useCallback(() => {
-    snapTo(sheetH.value < midH.value);
-  }, [snapTo, sheetH, midH]);
-
-  const sheetPan = useMemo(
-    () =>
-      Gesture.Pan()
-        .activeOffsetY([-3, 3])
-        .failOffsetX([-20, 20])
-        .onStart(() => {
-          'worklet';
-          dragStartH.value = sheetH.value;
-        })
-        .onUpdate((e) => {
-          'worklet';
-          const next = dragStartH.value - e.translationY;
-          sheetH.value = Math.min(maxH.value, Math.max(minH.value, next));
-        })
-        .onEnd((e) => {
-          'worklet';
-          const projected = sheetH.value - e.velocityY * 0.18;
-          const flingUp = e.velocityY < -280;
-          const flingDown = e.velocityY > 280;
-          const toMax = flingUp || (!flingDown && projected > midH.value);
-          expanded.value = toMax ? 1 : 0;
-          sheetH.value = withSpring(toMax ? maxH.value : minH.value, {
-            damping: 24,
-            stiffness: 240,
-            mass: 0.85,
-          });
-        }),
-    [dragStartH, sheetH, minH, maxH, midH, expanded],
-  );
-
-  const sheetTap = useMemo(
-    () =>
-      Gesture.Tap().onEnd((_e, success) => {
-        'worklet';
-        if (success) runOnJS(toggleSheet)();
-      }),
-    [toggleSheet],
-  );
-
-  const sheetHandleGesture = useMemo(
-    () => Gesture.Race(sheetPan, sheetTap),
-    [sheetPan, sheetTap],
-  );
-
-  const sheetAnimStyle = useAnimatedStyle(() => ({
-    height: sheetH.value,
-  }));
 
   return (
     <Screen>
@@ -257,7 +175,7 @@ export default function CategoryScreen() {
                 onPress={openSearchScreen}
               />
             </View>
-            <View style={[styles.heroCopy, { bottom: sheetMin - 12 }]} pointerEvents="none">
+            <View style={[styles.heroCopy, { bottom: sheetMin + 28 }]} pointerEvents="none">
               <Text style={styles.heroEyebrow}>Marché Doré</Text>
               <Text style={styles.heroTitle}>{title}</Text>
               <Text style={styles.heroSub}>
@@ -269,33 +187,43 @@ export default function CategoryScreen() {
           <Animated.View
             style={[
               styles.sheet,
+              { height: sheetMax },
               sheetAnimStyle,
-              softShadow({ y: -8, blur: 28, opacity: 0.14, elevation: 12 }),
-              { backgroundColor: colors.bg, paddingBottom: Math.max(8, insets.bottom) },
+              { paddingBottom: Math.max(8, insets.bottom) },
             ]}>
             <GestureDetector gesture={sheetHandleGesture}>
               <Animated.View
-                style={styles.sheetHandleHit}
-                accessibilityRole="button"
-                accessibilityLabel="Agrandir ou réduire la feuille">
-                <View style={[styles.sheetHandleBar, { backgroundColor: colors.border }]} />
+                style={styles.sheetHandle}
+                accessibilityRole={Platform.OS === 'web' ? undefined : 'button'}
+                accessibilityLabel="Agrandir ou réduire la feuille"
+                accessibilityHint="Glisser pour redimensionner, toucher pour basculer">
+                <View style={styles.sheetHandleBar} />
               </Animated.View>
             </GestureDetector>
 
-            <AnimatedGHScrollView
+            <ScrollView
               style={styles.sheetScroll}
               contentContainerStyle={[styles.sheetScrollContent, { paddingBottom: fabBottom + 96 }]}
               showsVerticalScrollIndicator={false}
-              bounces
+              bounces={Platform.OS === 'ios'}
+              overScrollMode="never"
               keyboardShouldPersistTaps="handled"
-              nestedScrollEnabled>
-              <GHScrollView
+              nestedScrollEnabled
+              scrollEventThrottle={16}
+              onScroll={onSheetScroll}
+              onScrollBeginDrag={onSheetScrollBeginDrag}>
+              <ScrollView
                 horizontal
                 showsHorizontalScrollIndicator={false}
                 style={styles.filtersScroll}
                 contentContainerStyle={styles.filters}
+                bounces={false}
                 nestedScrollEnabled
-                bounces={false}>
+                keyboardShouldPersistTaps="handled"
+                scrollEventThrottle={16}
+                onScroll={onFiltersScroll}
+                onScrollBeginDrag={onSheetScrollBeginDrag}
+                onMomentumScrollBegin={onSheetScrollBeginDrag}>
                 {filters.map((f) => {
                   const on = active === f;
                   return (
@@ -311,7 +239,7 @@ export default function CategoryScreen() {
                     </PressScale>
                   );
                 })}
-              </GHScrollView>
+              </ScrollView>
 
               <View style={styles.meta}>
                 <Text style={styles.found}>
@@ -371,7 +299,7 @@ export default function CategoryScreen() {
                   ))}
                 </View>
               )}
-            </AnimatedGHScrollView>
+            </ScrollView>
 
             <CartTotalFab bottom={fabBottom} />
           </Animated.View>
@@ -459,40 +387,63 @@ function createStyles(colors: AppColors) {
       left: 0,
       right: 0,
       bottom: 0,
+      backgroundColor: colors.bg,
       borderTopLeftRadius: 28,
       borderTopRightRadius: 28,
+      paddingTop: 8,
       zIndex: 5,
       overflow: 'hidden',
       flexDirection: 'column',
+      ...Platform.select({
+        ios: {
+          shadowColor: '#1c1613',
+          shadowOffset: { width: 0, height: -4 },
+          shadowOpacity: 0.14,
+          shadowRadius: 16,
+        },
+        android: { elevation: 8 },
+        web: {
+          willChange: 'transform',
+          backfaceVisibility: 'hidden',
+        } as object,
+        default: {},
+      }),
     },
-    sheetHandleHit: {
+    sheetHandle: {
       alignItems: 'center',
       justifyContent: 'center',
-      minHeight: 52,
-      paddingTop: 16,
-      paddingBottom: 14,
-      ...(Platform.OS === 'web' ? ({ touchAction: 'none', userSelect: 'none' } as object) : {}),
+      paddingVertical: 8,
+      zIndex: 8,
+      ...(Platform.OS === 'web'
+        ? ({ touchAction: 'none', userSelect: 'none', WebkitUserSelect: 'none', cursor: 'grab' } as object)
+        : {}),
     },
     sheetHandleBar: {
-      width: 48,
-      height: 5,
+      width: 44,
+      height: 4,
       borderRadius: 999,
+      backgroundColor: colors.border,
     },
     sheetScroll: {
       flex: 1,
       minHeight: 0,
+      ...(Platform.OS === 'web'
+        ? ({ touchAction: 'pan-y', overscrollBehavior: 'contain' } as object)
+        : {}),
     },
     sheetScrollContent: {
       flexGrow: 1,
+      gap: 16,
     },
     filtersScroll: {
       flexGrow: 0,
       flexShrink: 0,
+      ...(Platform.OS === 'web' ? ({ touchAction: 'pan-x' } as object) : {}),
     },
     filters: {
       paddingHorizontal: 20,
       gap: 8,
-      paddingBottom: 10,
+      paddingBottom: 0,
       alignItems: 'center',
     },
     chip: {
@@ -517,7 +468,6 @@ function createStyles(colors: AppColors) {
       justifyContent: 'space-between',
       alignItems: 'center',
       paddingHorizontal: 20,
-      paddingBottom: 10,
       gap: 12,
     },
     found: { color: colors.placeholder, fontSize: 13, fontWeight: '600', flexShrink: 1 },

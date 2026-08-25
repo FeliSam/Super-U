@@ -71,7 +71,7 @@ const INTERESTS = [
   {
     id: 'glaces',
     label: 'Glaces',
-    image: require('../../assets/images/catalog/mangues-card.png') as ImageRequireSource,
+    image: require('../../assets/images/catalog/cat-glaces.png') as ImageRequireSource,
   },
   {
     id: 'epicerie',

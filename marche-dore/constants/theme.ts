@@ -81,8 +81,21 @@ export function bindActiveColors(next: AppColors) {
   });
 }
 
-/** Space to keep tab content scrollable above the floating tab bar */
-export const tabBarClearance = 120;
+/** Floating tab bar height (must match `app/(tabs)/_layout.tsx`). */
+export const TAB_BAR_HEIGHT = 68;
+
+/** Distance from screen bottom to the floating tab bar. */
+export function tabBarBottomOffset(insetsBottom: number) {
+  return Math.max(12, insetsBottom + 4);
+}
+
+/** Bottom offset so a FAB sits clearly above the floating tab bar (iPhone home indicator aware). */
+export function floatingAboveTabBar(insetsBottom: number, gap = 14) {
+  return tabBarBottomOffset(insetsBottom) + TAB_BAR_HEIGHT + gap;
+}
+
+/** Space to keep tab content scrollable above the floating tab bar (+ FAB room). */
+export const tabBarClearance = 148;
 
 export const spacing = {
   screen: 20,

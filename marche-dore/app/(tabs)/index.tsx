@@ -513,7 +513,7 @@ function HomeScreen() {
                   horizontal
                   showsHorizontalScrollIndicator={false}
                   contentContainerStyle={[styles.rowCards, { gap: GLACES_GAP }]}>
-                  {glaces.map((p) => (
+                  {glaces.slice(0, 8).map((p) => (
                     <ProductCard
                       key={p.id}
                       product={p}
@@ -592,7 +592,7 @@ function HomeScreen() {
             </View>
           </Animated.View>
         </Animated.ScrollView>
-        <CartTotalFab bottom={96} />
+        <CartTotalFab aboveTabs />
       </Page>
     </Screen>
   );

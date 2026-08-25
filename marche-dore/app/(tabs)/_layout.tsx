@@ -1,4 +1,4 @@
-import { colors as fallbackColors, fontFamilies } from '@/constants/theme';
+import { colors as fallbackColors, fontFamilies, TAB_BAR_HEIGHT, tabBarBottomOffset } from '@/constants/theme';
 import { useCart } from '@/context/CartContext';
 import { useColors, useTheme } from '@/context/ThemeContext';
 import { unreadMessagesCount } from '@/data/messages';
@@ -78,7 +78,7 @@ export default function TabLayout() {
   const theme = useColors();
   const { scheme } = useTheme();
   const hideTabBar = isChatConversation(pathname);
-  const bottomOffset = Math.max(12, insets.bottom + 4);
+  const bottomOffset = tabBarBottomOffset(insets.bottom);
   const barBg = scheme === 'dark' ? 'rgba(30, 26, 23, 0.94)' : 'rgba(255, 255, 255, 0.94)';
 
   return (
@@ -159,8 +159,6 @@ export default function TabLayout() {
   );
 }
 
-const BAR_HEIGHT = 68;
-
 const styles = StyleSheet.create({
   scene: {
     flex: 1,
@@ -168,7 +166,7 @@ const styles = StyleSheet.create({
   },
   bar: {
     position: 'absolute',
-    height: BAR_HEIGHT,
+    height: TAB_BAR_HEIGHT,
     paddingTop: 6,
     paddingBottom: 6,
     paddingHorizontal: 8,
@@ -202,7 +200,7 @@ const styles = StyleSheet.create({
   },
   tabSlot: {
     flex: 1,
-    height: BAR_HEIGHT - 12,
+    height: TAB_BAR_HEIGHT - 12,
     justifyContent: 'center',
     alignItems: 'center',
   },

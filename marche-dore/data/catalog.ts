@@ -741,7 +741,7 @@ const homeCategoryImages: Record<HomeChip['id'], ImageSourcePropType> = {
   laitiers: require('../assets/images/catalog/cat-laitiers.png'),
   boissons: require('../assets/images/catalog/promo-boissons.png'),
   cuisine: require('../assets/images/catalog/cuisine-poulet-roti.png'),
-  glaces: require('../assets/images/catalog/mangues-card.png'),
+  glaces: require('../assets/images/catalog/cat-glaces.png'),
 };
 
 /** Crop zoom inside circular chip thumbs (1 = none). Wider scenes need more. */
@@ -753,7 +753,7 @@ const homeCategoryZoom: Record<HomeChip['id'], number> = {
   laitiers: 1.45,
   boissons: 1.5,
   cuisine: 1.4,
-  glaces: 1.45,
+  glaces: 1.35,
 };
 
 export const homeCategories = chips.map((chip) => ({

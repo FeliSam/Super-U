@@ -1,6 +1,6 @@
 import { AppImage } from '@/components/AppImage';
 import { MotionView, PressScale, enterZoom } from '@/components/motion';
-import { heroChrome, type AppColors, displayFont } from '@/constants/theme';
+import { heroChrome, type AppColors, displayFont, floatingAboveTabBar } from '@/constants/theme';
 import { useColors, useTheme } from '@/context/ThemeContext';
 import { Product, productReviewStats } from '@/data/catalog';
 import { useCart, useProductQty } from '@/context/CartContext';
@@ -24,6 +24,7 @@ import {
   View,
 } from 'react-native';
 import Reanimated from 'react-native-reanimated';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 /** Full-bleed screen shell. */
 export function Screen({ children }: { children: React.ReactNode }) {
@@ -224,6 +225,7 @@ export const ProductCard = memo(function ProductCard({
             <AppImage
               source={product.image}
               frameStyle={[StyleSheet.absoluteFill, circleImage && { borderRadius: circleR, overflow: 'hidden' }]}
+              style={circleImage ? ({ transform: [{ scale: 1.14 }] } as const) : undefined}
             />
             {outOfStock ? (
               <View style={[styles.stockOverlay, circleImage && { borderRadius: circleR }]} />
@@ -271,6 +273,18 @@ export const ProductCard = memo(function ProductCard({
               />
             </Animated.View>
           </Pressable>
+          {qty > 0 && !outOfStock ? (
+            <View
+              style={[
+                styles.qtyOverlay,
+                circleImage && { borderRadius: circleR },
+                { pointerEvents: 'none' },
+              ]}
+              accessibilityElementsHidden
+              importantForAccessibility="no-hide-descendants">
+              <Text style={[styles.qtyOverlayText, compact && styles.qtyOverlayTextCompact]}>{qty}</Text>
+            </View>
+          ) : null}
         </View>
         <View style={[styles.info, compact && styles.infoCompact]}>
           <Pressable
@@ -308,33 +322,28 @@ export const ProductCard = memo(function ProductCard({
                 compact && styles.rowAnimAnchorCompact,
                 { transform: [{ scaleX }] },
               ]}>
-              <View
-                style={[
-                  styles.row,
-                  styles.rowInCart,
-                  compact && styles.rowCompact,
-                ]}>
-              <Pressable
-                style={[styles.stepBtn, compact && styles.stepBtnCompact]}
-                onPress={() => bump(decrement)}
-                hitSlop={10}
-                accessibilityRole="button"
-                accessibilityLabel="Diminuer la quantité">
-                <Text style={styles.stepSign}>–</Text>
-              </Pressable>
-              <Text style={[styles.qtyVal, compact && styles.qtyValCompact]} accessibilityLabel={`Quantité ${qty}`}>
-                {qty}
-              </Text>
-              <Pressable
-                style={[styles.stepBtn, compact && styles.stepBtnCompact]}
-                onPress={() => bump(increment)}
-                hitSlop={10}
-                accessibilityRole="button"
-                accessibilityLabel="Augmenter la quantité">
-                <Feather name="plus" size={compact ? 12 : 14} color={colors.onAccent} />
-              </Pressable>
-              <View style={styles.rowDivider} />
-              {priceBlock(qty, false)}
+              <View style={[styles.row, styles.rowInCart, compact && styles.rowCompact]}>
+                <Pressable
+                  style={[styles.stepBtn, compact && styles.stepBtnCompact]}
+                  onPress={() => bump(decrement)}
+                  hitSlop={10}
+                  accessibilityRole="button"
+                  accessibilityLabel="Diminuer la quantité">
+                  <Text style={styles.stepSign}>–</Text>
+                </Pressable>
+                <View
+                  style={[styles.qtyPriceMid, compact && styles.qtyPriceMidCompact]}
+                  accessibilityLabel={`Quantité ${qty}, total ${formatFcfa(unitPrice * qty)}`}>
+                  {priceBlock(qty, false)}
+                </View>
+                <Pressable
+                  style={[styles.stepBtn, compact && styles.stepBtnCompact]}
+                  onPress={() => bump(increment)}
+                  hitSlop={10}
+                  accessibilityRole="button"
+                  accessibilityLabel="Augmenter la quantité">
+                  <Feather name="plus" size={compact ? 12 : 14} color={colors.onAccent} />
+                </Pressable>
               </View>
             </Animated.View>
           ) : (
@@ -624,16 +633,27 @@ export function PromoBanner({
   );
 }
 
-export const CartTotalFab = memo(function CartTotalFab({ bottom = 20 }: { bottom?: number }) {
+export const CartTotalFab = memo(function CartTotalFab({
+  bottom,
+  aboveTabs = false,
+}: {
+  /** Explicit bottom offset. When omitted with `aboveTabs`, sits above the floating tab bar. */
+  bottom?: number;
+  /** Position above the floating tab bar (safe-area aware — iPhone home indicator). */
+  aboveTabs?: boolean;
+}) {
   const colors = useColors();
   const styles = useMemo(() => createStyles(colors), [colors]);
+  const insets = useSafeAreaInsets();
   const { subtotal, listSubtotal, count } = useCart();
   if (subtotal <= 0) return null;
 
   const showCompare = listSubtotal > subtotal;
+  const resolvedBottom =
+    bottom ?? (aboveTabs ? floatingAboveTabBar(insets.bottom) : Math.max(20, insets.bottom + 12));
 
   return (
-    <Reanimated.View entering={enterZoom(80)} style={[styles.totalFab, { bottom }]}>
+    <Reanimated.View entering={enterZoom(80)} style={[styles.totalFab, { bottom: resolvedBottom }]}>
       <PressScale style={styles.totalFabInner} onPress={() => navigateTab(tabPaths.cart)} scaleTo={0.96}>
         <View style={styles.totalFabIcon}>
           <Feather name="shopping-bag" size={15} color={colors.onAccent} />
@@ -764,7 +784,7 @@ function createStyles(colors: AppColors) {
       borderRadius: 8,
       paddingHorizontal: 8,
       paddingVertical: 4,
-      zIndex: 2,
+      zIndex: 5,
     },
     discountCompact: {
       left: 6,
@@ -782,7 +802,7 @@ function createStyles(colors: AppColors) {
       borderRadius: 8,
       paddingHorizontal: 8,
       paddingVertical: 4,
-      zIndex: 2,
+      zIndex: 5,
       backgroundColor: colors.gold,
     },
     cardBadgeNouveau: { backgroundColor: colors.gold },
@@ -805,14 +825,14 @@ function createStyles(colors: AppColors) {
     overlayCircle: {
       left: 0,
       top: 0,
-      zIndex: 3,
-      elevation: 3,
+      zIndex: 5,
+      elevation: 5,
     },
     heartCircle: {
       right: -2,
       top: -2,
-      zIndex: 3,
-      elevation: 3,
+      zIndex: 6,
+      elevation: 6,
     },
     heart: {
       position: 'absolute',
@@ -824,7 +844,7 @@ function createStyles(colors: AppColors) {
       backgroundColor: colors.white,
       alignItems: 'center',
       justifyContent: 'center',
-      zIndex: 2,
+      zIndex: 6,
       opacity: 0.92,
     },
     heartCompact: {
@@ -887,8 +907,9 @@ function createStyles(colors: AppColors) {
       minHeight: 30,
     },
     rowInCart: {
-      paddingRight: 10,
-      gap: 4,
+      paddingRight: 8,
+      paddingLeft: 6,
+      gap: 2,
     },
     rowDeal: {
       paddingVertical: 5,
@@ -902,16 +923,42 @@ function createStyles(colors: AppColors) {
       alignSelf: 'flex-end',
       maxWidth: '100%',
     },
-    rowDivider: {
-      width: 1,
-      alignSelf: 'stretch',
-      backgroundColor: 'rgba(255,255,255,0.35)',
-      marginHorizontal: 2,
-      marginVertical: 2,
+    qtyPriceMid: {
+      minWidth: 52,
+      maxWidth: 88,
+      alignItems: 'center',
+      justifyContent: 'center',
+      paddingHorizontal: 4,
+    },
+    qtyPriceMidCompact: {
+      minWidth: 44,
+      maxWidth: 72,
+      paddingHorizontal: 2,
+    },
+    qtyOverlay: {
+      ...StyleSheet.absoluteFill,
+      backgroundColor: 'rgba(28, 22, 19, 0.48)',
+      alignItems: 'center',
+      justifyContent: 'center',
+      zIndex: 4,
+    },
+    qtyOverlayText: {
+      color: colors.onAccent,
+      fontSize: 34,
+      lineHeight: 38,
+      ...displayFont('800'),
+      textShadowColor: 'rgba(0,0,0,0.25)',
+      textShadowOffset: { width: 0, height: 1 },
+      textShadowRadius: 4,
+    },
+    qtyOverlayTextCompact: {
+      fontSize: 28,
+      lineHeight: 32,
     },
     priceStack: {
       flexDirection: 'row',
       alignItems: 'baseline',
+      justifyContent: 'center',
       gap: 5,
       flexShrink: 1,
       minWidth: 0,
@@ -919,11 +966,12 @@ function createStyles(colors: AppColors) {
     priceStackCompact: {
       flexDirection: 'row',
       alignItems: 'baseline',
+      justifyContent: 'center',
       gap: 4,
       flexShrink: 1,
     },
     price: { color: colors.onAccent, fontWeight: '700', fontSize: 13, flexShrink: 1, opacity: 1 },
-    priceCompact: { fontSize: 12 },
+    priceCompact: { fontSize: 11 },
     priceOld: {
       color: 'rgba(255,255,255,0.72)',
       fontWeight: '600',

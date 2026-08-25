@@ -1,7 +1,7 @@
 import { AppImage } from '@/components/AppImage';
 import { Page, ProductCard, Screen, TabHero } from '@/components/ui';
 import { MotionView, PressScale } from '@/components/motion';
-import { displayFont, heroChrome, tabBarClearance, type AppColors } from '@/constants/theme';
+import { displayFont, floatingAboveTabBar, heroChrome, tabBarClearance, type AppColors } from '@/constants/theme';
 import { useAddresses } from '@/context/AddressesContext';
 import { useColors, useTheme } from '@/context/ThemeContext';
 import { CartLine, lineListTotal, lineProduct, lineTotal, useCart } from '@/context/CartContext';
@@ -26,6 +26,7 @@ import {
   Text,
   TextInput,
   View } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 const DELETE_WIDTH = 88;
 const OPEN_X = -DELETE_WIDTH;
@@ -205,8 +206,10 @@ function SummaryRow({ label, value, green }: { label: string; value: string; gre
 function CartScreen() {
   const { scheme } = useTheme();
   const colors = useColors();
+  const insets = useSafeAreaInsets();
   const chrome = useMemo(() => heroChrome(scheme), [scheme]);
   const styles = useMemo(() => createStyles(colors), [colors]);
+  const dockBottom = floatingAboveTabBar(insets.bottom, 12);
   const [heroHeight, setHeroHeight] = useState(140);
   const { defaultAddress } = useAddresses();
   const { selectedStore } = useStores();
@@ -411,7 +414,10 @@ function CartScreen() {
               style={styles.scrollLayer}
               contentContainerStyle={[
                 styles.content,
-                { paddingTop: Math.max(0, heroHeight - HERO_OVERLAP) },
+                {
+                  paddingTop: Math.max(0, heroHeight - HERO_OVERLAP),
+                  paddingBottom: dockBottom + 148,
+                },
               ]}
               showsVerticalScrollIndicator={false}
               keyboardShouldPersistTaps="handled">
@@ -541,7 +547,7 @@ function CartScreen() {
               </View>
             </ScrollView>
 
-            <View style={styles.checkoutDock} pointerEvents="box-none">
+            <View style={[styles.checkoutDock, { bottom: dockBottom }]} pointerEvents="box-none">
               <View style={styles.checkoutBar}>
                 <Pressable
                   style={styles.checkoutSummary}
@@ -650,7 +656,6 @@ function createStyles(colors: AppColors) {
     position: 'absolute',
     left: 0,
     right: 0,
-    bottom: 96,
     zIndex: 30,
     paddingHorizontal: 16 },
   checkoutBar: {
