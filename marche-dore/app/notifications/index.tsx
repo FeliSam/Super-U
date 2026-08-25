@@ -1,9 +1,10 @@
 import { IconCircle, Screen, Page } from '@/components/ui';
-import { colors } from '@/constants/theme';
+import { colors, displayFont } from '@/constants/theme';
 import { notifications } from '@/data/notifications';
 import { Feather } from '@expo/vector-icons';
 import { router } from 'expo-router';
 import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
 
 export default function NotificationsScreen() {
   const unread = notifications.filter((n) => !n.read).length;
@@ -61,7 +62,7 @@ const styles = StyleSheet.create({
   },
   headerCenter: { alignItems: 'center', gap: 2 },
   headerSpacer: { width: 40 },
-  title: { color: colors.text, fontSize: 18, fontWeight: '700' },
+  title: { color: colors.text, fontSize: 18, ...displayFont('700') },
   sub: { color: colors.muted, fontSize: 12 },
   content: { padding: 20, gap: 10, paddingBottom: 32 },
   row: {

@@ -1,15 +1,17 @@
 import { Href, router } from 'expo-router';
 
-/** Change d’onglet sans empiler une route (préserve l’état des écrans). */
+/** Change d’onglet / route sans empiler inutilement. */
 export function navigateTab(href: Href) {
   router.navigate(href);
 }
 
-/** Chemins courts des onglets — alignés sur le TabList. */
+/** Chemins principaux — recherche hors onglets, chat dans les tabs. */
 export const tabPaths = {
-  home: '/',
-  explore: '/explore',
-  search: '/search',
-  cart: '/cart',
-  profile: '/profile',
-} as const;
+  home: '/' as Href,
+  explore: '/explore' as Href,
+  search: '/search' as Href,
+  promotions: '/promotions' as Href,
+  cart: '/cart' as Href,
+  chat: '/chat' as Href,
+  profile: '/profile' as Href,
+};

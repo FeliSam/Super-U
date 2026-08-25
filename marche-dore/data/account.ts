@@ -80,6 +80,7 @@ export const loyaltyTiers: LoyaltyTier[] = [
 ];
 
 export const loyaltyAccount = {
+  clientId: 'MD-8847-2190',
   cardNumber: 'MD · 8847 2190',
   memberName: 'Amina Diallo',
   points: 450,
@@ -88,6 +89,17 @@ export const loyaltyAccount = {
   memberSince: 'Mars 2024',
   lifetimeSaved: 18500,
 };
+
+/** Stable payload encoded into each member's loyalty QR code. */
+export function buildLoyaltyQrPayload(account: typeof loyaltyAccount = loyaltyAccount) {
+  return JSON.stringify({
+    v: 1,
+    type: 'marche-dore-loyalty',
+    clientId: account.clientId,
+    card: account.cardNumber.replace(/\s·\s/g, '-').replace(/\s/g, ''),
+    name: account.memberName,
+  });
+}
 
 export const loyaltyRewards: LoyaltyReward[] = [
   {

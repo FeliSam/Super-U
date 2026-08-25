@@ -1,5 +1,6 @@
+import { AppImage } from '@/components/AppImage';
 import { CategoryTile, ProductCard, PromoBanner, Screen, SearchField, Page } from '@/components/ui';
-import { colors, tabBarClearance } from '@/constants/theme';
+import { colors, displayFont, tabBarClearance } from '@/constants/theme';
 import { useUiState } from '@/context/UiStateContext';
 import {
   exploreCategories,
@@ -20,19 +21,19 @@ import { router } from 'expo-router';
 import { memo, useMemo } from 'react';
 import {
   Dimensions,
-  Image,
   Pressable,
   ScrollView,
   StyleSheet,
   Text,
   View,
 } from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
 
 const PROMO_WIDTH = Dimensions.get('window').width - 40;
 const explorePromo = homePromoBanners[1];
 
 function ExploreScreen() {
-  const { setSearchQuery, setSearchPromoOnly } = useUiState();
+  const { setSearchQuery } = useUiState();
 
   const rows = useMemo(() => {
     const result: (typeof exploreCategories)[] = [];
@@ -51,8 +52,7 @@ function ExploreScreen() {
   };
 
   const openPromos = () => {
-    setSearchPromoOnly(true);
-    navigateTab(tabPaths.search);
+    router.push('/promotions');
   };
 
   return (
@@ -104,7 +104,7 @@ function ExploreScreen() {
                       style={styles.quickCard}
                       onPress={() => router.push(searchCategoryRoute(cat))}>
                       <View style={styles.quickImageWrap}>
-                        <Image source={cat.image} style={styles.quickImage} resizeMode="cover" />
+                        <AppImage source={cat.image} frameStyle={styles.quickImage} />
                       </View>
                       <Text style={styles.quickLabel}>{cat.label}</Text>
                       <Text style={styles.quickCount}>{count || '12+'} produits</Text>
@@ -188,6 +188,7 @@ function ExploreScreen() {
                           height={cat.height + 8}
                           flex={cat.flex}
                           count={count || undefined}
+                          index={idx}
                           onPress={() => router.push(`/category/${cat.id}`)}
                         />
                       );
@@ -248,7 +249,7 @@ const styles = StyleSheet.create({
     borderColor: 'rgba(255,255,255,0.9)',
   },
   heroStat: { flex: 1, alignItems: 'center', gap: 4 },
-  heroStatValue: { color: colors.text, fontSize: 18, fontWeight: '800' },
+  heroStatValue: { color: colors.text, fontSize: 18, ...displayFont('800') },
   heroStatLabel: { color: colors.muted, fontSize: 11, fontWeight: '600', textAlign: 'center' },
   heroDivider: { width: 1, height: 28, backgroundColor: colors.border },
   bodySheet: {
@@ -266,7 +267,7 @@ const styles = StyleSheet.create({
     alignItems: 'baseline',
     justifyContent: 'space-between',
   },
-  sectionTitle: { color: colors.text, fontSize: 18, fontWeight: '800' },
+  sectionTitle: { color: colors.text, fontSize: 18, ...displayFont('700') },
   sectionMeta: { color: colors.muted, fontSize: 12, fontWeight: '600' },
   sectionLink: { color: colors.gold, fontSize: 13, fontWeight: '700' },
   quickRow: { gap: 10, paddingRight: 4 },

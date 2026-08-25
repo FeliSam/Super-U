@@ -336,8 +336,9 @@ export const chips = [
 export type HomeChip = (typeof chips)[number];
 
 export function chipRoute(chip: HomeChip) {
-  return chip.filter
-    ? (`/category/${chip.categoryId}?filter=${encodeURIComponent(chip.filter)}` as const)
+  const filter = 'filter' in chip ? chip.filter : undefined;
+  return filter
+    ? (`/category/${chip.categoryId}?filter=${encodeURIComponent(filter)}` as const)
     : (`/category/${chip.categoryId}` as const);
 }
 
@@ -357,7 +358,7 @@ export function productsForChip(chipId: string) {
   if (!chip) return getProducts(popularIds);
   const base = productsInCategory(chip.categoryId);
   const pool = base.length ? base : products;
-  const filtered = filterProductsByLabel(pool, chip.filter);
+  const filtered = filterProductsByLabel(pool, 'filter' in chip ? chip.filter : undefined);
   return (filtered.length ? filtered : pool).slice(0, 8);
 }
 
@@ -523,6 +524,25 @@ export const promoBanner = require('../assets/images/catalog/promo.png');
 export const promoRentreeBanner = require('../assets/images/catalog/promo-rentree.png');
 export const promoBoissonsBanner = require('../assets/images/catalog/promo-boissons.png');
 export const avatar = require('../assets/images/catalog/avatar.png');
+
+/** Product image gallery (main + extras from same category / catalog). */
+export function productGallery(product: Product, maxExtras = 2): ImageSourcePropType[] {
+  const main = product.id === 'mangues' ? mangoHero : product.image;
+  const extras: ImageSourcePropType[] = [];
+  const sameCat = products.filter((p) => p.id !== product.id && p.categoryId === product.categoryId);
+  for (const p of sameCat) {
+    if (extras.length >= maxExtras) break;
+    if (p.image === main) continue;
+    extras.push(p.image);
+  }
+  for (const p of products) {
+    if (extras.length >= maxExtras) break;
+    if (p.id === product.id) continue;
+    if (extras.includes(p.image) || p.image === main) continue;
+    extras.push(p.image);
+  }
+  return [main, ...extras];
+}
 
 export type HomePromoBanner = {
   id: string;

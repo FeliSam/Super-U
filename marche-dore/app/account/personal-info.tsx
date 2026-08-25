@@ -1,11 +1,12 @@
 import { CtaButton, IconCircle, Screen, Page } from '@/components/ui';
-import { colors } from '@/constants/theme';
+import { colors, displayFont } from '@/constants/theme';
 import { userProfile } from '@/data/account';
 import { avatar } from '@/data/catalog';
 import { Feather } from '@expo/vector-icons';
 import { router } from 'expo-router';
 import { useState } from 'react';
 import { Image, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
 
 function Field({
   label,
@@ -100,7 +101,7 @@ const styles = StyleSheet.create({
     paddingVertical: 12,
   },
   headerSpacer: { width: 40 },
-  title: { color: colors.text, fontSize: 17, fontWeight: '700' },
+  title: { color: colors.text, fontSize: 17, ...displayFont('700') },
   content: { padding: 20, gap: 16, paddingBottom: 24 },
   avatarSection: { alignItems: 'center', gap: 10 },
   avatar: { width: 88, height: 88, borderRadius: 44, borderWidth: 3, borderColor: colors.white },

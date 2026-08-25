@@ -19,3 +19,5 @@ export const tabBarClearance = 120;
 export const spacing = {
   screen: 20,
 } as const;
+
+export { bodyFont, displayFont, fontFamilies, type } from '@/constants/typography';

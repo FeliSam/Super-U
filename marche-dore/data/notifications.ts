@@ -17,17 +17,6 @@ export type AppNotification = {
 
 export const notifications: AppNotification[] = [
   {
-    id: 'livreur-route',
-    title: 'Votre livreur est en route',
-    preview: 'Suivez votre commande #MD-2024-0847 en direct sur la carte.',
-    body: 'Votre livreur Moussa a récupéré votre commande et se dirige vers Dakar, Plateau. Livraison estimée entre 14h et 16h. Consultez la carte et les étapes de livraison en temps réel.',
-    time: 'À l’instant',
-    read: false,
-    icon: 'truck',
-    actionLabel: 'Ouvrir le suivi de commande',
-    actionHref: '/tracking',
-  },
-  {
     id: 'promo-fruits',
     title: 'Offre flash — Fruits frais',
     preview: '-30% sur les mangues et bananes jusqu’à ce soir.',

@@ -1,24 +1,16 @@
 import { IconCircle, Screen, Page } from '@/components/ui';
-import { colors, tabBarClearance } from '@/constants/theme';
+import { colors, displayFont, tabBarClearance } from '@/constants/theme';
 import { useCart } from '@/context/CartContext';
-import { useUiState } from '@/context/UiStateContext';
+import { useFavorites } from '@/context/FavoritesContext';
+import { formatOrderId, statusLabel, useOrders } from '@/context/OrdersContext';
 import { avatar } from '@/data/catalog';
 import { notifications } from '@/data/notifications';
 import { navigateTab, tabPaths } from '@/lib/navigation';
 import { Feather } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
-import { router } from 'expo-router';
-import { memo, useRef, useState, type ComponentProps } from 'react';
-import {
-  Image,
-  Pressable,
-  ScrollView,
-  StyleSheet,
-  Switch,
-  Text,
-  View,
-  type LayoutChangeEvent,
-} from 'react-native';
+import { Href, router } from 'expo-router';
+import { memo, type ComponentProps } from 'react';
+import { Image, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 
 type FeatherIcon = ComponentProps<typeof Feather>['name'];
 
@@ -28,9 +20,6 @@ type MenuItem = {
   subtitle?: string;
   badge?: string;
   onPress?: () => void;
-  toggle?: boolean;
-  value?: boolean;
-  onToggle?: (next: boolean) => void;
 };
 
 type MenuSection = {
@@ -42,8 +31,8 @@ const LOYALTY_POINTS = 450;
 const LOYALTY_TARGET = 500;
 
 function MenuRow({ item }: { item: MenuItem }) {
-  const content = (
-    <>
+  return (
+    <Pressable style={({ pressed }) => [styles.row, pressed && styles.rowPressed]} onPress={item.onPress}>
       <View style={styles.rowLeft}>
         <View style={styles.icon}>
           <Feather name={item.icon} size={18} color={colors.gold} />
@@ -53,60 +42,28 @@ function MenuRow({ item }: { item: MenuItem }) {
           {item.subtitle ? <Text style={styles.rowSub}>{item.subtitle}</Text> : null}
         </View>
       </View>
-      {item.toggle ? (
-        <Switch
-          value={item.value}
-          onValueChange={item.onToggle}
-          trackColor={{ false: colors.border, true: colors.gold }}
-          thumbColor={colors.white}
-        />
-      ) : (
-        <View style={styles.rowRight}>
-          {item.badge ? (
-            <View style={styles.badge}>
-              <Text style={styles.badgeText}>{item.badge}</Text>
-            </View>
-          ) : null}
-          <Feather name="chevron-right" size={18} color={colors.placeholder} />
-        </View>
-      )}
-    </>
-  );
-
-  if (item.toggle) {
-    return <View style={styles.row}>{content}</View>;
-  }
-
-  return (
-    <Pressable style={({ pressed }) => [styles.row, pressed && styles.rowPressed]} onPress={item.onPress}>
-      {content}
+      <View style={styles.rowRight}>
+        {item.badge ? (
+          <View style={styles.badge}>
+            <Text style={styles.badgeText}>{item.badge}</Text>
+          </View>
+        ) : null}
+        <Feather name="chevron-right" size={18} color={colors.placeholder} />
+      </View>
     </Pressable>
   );
 }
 
 function ProfileScreen() {
   const { count } = useCart();
-  const { setSearchPromoOnly } = useUiState();
-  const scrollRef = useRef<ScrollView>(null);
-  const preferencesY = useRef(0);
-  const [pushEnabled, setPushEnabled] = useState(true);
-  const [smsEnabled, setSmsEnabled] = useState(false);
-  const [emailEnabled, setEmailEnabled] = useState(true);
+  const { count: favoritesCount } = useFavorites();
+  const { activeOrder, orders } = useOrders();
 
   const unreadNotifications = notifications.filter((n) => !n.read).length;
   const loyaltyProgress = LOYALTY_POINTS / LOYALTY_TARGET;
 
   const openPromos = () => {
-    setSearchPromoOnly(true);
-    navigateTab(tabPaths.search);
-  };
-
-  const scrollToPreferences = () => {
-    scrollRef.current?.scrollTo({ y: preferencesY.current, animated: true });
-  };
-
-  const onPreferencesLayout = (event: LayoutChangeEvent) => {
-    preferencesY.current = event.nativeEvent.layout.y;
+    router.push('/promotions');
   };
 
   const sections: MenuSection[] = [
@@ -159,20 +116,30 @@ function ProfileScreen() {
         {
           icon: 'box',
           label: 'Suivi de commande',
-          subtitle: 'Commande #MD-2024-0847 en cours',
-          onPress: () => router.push('/tracking'),
+          subtitle: activeOrder
+            ? `${formatOrderId(activeOrder.id)} · ${statusLabel(activeOrder.status)}`
+            : 'Aucune commande en cours',
+          onPress: () =>
+            router.push((activeOrder ? `/tracking?id=${activeOrder.id}` : '/orders') as Href),
         },
         {
           icon: 'clock',
           label: 'Historique des commandes',
-          subtitle: '12 commandes passées',
-          onPress: () => router.push('/tracking'),
+          subtitle:
+            orders.length > 0
+              ? `${orders.length} commande${orders.length > 1 ? 's' : ''}`
+              : 'Aucune commande',
+          onPress: () => router.push('/orders' as Href),
         },
         {
           icon: 'heart',
           label: 'Mes favoris',
-          subtitle: 'Produits enregistrés',
-          onPress: () => navigateTab(tabPaths.explore),
+          subtitle:
+            favoritesCount > 0
+              ? `${favoritesCount} produit${favoritesCount > 1 ? 's' : ''} liké${favoritesCount > 1 ? 's' : ''}`
+              : 'Aucun produit liké',
+          badge: favoritesCount > 0 ? String(favoritesCount) : undefined,
+          onPress: () => router.push('/account/favorites'),
         },
         {
           icon: 'tag',
@@ -183,35 +150,13 @@ function ProfileScreen() {
       ],
     },
     {
-      title: 'Préférences',
+      title: 'Réglages',
       items: [
         {
-          icon: 'smartphone',
-          label: 'Notifications push',
-          subtitle: 'Alertes de livraison',
-          toggle: true,
-          value: pushEnabled,
-          onToggle: setPushEnabled,
-        },
-        {
-          icon: 'message-circle',
-          label: 'Offres par SMS',
-          toggle: true,
-          value: smsEnabled,
-          onToggle: setSmsEnabled,
-        },
-        {
-          icon: 'mail',
-          label: 'Newsletter',
-          toggle: true,
-          value: emailEnabled,
-          onToggle: setEmailEnabled,
-        },
-        {
-          icon: 'globe',
-          label: 'Langue',
-          subtitle: 'Français',
-          onPress: () => {},
+          icon: 'settings',
+          label: 'Préférences',
+          subtitle: 'Notifications, langue, confidentialité',
+          onPress: () => router.push('/account/settings'),
         },
       ],
     },
@@ -222,24 +167,24 @@ function ProfileScreen() {
           icon: 'help-circle',
           label: "Centre d'aide",
           subtitle: 'FAQ et assistance',
-          onPress: () => router.push('/tracking'),
+          onPress: () => router.push('/help'),
         },
         {
           icon: 'phone',
           label: 'Nous contacter',
           subtitle: '+221 33 000 00 00',
-          onPress: () => router.push('/notifications'),
+          onPress: () => router.push('/contact'),
         },
         {
           icon: 'file-text',
           label: 'Conditions & confidentialité',
-          onPress: () => router.push('/checkout'),
+          onPress: () => router.push('/legal'),
         },
         {
           icon: 'info',
           label: 'À propos de Marché Doré',
           subtitle: 'Version 1.0.0',
-          onPress: () => navigateTab(tabPaths.home),
+          onPress: () => router.push('/about'),
         },
       ],
     },
@@ -249,14 +194,13 @@ function ProfileScreen() {
     <Screen>
       <Page style={styles.flex}>
         <ScrollView
-          ref={scrollRef}
           style={styles.flex}
           contentContainerStyle={styles.scrollContent}
           showsVerticalScrollIndicator={false}>
           <LinearGradient colors={['#f8e4c4', colors.cream, colors.bg]} style={styles.hero}>
             <View style={styles.heroBar}>
               <Text style={styles.heroTitle}>Profil</Text>
-              <IconCircle name="settings" onPress={scrollToPreferences} bg="rgba(255,255,255,0.88)" />
+              <IconCircle name="settings" onPress={() => router.push('/account/settings')} bg="rgba(255,255,255,0.88)" />
             </View>
 
             <Pressable style={styles.heroIdentity} onPress={() => router.push('/account/personal-info')}>
@@ -276,33 +220,39 @@ function ProfileScreen() {
           </LinearGradient>
 
           <View style={styles.bodySheet}>
-            <Pressable style={styles.activeOrder} onPress={() => router.push('/tracking')}>
-              <View style={styles.activeOrderIcon}>
-                <Feather name="package" size={20} color={colors.gold} />
-              </View>
-              <View style={styles.activeOrderText}>
-                <View style={styles.activeOrderHead}>
-                  <Text style={styles.activeOrderTitle}>Commande en cours</Text>
-                  <View style={styles.statusPill}>
-                    <View style={styles.statusDot} />
-                    <Text style={styles.statusText}>Préparation</Text>
-                  </View>
+            {activeOrder ? (
+              <Pressable
+                style={styles.activeOrder}
+                onPress={() => router.push(`/tracking?id=${activeOrder.id}` as Href)}>
+                <View style={styles.activeOrderIcon}>
+                  <Feather name="package" size={20} color={colors.gold} />
                 </View>
-                <Text style={styles.activeOrderSub}>#MD-2024-0847 · Livraison aujourd'hui 14h–16h</Text>
-              </View>
-              <Feather name="chevron-right" size={18} color={colors.placeholder} />
-            </Pressable>
+                <View style={styles.activeOrderText}>
+                  <View style={styles.activeOrderHead}>
+                    <Text style={styles.activeOrderTitle}>Commande en cours</Text>
+                    <View style={styles.statusPill}>
+                      <View style={styles.statusDot} />
+                      <Text style={styles.statusText}>{statusLabel(activeOrder.status)}</Text>
+                    </View>
+                  </View>
+                  <Text style={styles.activeOrderSub}>
+                    {formatOrderId(activeOrder.id)} · {activeOrder.dayLabel} {activeOrder.slotLabel}
+                  </Text>
+                </View>
+                <Feather name="chevron-right" size={18} color={colors.placeholder} />
+              </Pressable>
+            ) : null}
 
             <View style={styles.stats}>
-              <Pressable style={styles.stat} onPress={() => router.push('/tracking')}>
+              <Pressable style={styles.stat} onPress={() => router.push('/orders' as Href)}>
                 <Feather name="shopping-cart" size={16} color={colors.gold} />
-                <Text style={styles.statValue}>12</Text>
+                <Text style={styles.statValue}>{orders.length}</Text>
                 <Text style={styles.statLabel}>Commandes</Text>
               </Pressable>
               <View style={styles.statDivider} />
-              <Pressable style={styles.stat} onPress={() => navigateTab(tabPaths.explore)}>
+              <Pressable style={styles.stat} onPress={() => router.push('/account/favorites')}>
                 <Feather name="heart" size={16} color={colors.terracotta} />
-                <Text style={styles.statValue}>8</Text>
+                <Text style={styles.statValue}>{favoritesCount}</Text>
                 <Text style={styles.statLabel}>Favoris</Text>
               </Pressable>
               <View style={styles.statDivider} />
@@ -333,7 +283,11 @@ function ProfileScreen() {
             </Pressable>
 
             <View style={styles.quickRow}>
-              <Pressable style={styles.quickAction} onPress={() => router.push('/tracking')}>
+              <Pressable
+                style={styles.quickAction}
+                onPress={() =>
+                  router.push((activeOrder ? `/tracking?id=${activeOrder.id}` : '/orders') as Href)
+                }>
                 <Feather name="truck" size={18} color={colors.gold} />
                 <Text style={styles.quickLabel}>Livraison</Text>
               </Pressable>
@@ -346,14 +300,9 @@ function ProfileScreen() {
                   </View>
                 ) : null}
               </Pressable>
-              <Pressable style={styles.quickAction} onPress={() => navigateTab(tabPaths.cart)}>
-                <Feather name="shopping-bag" size={18} color={colors.gold} />
-                <Text style={styles.quickLabel}>Panier</Text>
-                {count > 0 ? (
-                  <View style={styles.quickBadge}>
-                    <Text style={styles.quickBadgeText}>{count > 99 ? '99+' : count}</Text>
-                  </View>
-                ) : null}
+              <Pressable style={styles.quickAction} onPress={() => navigateTab(tabPaths.chat)}>
+                <Feather name="message-circle" size={18} color={colors.gold} />
+                <Text style={styles.quickLabel}>Messages</Text>
               </Pressable>
               <Pressable style={styles.quickAction} onPress={() => navigateTab(tabPaths.search)}>
                 <Feather name="search" size={18} color={colors.gold} />
@@ -362,10 +311,7 @@ function ProfileScreen() {
             </View>
 
             {sections.map((section) => (
-              <View
-                key={section.title}
-                style={styles.section}
-                onLayout={section.title === 'Préférences' ? onPreferencesLayout : undefined}>
+              <View key={section.title} style={styles.section}>
                 <Text style={styles.sectionTitle}>{section.title}</Text>
                 <View style={styles.sectionCard}>
                   {section.items.map((item, itemIndex) => (
@@ -407,7 +353,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     marginBottom: 20,
   },
-  heroTitle: { color: colors.text, fontSize: 28, fontWeight: '700' },
+  heroTitle: { color: colors.text, fontSize: 28, ...displayFont('700') },
   heroIdentity: { alignItems: 'center', gap: 10 },
   avatarRing: {
     padding: 4,
@@ -420,7 +366,7 @@ const styles = StyleSheet.create({
     elevation: 4,
   },
   avatarHero: { width: 96, height: 96, borderRadius: 48 },
-  heroName: { color: colors.text, fontSize: 24, fontWeight: '800' },
+  heroName: { color: colors.text, fontSize: 24, ...displayFont('800') },
   heroMetaRow: { flexDirection: 'row', alignItems: 'center', gap: 6 },
   heroMeta: { color: colors.muted, fontSize: 14 },
   memberBadge: {

@@ -1,8 +1,17 @@
-import { colors } from '@/constants/theme';
+import { colors, fontFamilies } from '@/constants/theme';
 import { useCart } from '@/context/CartContext';
+import { unreadMessagesCount } from '@/data/messages';
 import { Feather } from '@expo/vector-icons';
-import { Tabs } from 'expo-router';
+import { Tabs, usePathname } from 'expo-router';
 import { Platform, Pressable, StyleSheet, Text, View } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
+
+/** Prefetch main tabs only — chat thread loads on demand. */
+import './index';
+import './explore';
+import './cart';
+import './profile';
+import './chat/index';
 
 type FeatherIcon = React.ComponentProps<typeof Feather>['name'];
 
@@ -43,27 +52,46 @@ function CartTabBarItem({ focused }: { focused: boolean }) {
   return <TabBarItem icon="shopping-bag" label="Panier" focused={focused} badge={count} />;
 }
 
+function ChatTabBarItem({ focused }: { focused: boolean }) {
+  const unread = unreadMessagesCount();
+  return <TabBarItem icon="message-circle" label="Chat" focused={focused} badge={unread} />;
+}
+
 const keepTabMounted = {
   lazy: false,
-  freezeOnBlur: true,
+  freezeOnBlur: Platform.OS !== 'web',
 } as const;
 
+function isChatConversation(pathname: string) {
+  return pathname.startsWith('/chat/') && pathname !== '/chat/';
+}
+
 export default function TabLayout() {
+  const insets = useSafeAreaInsets();
+  const pathname = usePathname();
+  const hideTabBar = isChatConversation(pathname);
+  const bottomOffset = Math.max(12, insets.bottom + 4);
+
   return (
     <Tabs
       detachInactiveScreens={false}
+      backBehavior="history"
       screenOptions={{
         headerShown: false,
         tabBarShowLabel: false,
         lazy: false,
-        freezeOnBlur: true,
+        freezeOnBlur: Platform.OS !== 'web',
         animation: 'none',
-        tabBarStyle: styles.bar,
+        tabBarHideOnKeyboard: true,
+        tabBarStyle: hideTabBar
+          ? { display: 'none', height: 0, overflow: 'hidden' }
+          : [styles.bar, { bottom: bottomOffset }],
         tabBarItemStyle: styles.tabSlot,
         tabBarIconStyle: styles.tabIcon,
         tabBarButton: (props) => (
           <Pressable
             {...props}
+            href={undefined}
             style={({ pressed }) => [props.style, styles.tabButton, pressed && styles.tabButtonPressed]}
           />
         ),
@@ -86,19 +114,19 @@ export default function TabLayout() {
         }}
       />
       <Tabs.Screen
-        name="search"
-        options={{
-          title: 'Rechercher',
-          ...keepTabMounted,
-          tabBarIcon: ({ focused }) => <TabBarItem icon="search" label="Rechercher" focused={focused} />,
-        }}
-      />
-      <Tabs.Screen
         name="cart"
         options={{
           title: 'Panier',
           ...keepTabMounted,
           tabBarIcon: ({ focused }) => <CartTabBarItem focused={focused} />,
+        }}
+      />
+      <Tabs.Screen
+        name="chat"
+        options={{
+          title: 'Chat',
+          ...keepTabMounted,
+          tabBarIcon: ({ focused }) => <ChatTabBarItem focused={focused} />,
         }}
       />
       <Tabs.Screen
@@ -109,6 +137,8 @@ export default function TabLayout() {
           tabBarIcon: ({ focused }) => <TabBarItem icon="user" label="Profil" focused={focused} />,
         }}
       />
+      {/* Search lives on the root stack (`/search`), not in the tab bar. */}
+      <Tabs.Screen name="search" options={{ href: null, title: 'Rechercher' }} />
     </Tabs>
   );
 }
@@ -122,7 +152,6 @@ const styles = StyleSheet.create({
   },
   bar: {
     position: 'absolute',
-    bottom: 12,
     height: BAR_HEIGHT,
     paddingTop: 6,
     paddingBottom: 6,
@@ -198,10 +227,12 @@ const styles = StyleSheet.create({
     fontSize: 10,
     fontWeight: '600',
     letterSpacing: 0.1,
+    fontFamily: fontFamilies.bodySemi,
   },
   tabLabelActive: {
     color: colors.terracotta,
     fontWeight: '800',
+    fontFamily: fontFamilies.bodyBold,
   },
   badgePill: {
     position: 'absolute',

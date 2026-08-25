@@ -1,10 +1,11 @@
 import { CtaButton, IconCircle, Screen, Page } from '@/components/ui';
-import { colors } from '@/constants/theme';
+import { colors, displayFont } from '@/constants/theme';
 import { paymentMethods, type PaymentMethod } from '@/data/account';
 import { Feather } from '@expo/vector-icons';
 import { router } from 'expo-router';
 import { useState } from 'react';
 import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
 
 function PaymentCard({
   method,
@@ -93,7 +94,7 @@ const styles = StyleSheet.create({
     paddingVertical: 12,
   },
   headerSpacer: { width: 40 },
-  title: { color: colors.text, fontSize: 17, fontWeight: '700' },
+  title: { color: colors.text, fontSize: 17, ...displayFont('700') },
   content: { padding: 20, gap: 10, paddingBottom: 24 },
   sub: { color: colors.muted, fontSize: 14, lineHeight: 20, marginBottom: 6 },
   card: {

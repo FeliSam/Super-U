@@ -1,6 +1,8 @@
 import { CartTotalFab, ProductCard, PromoBanner, Screen, SearchField, Page } from '@/components/ui';
-import { colors, tabBarClearance } from '@/constants/theme';
+import { MotionView, PressScale } from '@/components/motion';
+import { colors, displayFont, tabBarClearance } from '@/constants/theme';
 import { useCart } from '@/context/CartContext';
+import { formatOrderId, useOrders } from '@/context/OrdersContext';
 import { useUiState } from '@/context/UiStateContext';
 import {
   avatar,
@@ -19,7 +21,7 @@ import { notifications } from '@/data/notifications';
 import { navigateTab, tabPaths } from '@/lib/navigation';
 import { Feather } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
-import { router } from 'expo-router';
+import { Href, router } from 'expo-router';
 import { memo, useCallback, useMemo, useRef, useState } from 'react';
 import {
   Dimensions,
@@ -33,6 +35,7 @@ import {
   Text,
   View,
 } from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
 
 const GRID_IMAGE_HEIGHT = 173;
 const PROMO_WIDTH = Dimensions.get('window').width - 40;
@@ -41,7 +44,8 @@ const LOYALTY_POINTS = 450;
 
 function HomeScreen() {
   const { count } = useCart();
-  const { homeActiveChipId, setHomeActiveChipId, setSearchPromoOnly } = useUiState();
+  const { activeOrder } = useOrders();
+  const { homeActiveChipId, setHomeActiveChipId } = useUiState();
   const activeChip = homeCategories.find((c) => c.id === homeActiveChipId) ?? homeCategories[0];
   const onSale = useMemo(() => promoProducts(), []);
   const popular = useMemo(() => productsForChip(homeActiveChipId), [homeActiveChipId]);
@@ -66,7 +70,7 @@ function HomeScreen() {
   }, [feedPages, recommended, shuffledPool]);
 
   const loadMoreFeed = useCallback(() => {
-    setFeedPages((pages) => pages + 1);
+    setFeedPages((pages) => Math.min(pages + 1, 3));
   }, []);
 
   const onMainScroll = useCallback(
@@ -84,8 +88,7 @@ function HomeScreen() {
   );
 
   const openPromos = () => {
-    setSearchPromoOnly(true);
-    navigateTab(tabPaths.search);
+    router.push('/promotions');
   };
 
   const quickActions = [
@@ -162,34 +165,47 @@ function HomeScreen() {
             </LinearGradient>
 
             <View style={styles.bodySheet}>
-              <SearchField onPress={() => navigateTab(tabPaths.search)} />
+              <MotionView delay={40} preset="down">
+                <SearchField onPress={() => navigateTab(tabPaths.search)} />
+              </MotionView>
 
-              <Pressable style={styles.orderBanner} onPress={() => router.push('/tracking')}>
-                <View style={styles.orderIcon}>
-                  <Feather name="package" size={18} color={colors.gold} />
-                </View>
-                <View style={styles.orderText}>
-                  <Text style={styles.orderTitle}>Commande en cours</Text>
-                  <Text style={styles.orderSub}>#MD-2024-0847 · Livraison aujourd'hui 14h–16h</Text>
-                </View>
-                <Feather name="chevron-right" size={18} color={colors.placeholder} />
-              </Pressable>
-
-              <View style={styles.quickGrid}>
-                {quickActions.map((action) => (
-                  <Pressable key={action.label} style={styles.quickTile} onPress={action.onPress}>
-                    <View style={styles.quickIconWrap}>
-                      <Feather name={action.icon} size={19} color={colors.gold} />
-                      {action.badge && action.badge > 0 ? (
-                        <View style={styles.quickBadge}>
-                          <Text style={styles.quickBadgeText}>{action.badge > 99 ? '99+' : action.badge}</Text>
-                        </View>
-                      ) : null}
+              <MotionView delay={90} preset="down">
+                {activeOrder ? (
+                  <PressScale
+                    style={styles.orderBanner}
+                    onPress={() => router.push(`/tracking?id=${activeOrder.id}` as Href)}
+                    scaleTo={0.985}>
+                    <View style={styles.orderIcon}>
+                      <Feather name="package" size={18} color={colors.gold} />
                     </View>
-                    <Text style={styles.quickLabel}>{action.label}</Text>
-                  </Pressable>
-                ))}
-              </View>
+                    <View style={styles.orderText}>
+                      <Text style={styles.orderTitle}>Commande en cours</Text>
+                      <Text style={styles.orderSub}>
+                        {formatOrderId(activeOrder.id)} · {activeOrder.dayLabel} {activeOrder.slotLabel}
+                      </Text>
+                    </View>
+                    <Feather name="chevron-right" size={18} color={colors.placeholder} />
+                  </PressScale>
+                ) : null}
+              </MotionView>
+
+              <MotionView delay={130} preset="down">
+                <View style={styles.quickGrid}>
+                  {quickActions.map((action, i) => (
+                    <PressScale key={action.label} style={styles.quickTile} onPress={action.onPress} scaleTo={0.95}>
+                      <View style={styles.quickIconWrap}>
+                        <Feather name={action.icon} size={19} color={colors.gold} />
+                        {action.badge && action.badge > 0 ? (
+                          <View style={styles.quickBadge}>
+                            <Text style={styles.quickBadgeText}>{action.badge > 99 ? '99+' : action.badge}</Text>
+                          </View>
+                        ) : null}
+                      </View>
+                      <Text style={styles.quickLabel}>{action.label}</Text>
+                    </PressScale>
+                  ))}
+                </View>
+              </MotionView>
 
               <View style={styles.chipsWrap}>
                 <ScrollView
@@ -258,8 +274,16 @@ function HomeScreen() {
                   <Text style={styles.sectionMeta}>Basé sur vos goûts</Text>
                 </View>
                 <View style={styles.grid}>
-                  {feedItems.map(({ product, key }) => (
-                    <ProductCard key={key} product={product} width="47.5%" imageHeight={GRID_IMAGE_HEIGHT} compact />
+                  {feedItems.map(({ product, key }, i) => (
+                    <ProductCard
+                      key={key}
+                      product={product}
+                      width="47.5%"
+                      imageHeight={GRID_IMAGE_HEIGHT}
+                      compact
+                      index={i}
+                      animate={i < 10}
+                    />
                   ))}
                 </View>
                 <Text style={styles.feedHint}>Faites défiler pour voir plus de produits…</Text>
@@ -348,7 +372,7 @@ const styles = StyleSheet.create({
   },
   avatar: { width: 38, height: 38, borderRadius: 19 },
   greeting: { gap: 6, marginTop: 20 },
-  hello: { color: colors.text, fontSize: 28, fontWeight: '800', letterSpacing: -0.4 },
+  hello: { color: colors.text, fontSize: 28, letterSpacing: -0.4, ...displayFont('800') },
   subtitle: { color: colors.muted, fontSize: 14, lineHeight: 20, maxWidth: '92%' },
   heroStats: {
     flexDirection: 'row',
@@ -463,7 +487,7 @@ const styles = StyleSheet.create({
   chipLabelActive: { color: colors.white, fontWeight: '700' },
   section: { gap: 12 },
   sectionHead: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start' },
-  sectionTitle: { color: colors.text, fontSize: 18, fontWeight: '800' },
+  sectionTitle: { color: colors.text, fontSize: 18, ...displayFont('700') },
   sectionMeta: { color: colors.muted, fontSize: 12, fontWeight: '500', marginTop: 2 },
   seeAll: { color: colors.gold, fontSize: 13, fontWeight: '700' },
   rowCards: { gap: 12, paddingRight: 4 },

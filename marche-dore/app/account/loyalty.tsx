@@ -1,6 +1,8 @@
+import { LoyaltyQrCode } from '@/components/LoyaltyQrCode';
 import { CtaButton, IconCircle, Page, Screen } from '@/components/ui';
-import { colors } from '@/constants/theme';
+import { colors, displayFont } from '@/constants/theme';
 import {
+  buildLoyaltyQrPayload,
   loyaltyAccount,
   loyaltyEarnRules,
   loyaltyRewards,
@@ -11,15 +13,19 @@ import { navigateTab, tabPaths } from '@/lib/navigation';
 import { Feather } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
 import { router } from 'expo-router';
-import { useState } from 'react';
-import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { useMemo, useState } from 'react';
+import { Modal, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 
 export default function LoyaltyScreen() {
   const [copiedCode, setCopiedCode] = useState<string | null>(null);
+  const [qrOpen, setQrOpen] = useState(false);
+
   const progress = Math.min(1, loyaltyAccount.points / loyaltyAccount.nextRewardAt);
   const currentTier = loyaltyTiers.find((t) => t.id === loyaltyAccount.tierId) ?? loyaltyTiers[2];
   const nextTier = loyaltyTiers.find((t) => t.minPoints > loyaltyAccount.points);
   const pointsLeft = Math.max(0, loyaltyAccount.nextRewardAt - loyaltyAccount.points);
+
+  const qrValue = useMemo(() => buildLoyaltyQrPayload(loyaltyAccount), []);
 
   const copyCode = (code: string) => {
     setCopiedCode(code);
@@ -43,16 +49,22 @@ export default function LoyaltyScreen() {
             style={styles.card}>
             <View style={styles.cardOrbA} />
             <View style={styles.cardOrbB} />
+
             <View style={styles.cardTop}>
-              <View>
+              <View style={{ flex: 1 }}>
                 <Text style={styles.cardBrand}>Marché Doré</Text>
                 <Text style={styles.cardTier}>Cliente {currentTier.name}</Text>
+                <Text style={styles.cardNumber}>{loyaltyAccount.cardNumber}</Text>
+                <Text style={styles.cardClientId}>ID {loyaltyAccount.clientId}</Text>
               </View>
-              <View style={styles.cardBadge}>
-                <Feather name="award" size={18} color={colors.gold} />
-              </View>
+              <Pressable style={styles.qrThumb} onPress={() => setQrOpen(true)}>
+                <View style={styles.qrThumbInner}>
+                  <LoyaltyQrCode value={qrValue} size={78} />
+                </View>
+                <Text style={styles.qrThumbLabel}>Scanner</Text>
+              </Pressable>
             </View>
-            <Text style={styles.cardNumber}>{loyaltyAccount.cardNumber}</Text>
+
             <View style={styles.cardBottom}>
               <View>
                 <Text style={styles.cardMetaLabel}>Titulaire</Text>
@@ -64,6 +76,17 @@ export default function LoyaltyScreen() {
               </View>
             </View>
           </LinearGradient>
+
+          <Pressable style={styles.qrBanner} onPress={() => setQrOpen(true)}>
+            <View style={styles.qrBannerIcon}>
+              <Feather name="maximize" size={18} color={colors.gold} />
+            </View>
+            <View style={styles.qrBannerText}>
+              <Text style={styles.qrBannerTitle}>Présenter mon QR code</Text>
+              <Text style={styles.qrBannerSub}>Unique à chaque client · {loyaltyAccount.clientId}</Text>
+            </View>
+            <Feather name="chevron-right" size={18} color={colors.placeholder} />
+          </Pressable>
 
           <View style={styles.pointsCard}>
             <View style={styles.pointsHead}>
@@ -164,8 +187,28 @@ export default function LoyaltyScreen() {
             ))}
           </View>
 
-          <CtaButton label="Voir les promotions du moment" onPress={() => navigateTab(tabPaths.search)} />
+          <CtaButton label="Voir les promotions du moment" onPress={() => router.push('/promotions')} />
         </ScrollView>
+
+        <Modal visible={qrOpen} transparent animationType="fade" onRequestClose={() => setQrOpen(false)}>
+          <View style={styles.modalBackdrop}>
+            <Pressable style={StyleSheet.absoluteFill} onPress={() => setQrOpen(false)} />
+            <View style={styles.modalCard}>
+              <Text style={styles.modalTitle}>QR code fidélité</Text>
+              <Text style={styles.modalSub}>{loyaltyAccount.memberName}</Text>
+              <View style={styles.modalQr}>
+                <LoyaltyQrCode value={qrValue} size={210} />
+              </View>
+              <Text style={styles.modalId}>{loyaltyAccount.clientId}</Text>
+              <Text style={styles.modalHint}>
+                Présentez ce code en caisse pour cumuler ou utiliser vos points.
+              </Text>
+              <Pressable style={styles.modalClose} onPress={() => setQrOpen(false)}>
+                <Text style={styles.modalCloseText}>Fermer</Text>
+              </Pressable>
+            </View>
+          </View>
+        </Modal>
       </Page>
     </Screen>
   );
@@ -181,14 +224,12 @@ const styles = StyleSheet.create({
     paddingVertical: 12,
   },
   headerSpacer: { width: 40 },
-  title: { color: colors.text, fontSize: 17, fontWeight: '700' },
+  title: { color: colors.text, fontSize: 17, ...displayFont('700') },
   content: { padding: 20, gap: 14, paddingBottom: 40 },
   card: {
     borderRadius: 22,
-    padding: 20,
-    minHeight: 190,
+    padding: 18,
     overflow: 'hidden',
-    justifyContent: 'space-between',
     gap: 18,
   },
   cardOrbA: {
@@ -209,26 +250,53 @@ const styles = StyleSheet.create({
     bottom: -20,
     left: 40,
   },
-  cardTop: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start' },
+  cardTop: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start', gap: 14 },
   cardBrand: { color: 'rgba(255,255,255,0.65)', fontSize: 12, fontWeight: '600', letterSpacing: 0.4 },
   cardTier: { color: colors.white, fontSize: 22, fontWeight: '800', marginTop: 2 },
-  cardBadge: {
-    width: 40,
-    height: 40,
-    borderRadius: 12,
-    backgroundColor: 'rgba(255,255,255,0.12)',
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
   cardNumber: {
     color: colors.gold,
-    fontSize: 20,
+    fontSize: 16,
     fontWeight: '700',
-    letterSpacing: 1.5,
+    letterSpacing: 1.2,
+    marginTop: 10,
   },
+  cardClientId: {
+    color: 'rgba(255,255,255,0.45)',
+    fontSize: 11,
+    fontWeight: '600',
+    marginTop: 4,
+  },
+  qrThumb: { alignItems: 'center', gap: 6 },
+  qrThumbInner: {
+    padding: 6,
+    borderRadius: 12,
+    backgroundColor: colors.white,
+  },
+  qrThumbLabel: { color: 'rgba(255,255,255,0.7)', fontSize: 10, fontWeight: '700' },
   cardBottom: { flexDirection: 'row', justifyContent: 'space-between' },
   cardMetaLabel: { color: 'rgba(255,255,255,0.5)', fontSize: 11, fontWeight: '500' },
   cardMetaValue: { color: colors.white, fontSize: 14, fontWeight: '700', marginTop: 2 },
+  qrBanner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+    backgroundColor: colors.white,
+    borderWidth: 1,
+    borderColor: colors.border,
+    borderRadius: 16,
+    padding: 14,
+  },
+  qrBannerIcon: {
+    width: 40,
+    height: 40,
+    borderRadius: 12,
+    backgroundColor: colors.cream,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  qrBannerText: { flex: 1, gap: 2 },
+  qrBannerTitle: { color: colors.text, fontSize: 14, fontWeight: '700' },
+  qrBannerSub: { color: colors.muted, fontSize: 12 },
   pointsCard: {
     backgroundColor: colors.white,
     borderWidth: 1,
@@ -345,4 +413,45 @@ const styles = StyleSheet.create({
   earnTitle: { color: colors.text, fontSize: 14, fontWeight: '700' },
   earnSub: { color: colors.muted, fontSize: 12, marginTop: 1 },
   separator: { height: 1, backgroundColor: colors.border, marginLeft: 48 },
+  modalBackdrop: {
+    flex: 1,
+    backgroundColor: 'rgba(28,22,19,0.55)',
+    alignItems: 'center',
+    justifyContent: 'center',
+    padding: 24,
+  },
+  modalCard: {
+    width: '100%',
+    maxWidth: 340,
+    backgroundColor: colors.white,
+    borderRadius: 24,
+    padding: 24,
+    alignItems: 'center',
+    gap: 10,
+  },
+  modalTitle: { color: colors.text, fontSize: 18, fontWeight: '800' },
+  modalSub: { color: colors.muted, fontSize: 14, fontWeight: '500', marginTop: -4 },
+  modalQr: {
+    marginTop: 8,
+    padding: 14,
+    borderRadius: 16,
+    backgroundColor: colors.white,
+    borderWidth: 1,
+    borderColor: colors.border,
+  },
+  modalId: { color: colors.gold, fontSize: 14, fontWeight: '800', letterSpacing: 0.6 },
+  modalHint: {
+    color: colors.muted,
+    fontSize: 13,
+    textAlign: 'center',
+    lineHeight: 19,
+  },
+  modalClose: {
+    marginTop: 6,
+    backgroundColor: colors.gold,
+    borderRadius: 14,
+    paddingHorizontal: 24,
+    paddingVertical: 12,
+  },
+  modalCloseText: { color: colors.white, fontSize: 14, fontWeight: '700' },
 });

@@ -1,5 +1,5 @@
 import { CtaButton, IconCircle, Screen, Page } from '@/components/ui';
-import { colors } from '@/constants/theme';
+import { colors, displayFont } from '@/constants/theme';
 import { getNotification } from '@/data/notifications';
 import { navigateTab } from '@/lib/navigation';
 import { Feather } from '@expo/vector-icons';
@@ -77,7 +77,7 @@ const styles = StyleSheet.create({
     paddingVertical: 12,
   },
   headerSpacer: { width: 40 },
-  title: { color: colors.text, fontSize: 18, fontWeight: '700' },
+  title: { color: colors.text, fontSize: 18, ...displayFont('700') },
   content: { padding: 20, gap: 16, paddingBottom: 32 },
   hero: { alignItems: 'center', gap: 10, paddingVertical: 8 },
   iconWrap: {

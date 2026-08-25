@@ -1,5 +1,6 @@
 import { getProduct, Product } from '@/data/catalog';
-import React, { createContext, useCallback, useContext, useMemo, useState } from 'react';
+import AsyncStorage from '@react-native-async-storage/async-storage';
+import React, { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
 
 export type CartLine = {
   productId: string;
@@ -7,17 +8,26 @@ export type CartLine = {
   unitOverride?: string;
 };
 
+const STORAGE_KEY = 'marche-dore.cart.v1';
+
 const PROMO_CODES: Record<string, number> = {
   FRAIS20: 2000,
   MARCHE10: 1500,
   SUPERU: 1000,
 };
 
+type PersistedCart = {
+  lines: CartLine[];
+  promoCode: string | null;
+};
+
 type CartContextValue = {
   lines: CartLine[];
+  ready: boolean;
   add: (productId: string, qty?: number) => void;
   setQty: (productId: string, qty: number) => void;
   remove: (productId: string) => void;
+  clear: () => void;
   applyPromo: (code: string) => boolean;
   clearPromo: () => void;
   promoCode: string | null;
@@ -32,19 +42,60 @@ type CartContextValue = {
 
 const CartContext = createContext<CartContextValue | null>(null);
 
-const INITIAL: CartLine[] = [
-  { productId: 'mangues', qty: 2, unitOverride: '2 kg' },
-  { productId: 'plantains', qty: 1, unitOverride: '1 régime' },
-  { productId: 'lait', qty: 3 },
-  { productId: 'poulet-fermier', qty: 1 },
-];
+function sanitizeLines(lines: unknown): CartLine[] {
+  if (!Array.isArray(lines)) return [];
+  return lines
+    .filter((l): l is CartLine => {
+      if (!l || typeof l !== 'object') return false;
+      const row = l as CartLine;
+      return typeof row.productId === 'string' && typeof row.qty === 'number' && row.qty > 0 && Boolean(getProduct(row.productId));
+    })
+    .map((l) => ({
+      productId: l.productId,
+      qty: Math.min(99, Math.floor(l.qty)),
+      ...(l.unitOverride ? { unitOverride: l.unitOverride } : {}),
+    }));
+}
 
 export function CartProvider({ children }: { children: React.ReactNode }) {
-  const [lines, setLines] = useState<CartLine[]>(INITIAL);
+  const [lines, setLines] = useState<CartLine[]>([]);
   const [promoCode, setPromoCode] = useState<string | null>(null);
   const [promoMessage, setPromoMessage] = useState<string | null>(null);
+  const [ready, setReady] = useState(false);
+  const hydrated = useRef(false);
+
+  useEffect(() => {
+    let active = true;
+    (async () => {
+      try {
+        const raw = await AsyncStorage.getItem(STORAGE_KEY);
+        if (raw && active) {
+          const parsed = JSON.parse(raw) as PersistedCart;
+          setLines(sanitizeLines(parsed.lines));
+          setPromoCode(parsed.promoCode && PROMO_CODES[parsed.promoCode] ? parsed.promoCode : null);
+        }
+      } catch {
+        // ignore corrupt storage
+      } finally {
+        if (active) {
+          hydrated.current = true;
+          setReady(true);
+        }
+      }
+    })();
+    return () => {
+      active = false;
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!hydrated.current) return;
+    const payload: PersistedCart = { lines, promoCode };
+    AsyncStorage.setItem(STORAGE_KEY, JSON.stringify(payload)).catch(() => undefined);
+  }, [lines, promoCode]);
 
   const add = useCallback((productId: string, qty = 1) => {
+    if (!getProduct(productId)) return;
     setLines((prev) => {
       const existing = prev.find((l) => l.productId === productId);
       if (existing) {
@@ -62,6 +113,12 @@ export function CartProvider({ children }: { children: React.ReactNode }) {
 
   const remove = useCallback((productId: string) => {
     setLines((prev) => prev.filter((l) => l.productId !== productId));
+  }, []);
+
+  const clear = useCallback(() => {
+    setLines([]);
+    setPromoCode(null);
+    setPromoMessage(null);
   }, []);
 
   const applyPromo = useCallback((code: string) => {
@@ -115,9 +172,11 @@ export function CartProvider({ children }: { children: React.ReactNode }) {
   const value = useMemo(
     () => ({
       lines,
+      ready,
       add,
       setQty,
       remove,
+      clear,
       applyPromo,
       clearPromo,
       promoCode,
@@ -131,9 +190,11 @@ export function CartProvider({ children }: { children: React.ReactNode }) {
     }),
     [
       lines,
+      ready,
       add,
       setQty,
       remove,
+      clear,
       applyPromo,
       clearPromo,
       promoCode,

@@ -1,10 +1,11 @@
 import { CartTotalFab, IconCircle, ProductCard, Screen, Page } from '@/components/ui';
-import { colors } from '@/constants/theme';
+import { colors, displayFont } from '@/constants/theme';
 import { categoryFilters, exploreCategories, products, productsInCategory } from '@/data/catalog';
 import { Feather } from '@expo/vector-icons';
 import { router, useLocalSearchParams } from 'expo-router';
 import { useMemo, useState } from 'react';
 import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+
 export default function CategoryScreen() {
   const { id, filter } = useLocalSearchParams<{ id: string; filter?: string }>();
   const cat = exploreCategories.find((c) => c.id === id);
@@ -31,7 +32,7 @@ export default function CategoryScreen() {
         <View style={styles.header}>
           <IconCircle name="arrow-left" onPress={() => router.back()} />
           <Text style={styles.title}>{cat?.title ?? 'Catégorie'}</Text>
-          <IconCircle name="filter" />
+          <IconCircle name="search" onPress={() => router.push('/search')} />
         </View>
         <View style={styles.filtersWrap}>
           <ScrollView
@@ -76,7 +77,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: 20,
     paddingVertical: 12,
   },
-  title: { color: colors.text, fontSize: 18, fontWeight: '700' },
+  title: { color: colors.text, fontSize: 18, ...displayFont('700') },
   filtersWrap: {
     backgroundColor: colors.bg,
     zIndex: 2,

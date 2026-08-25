@@ -1,16 +1,19 @@
-import { colors } from '@/constants/theme';
+import { AppImage } from '@/components/AppImage';
+import { MotionView, PressScale, enterZoom } from '@/components/motion';
+import { colors, displayFont } from '@/constants/theme';
 import { Product, productReviewStats } from '@/data/catalog';
 import { useCart, useProductQty } from '@/context/CartContext';
+import { useFavorites } from '@/context/FavoritesContext';
 import { formatFcfa } from '@/lib/format';
 import { navigateTab, tabPaths } from '@/lib/navigation';
+import { softShadow } from '@/lib/shadow';
 import { Feather, Ionicons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
 import { router } from 'expo-router';
 import { memo, useRef } from 'react';
 import {
   Animated,
-  Image,
-  ImageSourcePropType,
+  type ImageSourcePropType,
   Platform,
   Pressable,
   StyleSheet,
@@ -18,20 +21,43 @@ import {
   TextInput,
   View,
 } from 'react-native';
+import Reanimated from 'react-native-reanimated';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
+/** Full-bleed screen shell. */
 export function Screen({ children }: { children: React.ReactNode }) {
   return <View style={styles.screen}>{children}</View>;
 }
 
-/** Page wrapper without top safe-area inset — content scrolls under the status bar on iOS/Android. */
+/**
+ * Immersive page shell (no top status-bar gap).
+ * Only side insets are applied; bottom home-indicator is handled by tabs/footers.
+ * `edgeToEdge` kept for call-site compatibility (top is always flush).
+ */
 export function Page({
   children,
   style,
+  edgeToEdge: _edgeToEdge = false,
 }: {
   children: React.ReactNode;
   style?: React.ComponentProps<typeof View>['style'];
+  edgeToEdge?: boolean;
 }) {
-  return <View style={[{ flex: 1 }, style]}>{children}</View>;
+  const insets = useSafeAreaInsets();
+  return (
+    <View
+      style={[
+        styles.page,
+        {
+          paddingTop: 0,
+          paddingLeft: insets.left,
+          paddingRight: insets.right,
+        },
+        style,
+      ]}>
+      {children}
+    </View>
+  );
 }
 
 export const ProductCard = memo(function ProductCard({
@@ -39,14 +65,21 @@ export const ProductCard = memo(function ProductCard({
   width = 140,
   imageHeight = 130,
   compact = false,
+  index = 0,
+  animate = true,
 }: {
   product: Product;
   width?: number | `${number}%`;
   imageHeight?: number;
   compact?: boolean;
+  index?: number;
+  animate?: boolean;
 }) {
   const { qty, increment, decrement } = useProductQty(product.id);
+  const { isFavorite, toggle } = useFavorites();
+  const liked = isFavorite(product.id);
   const scaleX = useRef(new Animated.Value(1)).current;
+  const heartScale = useRef(new Animated.Value(1)).current;
 
   const bump = (next: () => void) => {
     Animated.sequence([
@@ -56,34 +89,66 @@ export const ProductCard = memo(function ProductCard({
     next();
   };
 
+  const toggleLike = () => {
+    Animated.sequence([
+      Animated.timing(heartScale, { toValue: 1.25, duration: 90, useNativeDriver: true }),
+      Animated.spring(heartScale, { toValue: 1, useNativeDriver: true, speed: 26, bounciness: 8 }),
+    ]).start();
+    toggle(product.id);
+  };
+
   const openProduct = () => router.push(`/product/${product.id}`);
   const { rating, reviews } = productReviewStats(product);
+  // Width must sit on the outermost wrapper: % widths inside MotionView
+  // resolve against a shrink-wrapped parent and collapse the image (~70×168).
+  const widthStyle = { width } as const;
 
-  return (
-    <View style={[styles.card, { width }]}>
+  const body = (
+    <View style={styles.card}>
       <View style={styles.cardInner}>
-        <Pressable style={[styles.imagePanel, { height: imageHeight }]} onPress={openProduct}>
-          <Image source={product.image} style={styles.photo} resizeMode="cover" />
+        <View style={[styles.imagePanel, { height: imageHeight }]}>
+          <Pressable onPress={openProduct} style={StyleSheet.absoluteFill}>
+            <AppImage source={product.image} frameStyle={StyleSheet.absoluteFill} />
+          </Pressable>
           {product.discount ? (
-            <View style={styles.discount}>
+            <View style={[styles.discount, { pointerEvents: 'none' }]}>
               <Text style={styles.discountText}>{product.discount}</Text>
             </View>
           ) : null}
-          <View style={styles.heart}>
-            <Feather name="heart" size={14} color={colors.text} />
-          </View>
-        </Pressable>
+          <Pressable
+            style={styles.heart}
+            onPress={(e) => {
+              e.stopPropagation?.();
+              toggleLike();
+            }}
+            hitSlop={8}
+            accessibilityRole="button"
+            accessibilityLabel={liked ? 'Retirer des favoris' : 'Ajouter aux favoris'}>
+            <Animated.View style={{ transform: [{ scale: heartScale }] }}>
+              <Feather
+                name="heart"
+                size={14}
+                color={liked ? colors.terracotta : colors.text}
+                style={liked ? undefined : { opacity: 0.45 }}
+              />
+            </Animated.View>
+          </Pressable>
+        </View>
         <View style={[styles.info, compact && styles.infoCompact]}>
-          <Pressable onPress={openProduct}>
+          <Pressable style={styles.infoText} onPress={openProduct}>
             <Text style={styles.name} numberOfLines={1}>
               {product.name}
             </Text>
-            <Text style={[styles.unit, compact && styles.unitCompact]}>{product.unit}</Text>
-            <View style={[styles.ratingRow, compact && styles.ratingRowCompact]}>
-              <Ionicons name="star" size={compact ? 11 : 12} color={colors.gold} />
-              <Text style={[styles.ratingText, compact && styles.ratingTextCompact]} numberOfLines={1}>
-                {rating.toFixed(1)} ({reviews} avis)
+            <View style={[styles.metaRow, compact && styles.metaRowCompact]}>
+              <Text style={[styles.unit, compact && styles.unitCompact]} numberOfLines={1}>
+                {product.unit}
               </Text>
+              <View style={[styles.ratingRow, compact && styles.ratingRowCompact]}>
+                <Ionicons name="star" size={compact ? 11 : 12} color={colors.gold} />
+                <Text style={[styles.ratingText, compact && styles.ratingTextCompact]} numberOfLines={1}>
+                  {rating.toFixed(1)} ({reviews} avis)
+                </Text>
+              </View>
             </View>
           </Pressable>
           {qty > 0 ? (
@@ -111,6 +176,13 @@ export const ProductCard = memo(function ProductCard({
         </View>
       </View>
     </View>
+  );
+
+  if (!animate) return <View style={widthStyle}>{body}</View>;
+  return (
+    <MotionView index={index} preset="down" style={widthStyle}>
+      {body}
+    </MotionView>
   );
 });
 
@@ -166,20 +238,19 @@ function CategoryTileOverlay() {
   if (Platform.OS === 'web') {
     return (
       <View
-        pointerEvents="none"
         style={[
-          StyleSheet.absoluteFillObject,
+          StyleSheet.absoluteFill,
           styles.tileGradientWeb,
+          { pointerEvents: 'none' },
         ]}
       />
     );
   }
   return (
     <LinearGradient
-      pointerEvents="none"
       colors={['rgba(0,0,0,0)', 'rgba(0,0,0,0.2)', 'rgba(0,0,0,0.78)']}
       locations={[0, 0.35, 1]}
-      style={StyleSheet.absoluteFill}
+      style={[StyleSheet.absoluteFill, { pointerEvents: 'none' }]}
     />
   );
 }
@@ -191,6 +262,7 @@ export function CategoryTile({
   flex,
   onPress,
   count,
+  index = 0,
 }: {
   title: string;
   image: ImageSourcePropType;
@@ -198,39 +270,40 @@ export function CategoryTile({
   flex: number;
   onPress: () => void;
   count?: number;
+  index?: number;
 }) {
   return (
-    <Pressable
-      style={({ pressed }) => [styles.tilePress, { flex, height }, pressed && styles.tilePressed]}
-      onPress={onPress}>
-      <View style={styles.tile}>
-        <View style={styles.tileFrame} pointerEvents="none">
-          <View style={styles.tileImageZoom}>
-            <Image source={image} style={styles.tileImage} resizeMode="cover" />
+    <MotionView index={index} preset="down" style={{ flex, height }}>
+      <PressScale style={[styles.tilePress, { flex: 1, height }]} onPress={onPress} scaleTo={0.96}>
+        <View style={styles.tile}>
+          <View style={[styles.tileFrame, { pointerEvents: 'none' }]}>
+            <View style={styles.tileImageZoom}>
+              <AppImage source={image} frameStyle={styles.tileImage} />
+            </View>
+            <CategoryTileOverlay />
           </View>
-          <CategoryTileOverlay />
+          <View style={styles.tileFooter}>
+            <View style={styles.tileTextBlock}>
+              <Text style={styles.tileTitle} numberOfLines={2}>
+                {title}
+              </Text>
+              {count != null ? <Text style={styles.tileCount}>{count} produits</Text> : null}
+            </View>
+            <View style={styles.tileArrow}>
+              <Feather name="arrow-right" size={14} color={colors.white} />
+            </View>
+          </View>
         </View>
-        <View style={styles.tileFooter}>
-          <View style={styles.tileTextBlock}>
-            <Text style={styles.tileTitle} numberOfLines={2}>
-              {title}
-            </Text>
-            {count != null ? <Text style={styles.tileCount}>{count} produits</Text> : null}
-          </View>
-          <View style={styles.tileArrow}>
-            <Feather name="arrow-right" size={14} color={colors.white} />
-          </View>
-        </View>
-      </View>
-    </Pressable>
+      </PressScale>
+    </MotionView>
   );
 }
 
 export function CtaButton({ label, onPress }: { label: string; onPress: () => void }) {
   return (
-    <Pressable style={styles.cta} onPress={onPress}>
+    <PressScale style={styles.cta} onPress={onPress} scaleTo={0.98}>
       <Text style={styles.ctaText}>{label}</Text>
-    </Pressable>
+    </PressScale>
   );
 }
 
@@ -238,15 +311,17 @@ export function IconCircle({
   name,
   onPress,
   bg = colors.white,
+  color = colors.text,
 }: {
   name: React.ComponentProps<typeof Feather>['name'];
   onPress?: () => void;
   bg?: string;
+  color?: string;
 }) {
   return (
-    <Pressable onPress={onPress} style={[styles.iconCircle, { backgroundColor: bg }]}>
-      <Feather name={name} size={18} color={colors.text} />
-    </Pressable>
+    <PressScale onPress={onPress} style={[styles.iconCircle, { backgroundColor: bg }]} scaleTo={0.92}>
+      <Feather name={name} size={18} color={color} />
+    </PressScale>
   );
 }
 
@@ -257,6 +332,7 @@ export function PromoBanner({
   image,
   onPress,
   width = 320,
+  index = 0,
 }: {
   title: string;
   subtitle: string;
@@ -264,33 +340,47 @@ export function PromoBanner({
   image: ImageSourcePropType;
   onPress: () => void;
   width?: number;
+  index?: number;
 }) {
   return (
-    <Pressable style={[styles.promo, { width }]} onPress={onPress}>
-      <Image source={image} style={styles.promoImg} resizeMode="cover" />
-      <View style={styles.promoDim} />
-      <Text style={styles.promoTitle}>{title}</Text>
-      <Text style={styles.promoSub}>{subtitle}</Text>
-      <View style={styles.profiter}>
-        <Text style={styles.profiterText}>{cta}</Text>
-      </View>
-    </Pressable>
+    <MotionView index={index} preset="right">
+      <PressScale style={[styles.promo, { width }]} onPress={onPress} scaleTo={0.985}>
+        <AppImage source={image} style={styles.promoImg} frameStyle={StyleSheet.absoluteFill} />
+        <View style={styles.promoDim} />
+        <Text style={styles.promoTitle}>{title}</Text>
+        <Text style={styles.promoSub}>{subtitle}</Text>
+        <View style={styles.profiter}>
+          <Text style={styles.profiterText}>{cta}</Text>
+        </View>
+      </PressScale>
+    </MotionView>
   );
 }
 
 export const CartTotalFab = memo(function CartTotalFab({ bottom = 20 }: { bottom?: number }) {
-  const { subtotal, listSubtotal } = useCart();
+  const { subtotal, listSubtotal, count } = useCart();
   if (subtotal <= 0) return null;
 
   const showCompare = listSubtotal > subtotal;
 
   return (
-    <Pressable
-      style={[styles.totalFab, { bottom }]}
-      onPress={() => navigateTab(tabPaths.cart)}>
-      <Text style={styles.totalFabText}>{formatFcfa(subtotal)}</Text>
-      {showCompare ? <Text style={styles.totalFabOld}>{formatFcfa(listSubtotal)}</Text> : null}
-    </Pressable>
+    <Reanimated.View entering={enterZoom(80)} style={[styles.totalFab, { bottom }]}>
+      <PressScale style={styles.totalFabInner} onPress={() => navigateTab(tabPaths.cart)} scaleTo={0.96}>
+        <View style={styles.totalFabIcon}>
+          <Feather name="shopping-bag" size={15} color={colors.white} />
+          {count > 0 ? (
+            <View style={styles.totalFabBadge}>
+              <Text style={styles.totalFabBadgeText}>{count > 99 ? '99+' : count}</Text>
+            </View>
+          ) : null}
+        </View>
+        <View style={styles.totalFabPrices}>
+          <Text style={styles.totalFabText}>{formatFcfa(subtotal)}</Text>
+          {showCompare ? <Text style={styles.totalFabOld}>{formatFcfa(listSubtotal)}</Text> : null}
+        </View>
+        <Feather name="chevron-right" size={16} color="rgba(255,255,255,0.85)" />
+      </PressScale>
+    </Reanimated.View>
   );
 });
 
@@ -299,6 +389,9 @@ const styles = StyleSheet.create({
     flex: 1,
     backgroundColor: colors.bg,
     ...(Platform.OS === 'web' ? { maxWidth: 430, width: '100%', alignSelf: 'center' as const } : {}),
+  },
+  page: {
+    flex: 1,
   },
   card: {
     width: '100%',
@@ -316,6 +409,8 @@ const styles = StyleSheet.create({
     width: '100%',
     overflow: 'hidden',
     borderRadius: 16,
+    position: 'relative',
+    backgroundColor: colors.border,
   },
   photo: {
     width: '100%',
@@ -330,6 +425,7 @@ const styles = StyleSheet.create({
     borderRadius: 8,
     paddingHorizontal: 8,
     paddingVertical: 4,
+    zIndex: 2,
   },
   discountText: { color: colors.white, fontWeight: '700', fontSize: 11 },
   heart: {
@@ -342,14 +438,28 @@ const styles = StyleSheet.create({
     backgroundColor: 'rgba(255,255,255,0.82)',
     alignItems: 'center',
     justifyContent: 'center',
+    zIndex: 2,
   },
-  info: { paddingHorizontal: 4, paddingTop: 8, paddingBottom: 10, gap: 4 },
-  infoCompact: { paddingTop: 6, paddingBottom: 8, gap: 1 },
-  name: { color: colors.text, fontWeight: '600', fontSize: 15 },
-  unit: { color: colors.muted, fontSize: 12, marginTop: 2 },
-  unitCompact: { marginTop: 0 },
-  ratingRow: { flexDirection: 'row', alignItems: 'center', gap: 4, marginTop: 4 },
-  ratingRowCompact: { marginTop: 2, gap: 3 },
+  info: { paddingHorizontal: 4, paddingTop: 10, paddingBottom: 10, gap: 8 },
+  infoCompact: { paddingTop: 8, paddingBottom: 8, gap: 6 },
+  infoText: { gap: 4 },
+  name: {
+    color: colors.text,
+    fontSize: 15,
+    lineHeight: 20,
+    ...displayFont('700'),
+  },
+  metaRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 6,
+  },
+  metaRowCompact: {},
+  unit: { color: colors.muted, fontSize: 12, flexShrink: 1 },
+  unitCompact: { fontSize: 11 },
+  ratingRow: { flexDirection: 'row', alignItems: 'center', gap: 3, flexShrink: 1 },
+  ratingRowCompact: { gap: 2 },
   ratingText: { color: colors.muted, fontSize: 11, fontWeight: '600', flexShrink: 1 },
   ratingTextCompact: { fontSize: 10 },
   row: {
@@ -491,25 +601,61 @@ const styles = StyleSheet.create({
   totalFab: {
     position: 'absolute',
     right: 20,
-    backgroundColor: colors.terracotta,
-    borderRadius: 24,
-    paddingHorizontal: 18,
-    paddingVertical: 14,
-    minHeight: 48,
-    flexDirection: 'row',
-    justifyContent: 'center',
-    alignItems: 'baseline',
-    gap: 8,
-    shadowColor: '#1c1613',
-    shadowOffset: { width: 0, height: 6 },
-    shadowOpacity: 0.18,
-    shadowRadius: 12,
-    elevation: 8,
     zIndex: 20,
   },
-  totalFabText: { color: colors.white, fontWeight: '800', fontSize: 15 },
+  totalFabInner: {
+    backgroundColor: colors.terracotta,
+    borderRadius: 999,
+    paddingLeft: 12,
+    paddingRight: 14,
+    paddingVertical: 10,
+    minHeight: 52,
+    flexDirection: 'row',
+    justifyContent: 'center',
+    alignItems: 'center',
+    gap: 10,
+    ...softShadow({ y: 8, blur: 28, opacity: 0.2, elevation: 10 }),
+  },
+  totalFabIcon: {
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    backgroundColor: 'rgba(255,255,255,0.18)',
+    alignItems: 'center',
+    justifyContent: 'center',
+    position: 'relative',
+  },
+  totalFabBadge: {
+    position: 'absolute',
+    top: -4,
+    right: -5,
+    minWidth: 16,
+    height: 16,
+    borderRadius: 8,
+    backgroundColor: colors.white,
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: 3,
+  },
+  totalFabBadgeText: {
+    color: colors.terracotta,
+    fontSize: 9,
+    fontWeight: '800',
+    lineHeight: 11,
+  },
+  totalFabPrices: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  totalFabText: {
+    color: colors.white,
+    fontWeight: '800',
+    fontSize: 15,
+    letterSpacing: 0.2,
+  },
   totalFabOld: {
-    color: 'rgba(255,255,255,0.7)',
+    color: 'rgba(255,255,255,0.55)',
     fontWeight: '600',
     fontSize: 12,
     textDecorationLine: 'line-through',
@@ -523,7 +669,7 @@ const styles = StyleSheet.create({
   },
   promoImg: { ...StyleSheet.absoluteFillObject, width: '100%', height: '100%' },
   promoDim: { ...StyleSheet.absoluteFillObject, backgroundColor: colors.overlay },
-  promoTitle: { color: colors.white, fontSize: 20, fontWeight: '800' },
+  promoTitle: { color: colors.white, fontSize: 20, ...displayFont('800') },
   promoSub: { color: colors.cream, fontSize: 14, marginTop: 4 },
   profiter: {
     alignSelf: 'flex-start',
