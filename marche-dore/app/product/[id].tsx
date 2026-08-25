@@ -1,8 +1,11 @@
-import { CartTotalFab, IconCircle, Page, ProductCard, Screen } from '@/components/ui';
+import { CartTotalFab, Page, ProductCard, Screen } from '@/components/ui';
 import { MotionView, PressScale } from '@/components/motion';
 import { ImagePager, type ImagePagerHandle } from '@/components/ImagePager';
+import { ImageViewer } from '@/components/ImageViewer';
+import { AppImage } from '@/components/AppImage';
 import { StarRating } from '@/components/StarRating';
-import { colors, displayFont } from '@/constants/theme';
+import { displayFont, type AppColors } from '@/constants/theme';
+import { useColors } from '@/context/ThemeContext';
 import { useCart } from '@/context/CartContext';
 import { useFavorites } from '@/context/FavoritesContext';
 import {
@@ -17,11 +20,12 @@ import {
 } from '@/data/catalog';
 import { formatFcfa } from '@/lib/format';
 import { navigateTab, tabPaths } from '@/lib/navigation';
-import { Feather } from '@expo/vector-icons';
+import { Feather, Ionicons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
 import { router, useLocalSearchParams } from 'expo-router';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
+  Dimensions,
   NativeScrollEvent,
   NativeSyntheticEvent,
   Platform,
@@ -32,9 +36,22 @@ import {
   useWindowDimensions,
   View,
 } from 'react-native';
+import Animated, {
+  useAnimatedStyle,
+  useSharedValue,
+  withSequence,
+  withSpring,
+} from 'react-native-reanimated';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
+const HERO_H = Math.round(432 * 1.08);
+const SHEET_RADIUS = 28;
+const SHEET_OVERLAP = 88;
+const GRID_IMAGE_HEIGHT = 168;
+
 function NutriRow({ label, value }: { label: string; value: string }) {
+  const colors = useColors();
+  const styles = useMemo(() => createStyles(colors), [colors]);
   return (
     <View style={styles.nutriRow}>
       <Text style={styles.nutriLabel}>{label}</Text>
@@ -43,7 +60,54 @@ function NutriRow({ label, value }: { label: string; value: string }) {
   );
 }
 
+function HeroGlassBtn({
+  onPress,
+  children,
+  accessibilityLabel,
+}: {
+  onPress?: () => void;
+  children: React.ReactNode;
+  accessibilityLabel?: string;
+}) {
+  return (
+    <PressScale
+      onPress={onPress}
+      scaleTo={0.9}
+      accessibilityRole="button"
+      accessibilityLabel={accessibilityLabel}
+      style={glassBtnStyles.btn}>
+      {children}
+    </PressScale>
+  );
+}
+
+const glassBtnStyles = StyleSheet.create({
+  btn: {
+    width: 42,
+    height: 42,
+    borderRadius: 15,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: 'rgba(28,22,19,0.42)',
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.28)',
+    ...Platform.select({
+      ios: {
+        shadowColor: '#000',
+        shadowOpacity: 0.2,
+        shadowRadius: 8,
+        shadowOffset: { width: 0, height: 4 },
+      },
+      android: { elevation: 4 },
+      default: {},
+    }),
+  },
+});
+
 export default function ProductScreen() {
+  const colors = useColors();
+  const styles = useMemo(() => createStyles(colors), [colors]);
+
   const { id } = useLocalSearchParams<{ id: string }>();
   const product = getProduct(id);
   const insets = useSafeAreaInsets();
@@ -53,6 +117,7 @@ export default function ProductScreen() {
   const [descOpen, setDescOpen] = useState(true);
   const [nutriOpen, setNutriOpen] = useState(false);
   const [heroIndex, setHeroIndex] = useState(0);
+  const [justAdded, setJustAdded] = useState(false);
   const heroPagerRef = useRef<ImagePagerHandle>(null);
   const { width: windowWidth } = useWindowDimensions();
   const cartQty = lines.find((l) => l.productId === id)?.qty ?? 0;
@@ -66,12 +131,16 @@ export default function ProductScreen() {
   }, [id, similar]);
   const [discoverPages, setDiscoverPages] = useState(1);
   const loadingDiscover = useRef(false);
-  const gallery = useMemo(() => (product ? productGallery(product) : []), [product]);
+  const gallery = useMemo(() => (product ? productGallery(product, 4) : []), [product]);
   const heroWidth = Math.min(windowWidth, 430);
+  const ctaScale = useSharedValue(1);
+  const ctaAnimStyle = useAnimatedStyle(() => ({ transform: [{ scale: ctaScale.value }] }));
+  const [viewerOpen, setViewerOpen] = useState(false);
 
   useEffect(() => {
     setDiscoverPages(1);
     setHeroIndex(0);
+    setJustAdded(false);
   }, [id]);
 
   const discoverItems = useMemo(() => {
@@ -140,6 +209,13 @@ export default function ProductScreen() {
   const addToCart = () => {
     if (!product || inCart) return;
     add(product.id, 1);
+    setJustAdded(true);
+    ctaScale.value = withSequence(
+      withSpring(0.94, { damping: 14, stiffness: 280 }),
+      withSpring(1.03, { damping: 12, stiffness: 220 }),
+      withSpring(1, { damping: 16, stiffness: 200 }),
+    );
+    setTimeout(() => setJustAdded(false), 900);
   };
 
   const goToSlide = (index: number) => {
@@ -147,56 +223,114 @@ export default function ProductScreen() {
     setHeroIndex(index);
   };
 
+  const openViewer = (index = heroIndex) => {
+    setHeroIndex(index);
+    setViewerOpen(true);
+  };
+
   return (
     <Screen>
       <Page style={styles.page} edgeToEdge>
+        <View style={[styles.heroBackdrop, { height: HERO_H }]} pointerEvents="box-none">
+          <ImagePager
+            ref={heroPagerRef}
+            images={gallery}
+            width={heroWidth}
+            height={HERO_H}
+            recyclingKeyPrefix={`product-${product.id}`}
+            onIndexChange={setHeroIndex}
+            onPress={() => openViewer(heroIndex)}
+          />
+          {product.discount ? (
+            <View style={[styles.heroDiscount, { top: insets.top + 56, pointerEvents: 'none' }]}>
+              <Text style={styles.heroDiscountText}>{product.discount}</Text>
+            </View>
+          ) : null}
+          <View style={[styles.dots, { pointerEvents: 'box-none' }]}>
+            {gallery.map((_, i) => (
+              <Pressable key={i} onPress={() => goToSlide(i)} hitSlop={8}>
+                <View style={[styles.dot, i === heroIndex && styles.dotOn]} />
+              </Pressable>
+            ))}
+          </View>
+        </View>
+
         <View style={[styles.heroBar, { top: insets.top + 8, pointerEvents: 'box-none' }]}>
-          <IconCircle name="arrow-left" onPress={() => router.back()} bg="rgba(255,255,255,0.9)" />
+          <HeroGlassBtn onPress={() => router.back()} accessibilityLabel="Retour">
+            <Feather name="arrow-left" size={20} color="#ffffff" />
+          </HeroGlassBtn>
           <View style={styles.heroActions}>
-            <IconCircle name="share-2" bg="rgba(255,255,255,0.9)" />
-            <IconCircle
-              name="heart"
-              bg="rgba(255,255,255,0.9)"
-              color={liked ? colors.terracotta : colors.text}
-              onPress={() => id && toggle(id)}
-            />
+            <HeroGlassBtn
+              accessibilityLabel="Voir les photos"
+              onPress={() => openViewer(heroIndex)}>
+              <Feather name="maximize-2" size={17} color="#ffffff" />
+            </HeroGlassBtn>
+            <HeroGlassBtn accessibilityLabel="Partager">
+              <Feather name="share-2" size={18} color="#ffffff" />
+            </HeroGlassBtn>
+            <HeroGlassBtn
+              accessibilityLabel={liked ? 'Retirer des favoris' : 'Ajouter aux favoris'}
+              onPress={() => id && toggle(id)}>
+              <Ionicons
+                name={liked ? 'heart' : 'heart-outline'}
+                size={20}
+                color={liked ? '#e06a52' : '#ffffff'}
+              />
+            </HeroGlassBtn>
           </View>
         </View>
 
         <ScrollView
-          style={styles.scroll}
-          contentContainerStyle={styles.scrollContent}
+          style={styles.scrollLayer}
+          contentContainerStyle={[styles.scrollContent, { paddingTop: HERO_H - SHEET_OVERLAP }]}
           showsVerticalScrollIndicator={false}
           scrollEventThrottle={16}
           onScroll={onMainScroll}
           bounces>
-          <View style={styles.heroBand}>
-            <ImagePager
-              ref={heroPagerRef}
-              images={gallery}
-              width={heroWidth}
-              height={HERO_H}
-              recyclingKeyPrefix={`product-${product.id}`}
-              onIndexChange={setHeroIndex}
-            />
-            {product.discount ? (
-              <View style={[styles.heroDiscount, { top: insets.top + 52, pointerEvents: 'none' }]}>
-                <Text style={styles.heroDiscountText}>{product.discount}</Text>
-              </View>
-            ) : null}
-            <View style={[styles.dots, { pointerEvents: 'box-none' }]}>
-              {gallery.map((_, i) => (
-                <Pressable key={i} onPress={() => goToSlide(i)} hitSlop={8}>
-                  <View style={[styles.dot, i === heroIndex && styles.dotOn]} />
-                </Pressable>
-              ))}
-            </View>
-          </View>
-
-          <MotionView preset="up" delay={60} style={styles.body}>
+          <MotionView preset="up" delay={40} style={styles.body}>
             <View style={styles.sheetHandle}>
               <View style={styles.sheetHandleBar} />
             </View>
+
+            {gallery.length > 0 ? (
+              <ScrollView
+                horizontal
+                showsHorizontalScrollIndicator={false}
+                contentContainerStyle={styles.thumbRow}
+                style={styles.thumbScroll}>
+                {gallery.map((src, i) => {
+                  const on = i === heroIndex;
+                  return (
+                    <PressScale
+                      key={`sheet-thumb-${product.id}-${i}`}
+                      onPress={() => {
+                        goToSlide(i);
+                        if (gallery.length === 1) openViewer(i);
+                      }}
+                      onLongPress={() => openViewer(i)}
+                      scaleTo={0.94}
+                      style={[styles.thumb, on && styles.thumbOn]}
+                      accessibilityLabel={`Miniature ${i + 1}`}>
+                      <AppImage
+                        source={src}
+                        recyclingKey={`product-thumb-${product.id}-${i}`}
+                        frameStyle={styles.thumbImg}
+                      />
+                      {on ? <View style={styles.thumbActiveMark} /> : null}
+                    </PressScale>
+                  );
+                })}
+                <PressScale
+                  onPress={() => openViewer(heroIndex)}
+                  scaleTo={0.94}
+                  style={styles.thumbMore}
+                  accessibilityLabel="Ouvrir le viewer d’images">
+                  <Feather name="maximize-2" size={16} color={colors.gold} />
+                  <Text style={styles.thumbMoreText}>Voir</Text>
+                </PressScale>
+              </ScrollView>
+            ) : null}
+
             <View style={styles.brandRow}>
               <View style={styles.brandPill}>
                 <Feather name="sun" size={12} color={colors.gold} />
@@ -357,6 +491,17 @@ export default function ProductScreen() {
 
         <CartTotalFab bottom={Math.max(96, insets.bottom + 88)} />
 
+        <ImageViewer
+          visible={viewerOpen}
+          images={gallery}
+          initialIndex={heroIndex}
+          onClose={() => setViewerOpen(false)}
+          onIndexChange={(i) => {
+            setHeroIndex(i);
+            heroPagerRef.current?.goTo(i);
+          }}
+        />
+
         <View style={[styles.footer, { paddingBottom: Math.max(14, insets.bottom + 8) }]}>
           {inCart ? (
             <>
@@ -380,35 +525,39 @@ export default function ProductScreen() {
                     <Feather name="plus" size={14} color={colors.white} />
                   </Pressable>
                 </View>
-                <Pressable style={styles.cta} onPress={() => navigateTab(tabPaths.cart)}>
+                <PressScale style={styles.cta} onPress={() => navigateTab(tabPaths.cart)} scaleTo={0.97}>
                   <LinearGradient
                     colors={['#c84b31', '#a83c26']}
                     start={{ x: 0, y: 0 }}
                     end={{ x: 1, y: 0 }}
                     style={styles.ctaGradient}>
-                    <Feather name="shopping-bag" size={17} color={colors.white} />
+                    <Feather name="shopping-bag" size={17} color="#ffffff" />
                     <Text style={styles.ctaText} numberOfLines={1}>
                       Voir le panier
                     </Text>
                   </LinearGradient>
-                </Pressable>
+                </PressScale>
               </View>
             </>
           ) : (
-            <Pressable style={styles.cta} onPress={addToCart}>
-              <LinearGradient
-                colors={['#c84b31', '#a83c26']}
-                start={{ x: 0, y: 0 }}
-                end={{ x: 1, y: 0 }}
-                style={styles.ctaGradient}>
-                <Feather name="shopping-bag" size={17} color={colors.white} />
-                <Text style={styles.ctaText}>Ajouter au panier</Text>
-                <View style={styles.ctaPrices}>
-                  <Text style={styles.ctaPrice}>{formatFcfa(total)}</Text>
-                  {showCompare ? <Text style={styles.ctaOld}>{formatFcfa(listTotal)}</Text> : null}
-                </View>
-              </LinearGradient>
-            </Pressable>
+            <Animated.View style={[styles.cta, ctaAnimStyle]}>
+              <PressScale style={styles.ctaFill} onPress={addToCart} scaleTo={0.97}>
+                <LinearGradient
+                  colors={justAdded ? ['#498c53', '#3a7344'] : ['#c84b31', '#a83c26']}
+                  start={{ x: 0, y: 0 }}
+                  end={{ x: 1, y: 0 }}
+                  style={styles.ctaGradient}>
+                  <Feather name={justAdded ? 'check' : 'shopping-bag'} size={17} color="#ffffff" />
+                  <Text style={styles.ctaText}>{justAdded ? 'Ajouté !' : 'Ajouter au panier'}</Text>
+                  {!justAdded ? (
+                    <View style={styles.ctaPrices}>
+                      <Text style={styles.ctaPrice}>{formatFcfa(total)}</Text>
+                      {showCompare ? <Text style={styles.ctaOld}>{formatFcfa(listTotal)}</Text> : null}
+                    </View>
+                  ) : null}
+                </LinearGradient>
+              </PressScale>
+            </Animated.View>
           )}
         </View>
       </Page>
@@ -416,27 +565,27 @@ export default function ProductScreen() {
   );
 }
 
-const HERO_H = Math.round(432 * 1.08);
-const SHEET_RADIUS = 28;
-const SHEET_OVERLAP = 88;
-const GRID_IMAGE_HEIGHT = 168;
-
-const styles = StyleSheet.create({
+function createStyles(colors: AppColors) {
+  return StyleSheet.create({
   page: { flex: 1, backgroundColor: colors.bg },
-  scroll: {
+  heroBackdrop: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    zIndex: 0,
+    overflow: 'hidden',
+    backgroundColor: colors.border,
+  },
+  scrollLayer: {
     flex: 1,
-    backgroundColor: colors.bg,
+    zIndex: 1,
+    backgroundColor: 'transparent',
   },
   scrollContent: { flexGrow: 1, paddingBottom: 120 },
   missing: { flex: 1, alignItems: 'center', justifyContent: 'center', gap: 12 },
   missingTitle: { color: colors.text, fontSize: 18, fontWeight: '700' },
   missingLink: { color: colors.gold, fontSize: 15, fontWeight: '700' },
-  heroBand: {
-    height: HERO_H,
-    overflow: 'hidden',
-    backgroundColor: colors.border,
-    zIndex: 0,
-  },
   heroDiscount: {
     position: 'absolute',
     left: 20,
@@ -446,7 +595,7 @@ const styles = StyleSheet.create({
     paddingVertical: 5,
     zIndex: 1,
   },
-  heroDiscountText: { color: colors.white, fontSize: 12, fontWeight: '800' },
+  heroDiscountText: { color: '#ffffff', fontSize: 12, fontWeight: '800' },
   dots: {
     position: 'absolute',
     bottom: SHEET_OVERLAP + 16,
@@ -465,7 +614,7 @@ const styles = StyleSheet.create({
     backgroundColor: 'rgba(255,255,255,0.45)',
   },
   dotOn: {
-    backgroundColor: colors.white,
+    backgroundColor: '#ffffff',
     width: 18,
   },
   heroBar: {
@@ -480,17 +629,16 @@ const styles = StyleSheet.create({
   },
   heroActions: { flexDirection: 'row', gap: 8 },
   body: {
-    marginTop: -SHEET_OVERLAP,
     zIndex: 4,
     elevation: Platform.OS === 'web' ? undefined : 16,
-    backgroundColor: colors.white,
+    backgroundColor: colors.bg,
     borderTopLeftRadius: SHEET_RADIUS,
     borderTopRightRadius: SHEET_RADIUS,
     paddingHorizontal: 20,
     paddingTop: 10,
     paddingBottom: 20,
     gap: 14,
-    minHeight: 480,
+    minHeight: Dimensions.get('window').height * 0.55,
     position: 'relative' as const,
     ...(Platform.OS === 'web'
       ? { boxShadow: '0 -10px 28px rgba(28, 22, 19, 0.16)' }
@@ -511,7 +659,55 @@ const styles = StyleSheet.create({
     width: 44,
     height: 4,
     borderRadius: 999,
-    backgroundColor: '#d9d0c7',
+    backgroundColor: colors.border,
+  },
+  thumbScroll: { marginHorizontal: -4 },
+  thumbRow: {
+    gap: 10,
+    paddingHorizontal: 4,
+    paddingBottom: 2,
+    alignItems: 'center',
+  },
+  thumb: {
+    width: 64,
+    height: 64,
+    borderRadius: 16,
+    overflow: 'hidden',
+    borderWidth: 2,
+    borderColor: colors.border,
+    backgroundColor: colors.white,
+  },
+  thumbOn: {
+    borderColor: colors.gold,
+  },
+  thumbImg: {
+    width: '100%',
+    height: '100%',
+  },
+  thumbActiveMark: {
+    position: 'absolute',
+    left: 0,
+    right: 0,
+    bottom: 0,
+    height: 3,
+    backgroundColor: colors.gold,
+  },
+  thumbMore: {
+    width: 64,
+    height: 64,
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: colors.border,
+    borderStyle: 'dashed',
+    backgroundColor: colors.cream,
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 2,
+  },
+  thumbMoreText: {
+    color: colors.gold,
+    fontSize: 11,
+    fontWeight: '700',
   },
   brandRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
   brandPill: {
@@ -633,7 +829,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: 14,
     paddingVertical: 12,
   },
-  addInlineText: { color: colors.white, fontSize: 14, fontWeight: '800' },
+  addInlineText: { color: '#ffffff', fontSize: 14, fontWeight: '800' },
   accordion: {
     backgroundColor: colors.white,
     borderWidth: 1,
@@ -742,6 +938,7 @@ const styles = StyleSheet.create({
     color: colors.text,
   },
   cta: { flex: 1, borderRadius: 16, overflow: 'hidden', minWidth: 0 },
+  ctaFill: { flex: 1, borderRadius: 16, overflow: 'hidden' },
   ctaGradient: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -752,7 +949,7 @@ const styles = StyleSheet.create({
     minHeight: 52,
   },
   ctaText: {
-    color: colors.white,
+    color: '#ffffff',
     fontSize: 15,
     fontWeight: '800',
     flexShrink: 1,
@@ -765,7 +962,7 @@ const styles = StyleSheet.create({
     gap: 6,
   },
   ctaPrice: {
-    color: colors.white,
+    color: '#ffffff',
     fontSize: 14,
     fontWeight: '800',
   },
@@ -776,3 +973,4 @@ const styles = StyleSheet.create({
     textDecorationLine: 'line-through',
   },
 });
+}

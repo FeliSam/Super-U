@@ -1,7 +1,8 @@
-import { colors } from '@/constants/theme';
+import { type AppColors } from '@/constants/theme';
 import { imagePlaceholder } from '@/constants/media';
+import { useColors } from '@/context/ThemeContext';
 import { Image, type ImageProps } from 'expo-image';
-import { memo } from 'react';
+import { memo, useMemo } from 'react';
 import { Platform, StyleSheet, View, type StyleProp, type ViewStyle } from 'react-native';
 
 type Props = ImageProps & {
@@ -20,6 +21,8 @@ export const AppImage = memo(function AppImage({
   contentFit = 'cover',
   ...rest
 }: Props) {
+  const colors = useColors();
+  const styles = useMemo(() => createStyles(colors), [colors]);
   return (
     <View style={[styles.frame, frameStyle]}>
       <Image
@@ -35,15 +38,17 @@ export const AppImage = memo(function AppImage({
   );
 });
 
-const styles = StyleSheet.create({
-  frame: {
-    width: '100%',
-    height: '100%',
-    overflow: 'hidden',
-    backgroundColor: colors.border,
-  },
-  image: {
-    width: '100%',
-    height: '100%',
-  },
-});
+function createStyles(colors: AppColors) {
+  return StyleSheet.create({
+    frame: {
+      width: '100%',
+      height: '100%',
+      overflow: 'hidden',
+      backgroundColor: colors.border,
+    },
+    image: {
+      width: '100%',
+      height: '100%',
+    },
+  });
+}

@@ -9,6 +9,47 @@ const STORAGE_KEY = 'marche-dore.orders.v1';
 
 export type OrderStatus = 'confirmed' | 'preparing' | 'shipping' | 'delivered' | 'cancelled';
 
+/** Demo auto-progression delays from order creation (local only). */
+export const DEMO_STATUS_TIMELINE: { status: Exclude<OrderStatus, 'cancelled'>; afterMs: number }[] = [
+  { status: 'confirmed', afterMs: 0 },
+  // Keep a cancel window while still "Confirmée" (before préparation).
+  { status: 'preparing', afterMs: 45_000 },
+  { status: 'shipping', afterMs: 75_000 },
+  { status: 'delivered', afterMs: 110_000 },
+];
+
+function statusRank(status: OrderStatus) {
+  switch (status) {
+    case 'delivered':
+      return 3;
+    case 'shipping':
+      return 2;
+    case 'preparing':
+      return 1;
+    case 'confirmed':
+      return 0;
+    case 'cancelled':
+      return -1;
+    default:
+      return 0;
+  }
+}
+
+export function expectedDemoStatus(createdAt: string, now = Date.now()): OrderStatus {
+  const created = new Date(createdAt).getTime();
+  const age = Number.isNaN(created) ? 0 : Math.max(0, now - created);
+  let status: OrderStatus = 'confirmed';
+  for (const step of DEMO_STATUS_TIMELINE) {
+    if (age >= step.afterMs) status = step.status;
+  }
+  return status;
+}
+
+/** Annulation possible uniquement avant le début de la préparation. */
+export function canCancelOrder(status: OrderStatus) {
+  return status === 'confirmed';
+}
+
 export type OrderLine = {
   productId: string;
   name: string;
@@ -108,7 +149,7 @@ function paymentLabelFor(id: PaymentId) {
     case 'om':
       return 'Orange Money';
     case 'wave':
-      return 'Wave';
+      return 'MTN MoMo';
     case 'card':
       return 'Carte';
     case 'cod':
@@ -166,12 +207,12 @@ function sanitizeOrder(raw: unknown): Order | null {
     paymentLabel,
     paymentDetail: typeof o.paymentDetail === 'string' ? o.paymentDetail : null,
     addressLabel: (typeof o.addressLabel === 'string' && o.addressLabel.trim()) || 'Domicile',
-    addressLine: (typeof o.addressLine === 'string' && o.addressLine.trim()) || 'Rue 23, Dakar Plateau',
-    addressCity: (typeof o.addressCity === 'string' && o.addressCity.trim()) || 'Dakar',
+    addressLine: (typeof o.addressLine === 'string' && o.addressLine.trim()) || 'Rue 12, Ganhi',
+    addressCity: (typeof o.addressCity === 'string' && o.addressCity.trim()) || 'Cotonou',
     addressPhone: (typeof o.addressPhone === 'string' && o.addressPhone.trim()) || userProfile.phone,
     comment: typeof o.comment === 'string' ? o.comment : '',
     courierName: (typeof o.courierName === 'string' && o.courierName.trim()) || 'Moussa Ndiaye',
-    courierPhone: (typeof o.courierPhone === 'string' && o.courierPhone.trim()) || '+221771234567',
+    courierPhone: (typeof o.courierPhone === 'string' && o.courierPhone.trim()) || '+229971234567',
   };
 }
 
@@ -231,6 +272,29 @@ export function OrdersProvider({ children }: { children: React.ReactNode }) {
     AsyncStorage.setItem(STORAGE_KEY, JSON.stringify(orders)).catch(() => undefined);
   }, [orders]);
 
+  // Local demo: advance confirmed → preparing → shipping → delivered on a timer.
+  useEffect(() => {
+    if (!ready) return;
+
+    const sync = () => {
+      setOrders((prev) => {
+        let changed = false;
+        const next = prev.map((order) => {
+          if (order.status === 'cancelled') return order;
+          const expected = expectedDemoStatus(order.createdAt);
+          if (statusRank(expected) <= statusRank(order.status)) return order;
+          changed = true;
+          return { ...order, status: expected };
+        });
+        return changed ? next : prev;
+      });
+    };
+
+    sync();
+    const timer = setInterval(sync, 2000);
+    return () => clearInterval(timer);
+  }, [ready]);
+
   const placeOrder = useCallback((input: PlaceOrderInput) => {
     const lines = snapshotLines(input.lines);
     if (!lines.length) return null;
@@ -259,12 +323,12 @@ export function OrdersProvider({ children }: { children: React.ReactNode }) {
         paymentLabel: input.paymentLabel?.trim() || paymentLabelFor(input.paymentId),
         paymentDetail: input.paymentDetail,
         addressLabel: address?.label ?? 'Domicile',
-        addressLine: address?.line ?? 'Rue 23, Dakar Plateau',
-        addressCity: address?.city ?? 'Dakar',
+        addressLine: address?.line ?? 'Rue 12, Ganhi',
+        addressCity: address?.city ?? 'Cotonou',
         addressPhone: address?.phone ?? userProfile.phone,
         comment: input.comment?.trim() ?? '',
         courierName: 'Moussa Ndiaye',
-        courierPhone: '+221771234567',
+        courierPhone: '+229971234567',
       };
       created = order;
       return [order, ...prev];

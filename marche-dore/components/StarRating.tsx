@@ -1,8 +1,9 @@
-import { colors } from '@/constants/theme';
+import { useColors } from '@/context/ThemeContext';
 import { Ionicons } from '@expo/vector-icons';
 import { Pressable, StyleSheet, View } from 'react-native';
 
 function Star({ fill, size }: { fill: number; size: number }) {
+  const colors = useColors();
   const clamped = Math.min(1, Math.max(0, fill));
 
   return (
@@ -30,6 +31,7 @@ export function StarRating({
   interactive?: boolean;
   onChange?: (value: number) => void;
 }) {
+  const colors = useColors();
   const clampedRating = Math.min(max, Math.max(0, rating));
 
   if (interactive && onChange) {

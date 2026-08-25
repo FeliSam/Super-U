@@ -1,4 +1,4 @@
-import { colors } from '@/constants/theme';
+import { useColors } from '@/context/ThemeContext';
 import QRCode from 'qrcode';
 import { useEffect, useState } from 'react';
 import { ActivityIndicator, Image, StyleSheet, View } from 'react-native';
@@ -14,9 +14,12 @@ type Props = {
 export function LoyaltyQrCode({
   value,
   size = 160,
-  backgroundColor = colors.white,
-  color = colors.text,
+  backgroundColor,
+  color,
 }: Props) {
+  const colors = useColors();
+  const bg = backgroundColor ?? colors.white;
+  const fg = color ?? colors.text;
   const [uri, setUri] = useState<string | null>(null);
 
   useEffect(() => {
@@ -27,8 +30,8 @@ export function LoyaltyQrCode({
       margin: 1,
       width: size,
       color: {
-        dark: color,
-        light: backgroundColor,
+        dark: fg,
+        light: bg,
       },
     })
       .then((dataUrl) => {
@@ -40,10 +43,10 @@ export function LoyaltyQrCode({
     return () => {
       cancelled = true;
     };
-  }, [value, size, backgroundColor, color]);
+  }, [value, size, bg, fg]);
 
   return (
-    <View style={[styles.box, { width: size, height: size, backgroundColor }]}>
+    <View style={[styles.box, { width: size, height: size, backgroundColor: bg }]}>
       {uri ? (
         <Image source={{ uri }} style={{ width: size, height: size }} />
       ) : (

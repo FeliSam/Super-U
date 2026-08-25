@@ -70,7 +70,7 @@ export function maskPhone(phone: string) {
   if (digits.length < 4) return phone;
   const last = digits.slice(-2);
   const mid = digits.slice(-4, -2);
-  return `77 *** ${mid} ${last}`.replace(/^77/, digits.startsWith('221') ? '77' : digits.slice(0, 2) || '77');
+  return `97 *** ${mid} ${last}`.replace(/^97/, digits.startsWith('229') ? '97' : digits.slice(0, 2) || '97');
 }
 
 export function maskCard(number: string) {

@@ -1,6 +1,7 @@
 import { AppImage } from '@/components/AppImage';
 import { MotionView, PressScale, enterZoom } from '@/components/motion';
-import { colors, displayFont } from '@/constants/theme';
+import { heroChrome, type AppColors, displayFont } from '@/constants/theme';
+import { useColors, useTheme } from '@/context/ThemeContext';
 import { Product, productReviewStats } from '@/data/catalog';
 import { useCart, useProductQty } from '@/context/CartContext';
 import { useFavorites } from '@/context/FavoritesContext';
@@ -10,7 +11,7 @@ import { softShadow } from '@/lib/shadow';
 import { Feather, Ionicons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
 import { router } from 'expo-router';
-import { memo, useRef } from 'react';
+import { memo, useMemo, useRef } from 'react';
 import {
   Animated,
   type ImageSourcePropType,
@@ -22,17 +23,26 @@ import {
   View,
 } from 'react-native';
 import Reanimated from 'react-native-reanimated';
-import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 /** Full-bleed screen shell. */
 export function Screen({ children }: { children: React.ReactNode }) {
-  return <View style={styles.screen}>{children}</View>;
+  const colors = useColors();
+  const styles = useMemo(() => createStyles(colors), [colors]);
+  return (
+    <View
+      style={[
+        styles.screenBase,
+        { backgroundColor: colors.bg },
+        Platform.OS === 'web' ? styles.screenWeb : null,
+      ]}>
+      {children}
+    </View>
+  );
 }
 
 /**
- * Immersive page shell (no top status-bar gap).
- * Only side insets are applied; bottom home-indicator is handled by tabs/footers.
- * `edgeToEdge` kept for call-site compatibility (top is always flush).
+ * Immersive page shell (edge-to-edge).
+ * `edgeToEdge` kept for call-site compatibility.
  */
 export function Page({
   children,
@@ -43,20 +53,37 @@ export function Page({
   style?: React.ComponentProps<typeof View>['style'];
   edgeToEdge?: boolean;
 }) {
-  const insets = useSafeAreaInsets();
+  const colors = useColors();
+  const styles = useMemo(() => createStyles(colors), [colors]);
+  return <View style={[styles.page, style]}>{children}</View>;
+}
+
+/** Shared warm-gradient header for main tab screens (Explorer, Panier, Chat, Profil). */
+export function TabHero({
+  title,
+  subtitle,
+  right,
+  children,
+}: {
+  title: string;
+  subtitle?: string;
+  right?: React.ReactNode;
+  children?: React.ReactNode;
+}) {
+  const { scheme } = useTheme();
+  const colors = useColors();
+  const chrome = useMemo(() => heroChrome(scheme), [scheme]);
+  const styles = useMemo(() => createStyles(colors), [colors]);
   return (
-    <View
-      style={[
-        styles.page,
-        {
-          paddingTop: 0,
-          paddingLeft: insets.left,
-          paddingRight: insets.right,
-        },
-        style,
-      ]}>
+    <LinearGradient colors={chrome.gradient} style={styles.tabHero}>
+      <View style={[styles.tabHeroOrb, { backgroundColor: chrome.orb }]} />
+      <View style={styles.tabHeroTitleRow}>
+        <Text style={[styles.tabHeroTitle, { color: chrome.ink }]}>{title}</Text>
+        {right ? <View style={styles.tabHeroRight}>{right}</View> : null}
+      </View>
+      {subtitle ? <Text style={[styles.tabHeroSub, { color: chrome.muted }]}>{subtitle}</Text> : null}
       {children}
-    </View>
+    </LinearGradient>
   );
 }
 
@@ -75,6 +102,8 @@ export const ProductCard = memo(function ProductCard({
   index?: number;
   animate?: boolean;
 }) {
+  const colors = useColors();
+  const styles = useMemo(() => createStyles(colors), [colors]);
   const { qty, increment, decrement } = useProductQty(product.id);
   const { isFavorite, toggle } = useFavorites();
   const liked = isFavorite(product.id);
@@ -125,11 +154,10 @@ export const ProductCard = memo(function ProductCard({
             accessibilityRole="button"
             accessibilityLabel={liked ? 'Retirer des favoris' : 'Ajouter aux favoris'}>
             <Animated.View style={{ transform: [{ scale: heartScale }] }}>
-              <Feather
-                name="heart"
-                size={14}
-                color={liked ? colors.terracotta : colors.text}
-                style={liked ? undefined : { opacity: 0.45 }}
+              <Ionicons
+                name={liked ? 'heart' : 'heart-outline'}
+                size={15}
+                color={liked ? colors.terracotta : '#1c1613'}
               />
             </Animated.View>
           </Pressable>
@@ -203,6 +231,8 @@ export function SearchField({
   active?: boolean;
   showFilter?: boolean;
 }) {
+  const colors = useColors();
+  const styles = useMemo(() => createStyles(colors), [colors]);
   const box = (
     <View style={[styles.search, active && styles.searchActive]}>
       <Feather name="search" size={18} color={colors.placeholder} />
@@ -229,12 +259,18 @@ export function SearchField({
   );
 
   if (onPress) {
-    return <Pressable onPress={onPress}>{box}</Pressable>;
+    return (
+      <PressScale onPress={onPress} scaleTo={0.985}>
+        {box}
+      </PressScale>
+    );
   }
   return box;
 }
 
 function CategoryTileOverlay() {
+  const colors = useColors();
+  const styles = useMemo(() => createStyles(colors), [colors]);
   if (Platform.OS === 'web') {
     return (
       <View
@@ -248,8 +284,8 @@ function CategoryTileOverlay() {
   }
   return (
     <LinearGradient
-      colors={['rgba(0,0,0,0)', 'rgba(0,0,0,0.2)', 'rgba(0,0,0,0.78)']}
-      locations={[0, 0.35, 1]}
+      colors={['rgba(0,0,0,0)', 'rgba(0,0,0,0.45)', 'rgba(0,0,0,0.85)']}
+      locations={[0, 0.45, 1]}
       style={[StyleSheet.absoluteFill, { pointerEvents: 'none' }]}
     />
   );
@@ -272,6 +308,8 @@ export function CategoryTile({
   count?: number;
   index?: number;
 }) {
+  const colors = useColors();
+  const styles = useMemo(() => createStyles(colors), [colors]);
   return (
     <MotionView index={index} preset="down" style={{ flex, height }}>
       <PressScale style={[styles.tilePress, { flex: 1, height }]} onPress={onPress} scaleTo={0.96}>
@@ -290,7 +328,7 @@ export function CategoryTile({
               {count != null ? <Text style={styles.tileCount}>{count} produits</Text> : null}
             </View>
             <View style={styles.tileArrow}>
-              <Feather name="arrow-right" size={14} color={colors.white} />
+              <Feather name="arrow-right" size={14} color="#ffffff" />
             </View>
           </View>
         </View>
@@ -300,6 +338,8 @@ export function CategoryTile({
 }
 
 export function CtaButton({ label, onPress }: { label: string; onPress: () => void }) {
+  const colors = useColors();
+  const styles = useMemo(() => createStyles(colors), [colors]);
   return (
     <PressScale style={styles.cta} onPress={onPress} scaleTo={0.98}>
       <Text style={styles.ctaText}>{label}</Text>
@@ -310,17 +350,47 @@ export function CtaButton({ label, onPress }: { label: string; onPress: () => vo
 export function IconCircle({
   name,
   onPress,
-  bg = colors.white,
-  color = colors.text,
+  bg,
+  color,
+  variant = 'default',
+  badge,
+  accessibilityLabel,
 }: {
   name: React.ComponentProps<typeof Feather>['name'];
   onPress?: () => void;
   bg?: string;
   color?: string;
+  /** Frosted control for warm tab heroes — adapts ink/surface to light/dark. */
+  variant?: 'default' | 'hero';
+  badge?: number;
+  accessibilityLabel?: string;
 }) {
+  const { scheme } = useTheme();
+  const colors = useColors();
+  const styles = useMemo(() => createStyles(colors), [colors]);
+  const chrome = useMemo(() => heroChrome(scheme), [scheme]);
+  const isHero = variant === 'hero';
+  const resolvedBg = bg ?? (isHero ? chrome.iconBg : colors.white);
+  const resolvedColor = color ?? (isHero ? chrome.iconColor : colors.text);
+  const resolvedBorder = isHero ? chrome.iconBorder : colors.border;
+
   return (
-    <PressScale onPress={onPress} style={[styles.iconCircle, { backgroundColor: bg }]} scaleTo={0.92}>
-      <Feather name={name} size={18} color={color} />
+    <PressScale
+      onPress={onPress}
+      disabled={!onPress}
+      accessibilityRole={onPress ? 'button' : undefined}
+      accessibilityLabel={accessibilityLabel}
+      style={[
+        styles.iconCircle,
+        { backgroundColor: resolvedBg, borderColor: resolvedBorder },
+      ]}
+      scaleTo={0.92}>
+      <Feather name={name} size={18} color={resolvedColor} />
+      {badge != null && badge > 0 ? (
+        <View style={styles.iconCircleBadge}>
+          <Text style={styles.iconCircleBadgeText}>{badge > 9 ? '9+' : badge}</Text>
+        </View>
+      ) : null}
     </PressScale>
   );
 }
@@ -342,6 +412,8 @@ export function PromoBanner({
   width?: number;
   index?: number;
 }) {
+  const colors = useColors();
+  const styles = useMemo(() => createStyles(colors), [colors]);
   return (
     <MotionView index={index} preset="right">
       <PressScale style={[styles.promo, { width }]} onPress={onPress} scaleTo={0.985}>
@@ -358,6 +430,8 @@ export function PromoBanner({
 }
 
 export const CartTotalFab = memo(function CartTotalFab({ bottom = 20 }: { bottom?: number }) {
+  const colors = useColors();
+  const styles = useMemo(() => createStyles(colors), [colors]);
   const { subtotal, listSubtotal, count } = useCart();
   if (subtotal <= 0) return null;
 
@@ -384,300 +458,367 @@ export const CartTotalFab = memo(function CartTotalFab({ bottom = 20 }: { bottom
   );
 });
 
-const styles = StyleSheet.create({
-  screen: {
-    flex: 1,
-    backgroundColor: colors.bg,
-    ...(Platform.OS === 'web' ? { maxWidth: 430, width: '100%', alignSelf: 'center' as const } : {}),
-  },
-  page: {
-    flex: 1,
-  },
-  card: {
-    width: '100%',
-  },
-  cardInner: {
-    backgroundColor: colors.white,
-    borderRadius: 20,
-    borderTopLeftRadius: 20,
-    borderTopRightRadius: 20,
-    borderBottomLeftRadius: 20,
-    borderBottomRightRadius: 20,
-    overflow: 'hidden',
-  },
-  imagePanel: {
-    width: '100%',
-    overflow: 'hidden',
-    borderRadius: 16,
-    position: 'relative',
-    backgroundColor: colors.border,
-  },
-  photo: {
-    width: '100%',
-    height: '100%',
-    borderRadius: 16,
-  },
-  discount: {
-    position: 'absolute',
-    left: 12,
-    top: 12,
-    backgroundColor: colors.terracotta,
-    borderRadius: 8,
-    paddingHorizontal: 8,
-    paddingVertical: 4,
-    zIndex: 2,
-  },
-  discountText: { color: colors.white, fontWeight: '700', fontSize: 11 },
-  heart: {
-    position: 'absolute',
-    right: 12,
-    top: 12,
-    width: 28,
-    height: 28,
-    borderRadius: 14,
-    backgroundColor: 'rgba(255,255,255,0.82)',
-    alignItems: 'center',
-    justifyContent: 'center',
-    zIndex: 2,
-  },
-  info: { paddingHorizontal: 4, paddingTop: 10, paddingBottom: 10, gap: 8 },
-  infoCompact: { paddingTop: 8, paddingBottom: 8, gap: 6 },
-  infoText: { gap: 4 },
-  name: {
-    color: colors.text,
-    fontSize: 15,
-    lineHeight: 20,
-    ...displayFont('700'),
-  },
-  metaRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    gap: 6,
-  },
-  metaRowCompact: {},
-  unit: { color: colors.muted, fontSize: 12, flexShrink: 1 },
-  unitCompact: { fontSize: 11 },
-  ratingRow: { flexDirection: 'row', alignItems: 'center', gap: 3, flexShrink: 1 },
-  ratingRowCompact: { gap: 2 },
-  ratingText: { color: colors.muted, fontSize: 11, fontWeight: '600', flexShrink: 1 },
-  ratingTextCompact: { fontSize: 10 },
-  row: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'flex-start',
-    alignSelf: 'flex-start',
-    gap: 6,
-    backgroundColor: colors.gold,
-    borderRadius: 12,
-    paddingLeft: 10,
-    paddingRight: 8,
-    paddingVertical: 6,
-    minHeight: 36,
-  },
-  rowAnimAnchor: {
-    alignSelf: 'flex-start',
-    transformOrigin: 'left center',
-  },
-  price: { color: colors.white, fontWeight: '700', fontSize: 11, flexShrink: 0, opacity: 1 },
-  add: {
-    width: 20,
-    height: 20,
-    alignItems: 'center',
-    justifyContent: 'center',
-    flexShrink: 0,
-    backgroundColor: 'transparent',
-    opacity: 1,
-  },
-  stepBtn: {
-    width: 24,
-    height: 24,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  stepSign: { color: colors.white, fontWeight: '700', fontSize: 16, lineHeight: 18 },
-  qtyVal: { color: colors.white, fontWeight: '700', fontSize: 13, minWidth: 16, textAlign: 'center' },
-  search: {
-    backgroundColor: colors.white,
-    borderWidth: 1,
-    borderColor: colors.border,
-    borderRadius: 16,
-    height: 48,
-    paddingHorizontal: 16,
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 12,
-  },
-  searchActive: { borderColor: colors.gold, borderWidth: 1.5 },
-  searchPlaceholder: { flex: 1, color: colors.placeholder, fontSize: 14 },
-  input: { flex: 1, fontSize: 14, color: colors.text, ...(Platform.OS === 'web' ? { outlineStyle: 'none' as never } : {}) },
-  tilePress: { minWidth: 0 },
-  tilePressed: { opacity: 0.92, transform: [{ scale: 0.98 }] },
-  tile: {
-    flex: 1,
-    borderRadius: 18,
-    overflow: 'hidden',
-    justifyContent: 'flex-end',
-    backgroundColor: colors.border,
-    borderWidth: 1,
-    borderColor: 'rgba(255,255,255,0.25)',
-    ...Platform.select({
-      ios: {
-        shadowColor: colors.text,
-        shadowOffset: { width: 0, height: 4 },
-        shadowOpacity: 0.12,
-        shadowRadius: 8,
-      },
-      android: { elevation: 3 },
-      default: {},
-    }),
-  },
-  tileFrame: {
-    ...StyleSheet.absoluteFillObject,
-    overflow: 'hidden',
-    borderRadius: 18,
-  },
-  tileImageZoom: {
-    position: 'absolute',
-    width: '155%',
-    height: '155%',
-    top: '-27.5%',
-    left: '-27.5%',
-  },
-  tileImage: {
-    width: '100%',
-    height: '100%',
-    ...(Platform.OS === 'web' ? { objectFit: 'cover' as const } : {}),
-  },
-  tileGradientWeb: {
-    backgroundImage: 'linear-gradient(to bottom, rgba(0,0,0,0) 30%, rgba(0,0,0,0.75) 100%)',
-  } as object,
-  tileFooter: {
-    flexDirection: 'row',
-    alignItems: 'flex-end',
-    justifyContent: 'space-between',
-    gap: 8,
-    padding: 12,
-    zIndex: 1,
-    width: '100%',
-  },
-  tileTextBlock: { flex: 1, gap: 3 },
-  tileTitle: {
-    color: colors.white,
-    fontWeight: '800',
-    fontSize: 15,
-    lineHeight: 19,
-  },
-  tileCount: {
-    color: 'rgba(255,255,255,0.82)',
-    fontSize: 11,
-    fontWeight: '600',
-  },
-  tileArrow: {
-    width: 28,
-    height: 28,
-    borderRadius: 14,
-    backgroundColor: 'rgba(255,255,255,0.22)',
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  cta: {
-    backgroundColor: colors.terracotta,
-    height: 56,
-    borderRadius: 28,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  ctaText: { color: colors.white, fontWeight: '700', fontSize: 16 },
-  iconCircle: {
-    width: 40,
-    height: 40,
-    borderRadius: 14,
-    borderWidth: 1,
-    borderColor: colors.border,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  totalFab: {
-    position: 'absolute',
-    right: 20,
-    zIndex: 20,
-  },
-  totalFabInner: {
-    backgroundColor: colors.terracotta,
-    borderRadius: 999,
-    paddingLeft: 12,
-    paddingRight: 14,
-    paddingVertical: 10,
-    minHeight: 52,
-    flexDirection: 'row',
-    justifyContent: 'center',
-    alignItems: 'center',
-    gap: 10,
-    ...softShadow({ y: 8, blur: 28, opacity: 0.2, elevation: 10 }),
-  },
-  totalFabIcon: {
-    width: 32,
-    height: 32,
-    borderRadius: 16,
-    backgroundColor: 'rgba(255,255,255,0.18)',
-    alignItems: 'center',
-    justifyContent: 'center',
-    position: 'relative',
-  },
-  totalFabBadge: {
-    position: 'absolute',
-    top: -4,
-    right: -5,
-    minWidth: 16,
-    height: 16,
-    borderRadius: 8,
-    backgroundColor: colors.white,
-    alignItems: 'center',
-    justifyContent: 'center',
-    paddingHorizontal: 3,
-  },
-  totalFabBadgeText: {
-    color: colors.terracotta,
-    fontSize: 9,
-    fontWeight: '800',
-    lineHeight: 11,
-  },
-  totalFabPrices: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
-  },
-  totalFabText: {
-    color: colors.white,
-    fontWeight: '800',
-    fontSize: 15,
-    letterSpacing: 0.2,
-  },
-  totalFabOld: {
-    color: 'rgba(255,255,255,0.55)',
-    fontWeight: '600',
-    fontSize: 12,
-    textDecorationLine: 'line-through',
-  },
-  promo: {
-    height: 150,
-    borderRadius: 24,
-    overflow: 'hidden',
-    justifyContent: 'center',
-    padding: 20,
-  },
-  promoImg: { ...StyleSheet.absoluteFillObject, width: '100%', height: '100%' },
-  promoDim: { ...StyleSheet.absoluteFillObject, backgroundColor: colors.overlay },
-  promoTitle: { color: colors.white, fontSize: 20, ...displayFont('800') },
-  promoSub: { color: colors.cream, fontSize: 14, marginTop: 4 },
-  profiter: {
-    alignSelf: 'flex-start',
-    backgroundColor: colors.gold,
-    borderRadius: 12,
-    paddingHorizontal: 16,
-    paddingVertical: 8,
-    marginTop: 12,
-  },
-  profiterText: { color: colors.white, fontWeight: '700', fontSize: 12 },
-});
+function createStyles(colors: AppColors) {
+  return StyleSheet.create({
+    screenBase: {
+      flex: 1,
+    },
+    screenWeb: {
+      maxWidth: 430,
+      width: '100%',
+      alignSelf: 'center' as const,
+    },
+    page: {
+      flex: 1,
+    },
+    tabHero: {
+      paddingHorizontal: 20,
+      paddingTop: 8,
+      paddingBottom: 40,
+      overflow: 'hidden',
+    },
+    tabHeroOrb: {
+      position: 'absolute',
+      width: 160,
+      height: 160,
+      borderRadius: 80,
+      top: -40,
+      right: -30,
+    },
+    tabHeroTitleRow: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'space-between',
+      gap: 12,
+    },
+    tabHeroTitle: {
+      flex: 1,
+      fontSize: 30,
+      letterSpacing: -0.5,
+      ...displayFont('800'),
+    },
+    tabHeroRight: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 8,
+      flexShrink: 0,
+    },
+    tabHeroSub: {
+      fontSize: 14,
+      lineHeight: 21,
+      marginTop: 6,
+      maxWidth: '92%',
+    },
+    card: {
+      width: '100%',
+    },
+    cardInner: {
+      backgroundColor: 'transparent',
+      borderRadius: 20,
+      borderTopLeftRadius: 20,
+      borderTopRightRadius: 20,
+      borderBottomLeftRadius: 20,
+      borderBottomRightRadius: 20,
+      overflow: 'hidden',
+    },
+    imagePanel: {
+      width: '100%',
+      overflow: 'hidden',
+      borderRadius: 16,
+      position: 'relative',
+      backgroundColor: colors.border,
+    },
+    photo: {
+      width: '100%',
+      height: '100%',
+      borderRadius: 16,
+    },
+    discount: {
+      position: 'absolute',
+      left: 12,
+      top: 12,
+      backgroundColor: colors.terracotta,
+      borderRadius: 8,
+      paddingHorizontal: 8,
+      paddingVertical: 4,
+      zIndex: 2,
+    },
+    discountText: { color: colors.white, fontWeight: '700', fontSize: 11 },
+    heart: {
+      position: 'absolute',
+      right: 12,
+      top: 12,
+      width: 28,
+      height: 28,
+      borderRadius: 14,
+      backgroundColor: 'rgba(255,255,255,0.82)',
+      alignItems: 'center',
+      justifyContent: 'center',
+      zIndex: 2,
+    },
+    info: { paddingHorizontal: 4, paddingTop: 10, paddingBottom: 10, gap: 8 },
+    infoCompact: { paddingTop: 8, paddingBottom: 8, gap: 6 },
+    infoText: { gap: 4 },
+    name: {
+      color: colors.text,
+      fontSize: 15,
+      lineHeight: 20,
+      ...displayFont('700'),
+    },
+    metaRow: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'space-between',
+      gap: 6,
+    },
+    metaRowCompact: {},
+    unit: { color: colors.muted, fontSize: 12, flexShrink: 1 },
+    unitCompact: { fontSize: 11 },
+    ratingRow: { flexDirection: 'row', alignItems: 'center', gap: 3, flexShrink: 1 },
+    ratingRowCompact: { gap: 2 },
+    ratingText: { color: colors.muted, fontSize: 11, fontWeight: '600', flexShrink: 1 },
+    ratingTextCompact: { fontSize: 10 },
+    row: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'flex-start',
+      alignSelf: 'flex-start',
+      gap: 6,
+      backgroundColor: colors.gold,
+      borderRadius: 12,
+      paddingLeft: 10,
+      paddingRight: 8,
+      paddingVertical: 6,
+      minHeight: 36,
+    },
+    rowAnimAnchor: {
+      alignSelf: 'flex-start',
+      transformOrigin: 'left center',
+    },
+    price: { color: colors.white, fontWeight: '700', fontSize: 11, flexShrink: 0, opacity: 1 },
+    add: {
+      width: 20,
+      height: 20,
+      alignItems: 'center',
+      justifyContent: 'center',
+      flexShrink: 0,
+      backgroundColor: 'transparent',
+      opacity: 1,
+    },
+    stepBtn: {
+      width: 24,
+      height: 24,
+      alignItems: 'center',
+      justifyContent: 'center',
+    },
+    stepSign: { color: colors.white, fontWeight: '700', fontSize: 16, lineHeight: 18 },
+    qtyVal: { color: colors.white, fontWeight: '700', fontSize: 13, minWidth: 16, textAlign: 'center' },
+    search: {
+      backgroundColor: colors.white,
+      borderWidth: 1,
+      borderColor: colors.border,
+      borderRadius: 16,
+      height: 48,
+      paddingHorizontal: 16,
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 12,
+    },
+    searchActive: { borderColor: colors.gold, borderWidth: 1.5 },
+    searchPlaceholder: { flex: 1, color: colors.placeholder, fontSize: 14 },
+    input: { flex: 1, fontSize: 14, color: colors.text, ...(Platform.OS === 'web' ? { outlineStyle: 'none' as never } : {}) },
+    tilePress: { minWidth: 0 },
+    tilePressed: { opacity: 0.92, transform: [{ scale: 0.98 }] },
+    tile: {
+      flex: 1,
+      borderRadius: 18,
+      overflow: 'hidden',
+      justifyContent: 'flex-end',
+      backgroundColor: colors.border,
+      borderWidth: 1,
+      borderColor: 'rgba(255,255,255,0.25)',
+      ...Platform.select({
+        ios: {
+          shadowColor: colors.text,
+          shadowOffset: { width: 0, height: 4 },
+          shadowOpacity: 0.12,
+          shadowRadius: 8,
+        },
+        android: { elevation: 3 },
+        default: {},
+      }),
+    },
+    tileFrame: {
+      ...StyleSheet.absoluteFillObject,
+      overflow: 'hidden',
+      borderRadius: 18,
+    },
+    tileImageZoom: {
+      position: 'absolute',
+      width: '155%',
+      height: '155%',
+      top: '-27.5%',
+      left: '-27.5%',
+    },
+    tileImage: {
+      width: '100%',
+      height: '100%',
+      ...(Platform.OS === 'web' ? { objectFit: 'cover' as const } : {}),
+    },
+    tileGradientWeb: {
+      backgroundImage: 'linear-gradient(to bottom, rgba(0,0,0,0) 20%, rgba(0,0,0,0.55) 70%, rgba(0,0,0,0.85) 100%)',
+    } as object,
+    tileFooter: {
+      flexDirection: 'row',
+      alignItems: 'flex-end',
+      justifyContent: 'space-between',
+      gap: 8,
+      padding: 12,
+      zIndex: 1,
+      width: '100%',
+    },
+    tileTextBlock: { flex: 1, gap: 3 },
+    // Always light: tiles sit on dimmed photos (theme white flips dark).
+    tileTitle: {
+      color: '#ffffff',
+      fontWeight: '800',
+      fontSize: 15,
+      lineHeight: 19,
+      textShadowColor: 'rgba(0,0,0,0.55)',
+      textShadowOffset: { width: 0, height: 1 },
+      textShadowRadius: 4,
+    },
+    tileCount: {
+      color: 'rgba(255,255,255,0.9)',
+      fontSize: 11,
+      fontWeight: '600',
+      textShadowColor: 'rgba(0,0,0,0.45)',
+      textShadowOffset: { width: 0, height: 1 },
+      textShadowRadius: 3,
+    },
+    tileArrow: {
+      width: 28,
+      height: 28,
+      borderRadius: 14,
+      backgroundColor: 'rgba(255,255,255,0.28)',
+      alignItems: 'center',
+      justifyContent: 'center',
+    },
+    cta: {
+      backgroundColor: colors.terracotta,
+      height: 56,
+      borderRadius: 28,
+      alignItems: 'center',
+      justifyContent: 'center',
+    },
+    ctaText: { color: colors.white, fontWeight: '700', fontSize: 16 },
+    iconCircle: {
+      width: 42,
+      height: 42,
+      borderRadius: 14,
+      borderWidth: 1,
+      borderColor: colors.border,
+      alignItems: 'center',
+      justifyContent: 'center',
+      position: 'relative',
+    },
+    iconCircleBadge: {
+      position: 'absolute',
+      top: -4,
+      right: -4,
+      minWidth: 17,
+      height: 17,
+      borderRadius: 9,
+      backgroundColor: colors.terracotta,
+      alignItems: 'center',
+      justifyContent: 'center',
+      paddingHorizontal: 4,
+      borderWidth: 2,
+      borderColor: '#ffffff',
+    },
+    iconCircleBadgeText: { color: '#ffffff', fontSize: 9, fontWeight: '800' },
+    totalFab: {
+      position: 'absolute',
+      right: 20,
+      zIndex: 20,
+    },
+    totalFabInner: {
+      backgroundColor: colors.terracotta,
+      borderRadius: 999,
+      paddingLeft: 12,
+      paddingRight: 14,
+      paddingVertical: 10,
+      minHeight: 52,
+      flexDirection: 'row',
+      justifyContent: 'center',
+      alignItems: 'center',
+      gap: 10,
+      ...softShadow({ y: 8, blur: 28, opacity: 0.2, elevation: 10 }),
+    },
+    totalFabIcon: {
+      width: 32,
+      height: 32,
+      borderRadius: 16,
+      backgroundColor: 'rgba(255,255,255,0.18)',
+      alignItems: 'center',
+      justifyContent: 'center',
+      position: 'relative',
+    },
+    totalFabBadge: {
+      position: 'absolute',
+      top: -4,
+      right: -5,
+      minWidth: 16,
+      height: 16,
+      borderRadius: 8,
+      backgroundColor: colors.white,
+      alignItems: 'center',
+      justifyContent: 'center',
+      paddingHorizontal: 3,
+    },
+    totalFabBadgeText: {
+      color: colors.terracotta,
+      fontSize: 9,
+      fontWeight: '800',
+      lineHeight: 11,
+    },
+    totalFabPrices: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 8,
+    },
+    totalFabText: {
+      color: colors.white,
+      fontWeight: '800',
+      fontSize: 15,
+      letterSpacing: 0.2,
+    },
+    totalFabOld: {
+      color: 'rgba(255,255,255,0.55)',
+      fontWeight: '600',
+      fontSize: 12,
+      textDecorationLine: 'line-through',
+    },
+    promo: {
+      height: 150,
+      borderRadius: 24,
+      overflow: 'hidden',
+      justifyContent: 'center',
+      padding: 20,
+    },
+    promoImg: { ...StyleSheet.absoluteFillObject, width: '100%', height: '100%' },
+    promoDim: { ...StyleSheet.absoluteFillObject, backgroundColor: colors.overlay },
+    // Always light text: banner sits on a dimmed photo (theme white/cream flip in dark mode).
+    promoTitle: { color: '#ffffff', fontSize: 20, ...displayFont('800') },
+    promoSub: { color: 'rgba(253,240,213,0.92)', fontSize: 14, marginTop: 4 },
+    profiter: {
+      alignSelf: 'flex-start',
+      backgroundColor: colors.gold,
+      borderRadius: 12,
+      paddingHorizontal: 16,
+      paddingVertical: 8,
+      marginTop: 12,
+    },
+    profiterText: { color: '#1c1613', fontWeight: '700', fontSize: 12 },
+  });
+}

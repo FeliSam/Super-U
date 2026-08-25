@@ -1,4 +1,4 @@
-import { colors } from '@/constants/theme';
+import { useColors } from '@/context/ThemeContext';
 import QRCode from 'react-native-qrcode-svg';
 
 type Props = {
@@ -12,15 +12,16 @@ type Props = {
 export function LoyaltyQrCode({
   value,
   size = 160,
-  backgroundColor = colors.white,
-  color = colors.text,
+  backgroundColor,
+  color,
 }: Props) {
+  const colors = useColors();
   return (
     <QRCode
       value={value}
       size={size}
-      backgroundColor={backgroundColor}
-      color={color}
+      backgroundColor={backgroundColor ?? colors.white}
+      color={color ?? colors.text}
       ecl="M"
     />
   );

@@ -1,12 +1,12 @@
 import { CtaButton, IconCircle, Screen, Page } from '@/components/ui';
-import { colors, displayFont } from '@/constants/theme';
+import { displayFont, type AppColors } from '@/constants/theme';
+import { useColors } from '@/context/ThemeContext';
 import { userProfile } from '@/data/account';
 import { avatar } from '@/data/catalog';
 import { Feather } from '@expo/vector-icons';
 import { router } from 'expo-router';
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 import { Image, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
 
 function Field({
   label,
@@ -21,6 +21,8 @@ function Field({
   keyboardType?: 'default' | 'email-address' | 'phone-pad';
   autoCapitalize?: 'none' | 'words';
 }) {
+  const colors = useColors();
+  const styles = useMemo(() => createStyles(colors), [colors]);
   return (
     <View style={styles.field}>
       <Text style={styles.fieldLabel}>{label}</Text>
@@ -37,6 +39,9 @@ function Field({
 }
 
 export default function PersonalInfoScreen() {
+  const colors = useColors();
+  const styles = useMemo(() => createStyles(colors), [colors]);
+
   const [form, setForm] = useState(userProfile);
 
   const update = (key: keyof typeof form) => (value: string) => {
@@ -91,7 +96,8 @@ export default function PersonalInfoScreen() {
   );
 }
 
-const styles = StyleSheet.create({
+function createStyles(colors: AppColors) {
+  return StyleSheet.create({
   flex: { flex: 1 },
   header: {
     flexDirection: 'row',
@@ -144,3 +150,4 @@ const styles = StyleSheet.create({
     backgroundColor: colors.white,
   },
 });
+}

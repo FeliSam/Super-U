@@ -1,6 +1,7 @@
-import { CartTotalFab, ProductCard, PromoBanner, Screen, SearchField, Page } from '@/components/ui';
+import { CartTotalFab, IconCircle, ProductCard, PromoBanner, Screen, SearchField, Page } from '@/components/ui';
 import { MotionView, PressScale } from '@/components/motion';
-import { colors, displayFont, tabBarClearance } from '@/constants/theme';
+import { displayFont, heroChrome, tabBarClearance, type AppColors } from '@/constants/theme';
+import { useColors, useTheme } from '@/context/ThemeContext';
 import { useCart } from '@/context/CartContext';
 import { formatOrderId, useOrders } from '@/context/OrdersContext';
 import { useUiState } from '@/context/UiStateContext';
@@ -35,14 +36,20 @@ import {
   Text,
   View,
 } from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
 
 const GRID_IMAGE_HEIGHT = 173;
 const PROMO_WIDTH = Dimensions.get('window').width - 40;
 const homePromo = homePromoBanners[0];
 const LOYALTY_POINTS = 450;
+const HERO_OVERLAP = 28;
 
 function HomeScreen() {
+  const { scheme } = useTheme();
+  const colors = useColors();
+  const chrome = useMemo(() => heroChrome(scheme), [scheme]);
+  const styles = useMemo(() => createStyles(colors), [colors]);
+  const [heroHeight, setHeroHeight] = useState(240);
+
   const { count } = useCart();
   const { activeOrder } = useOrders();
   const { homeActiveChipId, setHomeActiveChipId } = useUiState();
@@ -102,71 +109,109 @@ function HomeScreen() {
     <Screen>
       <Page style={styles.flex}>
         <View style={styles.flex}>
-          <ScrollView
-            style={styles.flex}
-            contentContainerStyle={styles.scrollContent}
-            showsVerticalScrollIndicator={false}
-            scrollEventThrottle={16}
-            onScroll={onMainScroll}>
-            <LinearGradient colors={['#f8e4c4', colors.cream, colors.bg]} style={styles.hero}>
-              <View style={styles.heroOrb} />
+          <View
+            style={styles.heroBackdrop}
+            onLayout={(e) => setHeroHeight(e.nativeEvent.layout.height)}
+            pointerEvents="box-none">
+            <LinearGradient colors={chrome.gradient} style={styles.hero}>
+              <View style={[styles.heroOrb, { backgroundColor: chrome.orb }]} />
 
               <View style={styles.header}>
-                <Pressable style={styles.location} onPress={() => router.push('/account/addresses')}>
-                  <View style={styles.pin}>
+                <PressScale
+                  style={styles.location}
+                  onPress={() => router.push('/account/addresses')}
+                  scaleTo={0.98}
+                  accessibilityLabel="Changer l’adresse de livraison">
+                  <View
+                    style={[
+                      styles.pin,
+                      { backgroundColor: chrome.iconBg, borderColor: chrome.iconBorder },
+                    ]}>
                     <Feather name="map-pin" size={17} color={colors.gold} />
                   </View>
-                  <View>
-                    <Text style={styles.livrer}>Livrer à</Text>
+                  <View style={styles.locationText}>
+                    <Text style={[styles.livrer, { color: chrome.muted }]}>Livrer à</Text>
                     <View style={styles.cityRow}>
-                      <Text style={styles.city}>Dakar, Plateau</Text>
-                      <Feather name="chevron-down" size={14} color={colors.muted} />
+                      <Text style={[styles.city, { color: chrome.ink }]}>Cotonou, Ganhi</Text>
+                      <Feather name="chevron-down" size={14} color={chrome.muted} />
                     </View>
                   </View>
-                </Pressable>
+                </PressScale>
                 <View style={styles.actions}>
-                  <Pressable style={styles.actionBtn} onPress={() => router.push('/notifications')}>
-                    <Feather name="bell" size={19} color={colors.text} />
-                    {unreadNotifications > 0 ? (
-                      <View style={styles.notifBadge}>
-                        <Text style={styles.notifBadgeText}>
-                          {unreadNotifications > 9 ? '9+' : unreadNotifications}
-                        </Text>
-                      </View>
-                    ) : null}
-                  </Pressable>
-                  <Pressable style={styles.avatarWrap} onPress={() => navigateTab(tabPaths.profile)}>
+                  <IconCircle
+                    name="bell"
+                    variant="hero"
+                    badge={unreadNotifications}
+                    accessibilityLabel="Notifications"
+                    onPress={() => router.push('/notifications')}
+                  />
+                  <PressScale
+                    style={[
+                      styles.avatarWrap,
+                      { backgroundColor: chrome.iconBg, borderColor: chrome.iconBorder },
+                    ]}
+                    onPress={() => navigateTab(tabPaths.profile)}
+                    scaleTo={0.94}
+                    accessibilityLabel="Ouvrir le profil">
                     <Image source={avatar} style={styles.avatar} />
-                  </Pressable>
+                  </PressScale>
                 </View>
               </View>
 
               <View style={styles.greeting}>
-                <Text style={styles.hello}>Bonjour, Amina 👋</Text>
-                <Text style={styles.subtitle}>Des produits frais et locaux, livrés chez vous.</Text>
+                <Text style={[styles.hello, { color: chrome.ink }]}>Bonjour, Amina 👋</Text>
+                <Text style={[styles.subtitle, { color: chrome.muted }]}>
+                  Des produits frais et locaux, livrés chez vous.
+                </Text>
               </View>
 
-              <View style={styles.heroStats}>
-                <View style={styles.heroStat}>
+              <View
+                style={[
+                  styles.heroStats,
+                  { backgroundColor: chrome.surface, borderColor: chrome.surfaceBorder },
+                ]}>
+                <PressScale
+                  style={styles.heroStat}
+                  onPress={() => router.push('/tracking')}
+                  scaleTo={0.96}
+                  accessibilityLabel="Délai de livraison">
                   <Feather name="clock" size={15} color={colors.gold} />
-                  <Text style={styles.heroStatText}>30–45 min</Text>
-                </View>
-                <View style={styles.heroDivider} />
-                <View style={styles.heroStat}>
+                  <Text style={[styles.heroStatText, { color: chrome.ink }]}>30–45 min</Text>
+                </PressScale>
+                <View style={[styles.heroDivider, { backgroundColor: chrome.divider }]} />
+                <PressScale
+                  style={styles.heroStat}
+                  onPress={openPromos}
+                  scaleTo={0.96}
+                  accessibilityLabel="Voir les promotions">
                   <Feather name="percent" size={15} color={colors.terracotta} />
-                  <Text style={styles.heroStatText}>Promos actives</Text>
-                </View>
-                <View style={styles.heroDivider} />
-                <Pressable style={styles.heroStat} onPress={() => router.push('/account/loyalty')}>
+                  <Text style={[styles.heroStatText, { color: chrome.ink }]}>Promos actives</Text>
+                </PressScale>
+                <View style={[styles.heroDivider, { backgroundColor: chrome.divider }]} />
+                <PressScale
+                  style={styles.heroStat}
+                  onPress={() => router.push('/account/loyalty')}
+                  scaleTo={0.96}
+                  accessibilityLabel="Points fidélité">
                   <Feather name="award" size={15} color={colors.green} />
-                  <Text style={styles.heroStatText}>{LOYALTY_POINTS} pts</Text>
-                </Pressable>
+                  <Text style={[styles.heroStatText, { color: chrome.ink }]}>{LOYALTY_POINTS} pts</Text>
+                </PressScale>
               </View>
             </LinearGradient>
+          </View>
 
+          <ScrollView
+            style={styles.scrollLayer}
+            contentContainerStyle={[
+              styles.scrollContent,
+              { paddingTop: Math.max(0, heroHeight - HERO_OVERLAP) },
+            ]}
+            showsVerticalScrollIndicator={false}
+            scrollEventThrottle={16}
+            onScroll={onMainScroll}>
             <View style={styles.bodySheet}>
               <MotionView delay={40} preset="down">
-                <SearchField onPress={() => navigateTab(tabPaths.search)} />
+                <SearchField onPress={() => router.push('/search')} />
               </MotionView>
 
               <MotionView delay={90} preset="down">
@@ -299,8 +344,20 @@ function HomeScreen() {
 
 export default memo(HomeScreen);
 
-const styles = StyleSheet.create({
+function createStyles(colors: AppColors) {
+  return StyleSheet.create({
   flex: { flex: 1 },
+  heroBackdrop: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    zIndex: 0,
+  },
+  scrollLayer: {
+    flex: 1,
+    zIndex: 1,
+  },
   scrollContent: { paddingBottom: tabBarClearance },
   hero: {
     paddingHorizontal: 20,
@@ -313,7 +370,6 @@ const styles = StyleSheet.create({
     width: 180,
     height: 180,
     borderRadius: 90,
-    backgroundColor: 'rgba(255,255,255,0.3)',
     top: -50,
     right: -40,
   },
@@ -323,79 +379,48 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   location: { flexDirection: 'row', alignItems: 'center', gap: 10, flex: 1 },
+  locationText: { flex: 1, gap: 1 },
   pin: {
     width: 38,
     height: 38,
     borderRadius: 13,
-    backgroundColor: 'rgba(255,255,255,0.75)',
     alignItems: 'center',
     justifyContent: 'center',
     borderWidth: 1,
-    borderColor: 'rgba(255,255,255,0.9)',
   },
-  livrer: { color: colors.muted, fontSize: 11, fontWeight: '600' },
+  livrer: { fontSize: 11, fontWeight: '600' },
   cityRow: { flexDirection: 'row', alignItems: 'center', gap: 2 },
-  city: { color: colors.text, fontSize: 15, fontWeight: '800' },
+  city: { fontSize: 15, fontWeight: '800' },
   actions: { flexDirection: 'row', alignItems: 'center', gap: 8 },
-  actionBtn: {
-    width: 42,
-    height: 42,
-    borderRadius: 14,
-    backgroundColor: 'rgba(255,255,255,0.75)',
-    borderWidth: 1,
-    borderColor: 'rgba(255,255,255,0.9)',
-    alignItems: 'center',
-    justifyContent: 'center',
-    position: 'relative',
-  },
-  notifBadge: {
-    position: 'absolute',
-    top: -3,
-    right: -3,
-    minWidth: 17,
-    height: 17,
-    borderRadius: 9,
-    backgroundColor: colors.terracotta,
-    alignItems: 'center',
-    justifyContent: 'center',
-    paddingHorizontal: 4,
-    borderWidth: 2,
-    borderColor: colors.cream,
-  },
-  notifBadgeText: { color: colors.white, fontSize: 9, fontWeight: '800' },
   avatarWrap: {
     padding: 2,
     borderRadius: 999,
-    backgroundColor: 'rgba(255,255,255,0.85)',
     borderWidth: 1,
-    borderColor: 'rgba(255,255,255,0.95)',
   },
   avatar: { width: 38, height: 38, borderRadius: 19 },
   greeting: { gap: 6, marginTop: 20 },
-  hello: { color: colors.text, fontSize: 28, letterSpacing: -0.4, ...displayFont('800') },
-  subtitle: { color: colors.muted, fontSize: 14, lineHeight: 20, maxWidth: '92%' },
+  hello: { fontSize: 28, letterSpacing: -0.4, ...displayFont('800') },
+  subtitle: { fontSize: 14, lineHeight: 20, maxWidth: '92%' },
   heroStats: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: 'rgba(255,255,255,0.72)',
     borderRadius: 16,
     paddingVertical: 12,
     paddingHorizontal: 14,
     marginTop: 18,
     borderWidth: 1,
-    borderColor: 'rgba(255,255,255,0.9)',
   },
   heroStat: { flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6 },
-  heroStatText: { color: colors.text, fontSize: 11, fontWeight: '700' },
-  heroDivider: { width: 1, height: 24, backgroundColor: colors.border },
+  heroStatText: { fontSize: 11, fontWeight: '700' },
+  heroDivider: { width: 1, height: 24 },
   bodySheet: {
-    marginTop: -24,
     backgroundColor: colors.bg,
     borderTopLeftRadius: 28,
     borderTopRightRadius: 28,
     paddingHorizontal: 20,
     paddingTop: 20,
     gap: 20,
+    minHeight: Dimensions.get('window').height,
   },
   orderBanner: {
     flexDirection: 'row',
@@ -505,3 +530,4 @@ const styles = StyleSheet.create({
     paddingBottom: 8,
   },
 });
+}

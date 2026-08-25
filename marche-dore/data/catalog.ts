@@ -64,7 +64,7 @@ export const products: Product[] = [
   },
   {
     id: 'miel',
-    name: 'Miel Pur du Sénégal',
+    name: 'Miel Pur du Bénin',
     unit: '500 ml',
     price: 4000,
     image: require('../assets/images/catalog/miel.png'),
@@ -396,6 +396,61 @@ export const categoryFilters: Record<string, string[]> = {
 export const popularSuggestions = ['Bissap', 'Plantain', 'Manioc', 'Café', 'Avocat', 'Épices'];
 
 export const recentSearchesDefault = ['Mangues', 'Lait frais', 'Poulet', 'Riz basmati'];
+
+export type TrendingSearch = {
+  term: string;
+  rank: number;
+  heat: number;
+  delta: 'up' | 'down' | 'new' | 'stable';
+  matches: number;
+};
+
+/** Live-ish trending search terms derived from catalog + recents (rotates over time). */
+export function trendingSearches(options: { recents?: string[]; limit?: number; tick?: number } = {}): TrendingSearch[] {
+  const limit = options.limit ?? 8;
+  const recents = options.recents ?? [];
+  const tick = options.tick ?? Math.floor(Date.now() / 12_000);
+
+  const seedTerms = new Map<string, number>();
+  const bump = (term: string, score: number) => {
+    const key = term.trim();
+    if (!key || key.length < 2) return;
+    seedTerms.set(key, (seedTerms.get(key) ?? 0) + score);
+  };
+
+  for (const term of popularSuggestions) bump(term, 18);
+  for (const term of recents) bump(term, 28);
+  for (const chip of chips.slice(0, 8)) bump(chip.label, 12);
+  for (const p of products) {
+    const base = 8 + (p.rating ?? 4) * 4 + Math.min(12, Math.round((p.reviews ?? 0) / 40));
+    const promoBoost = p.discount || p.oldPrice ? 14 : 0;
+    bump(p.name.replace(/\s+(Bio|Frais|Nature|Entier).*$/i, '').trim(), base + promoBoost);
+  }
+  for (const p of promoProducts()) bump(p.name.split(' ')[0] ?? p.name, 22);
+
+  const scored = [...seedTerms.entries()].map(([term, base], index) => {
+    const wave = Math.sin((tick + index * 1.7) * 1.3) * 10 + Math.cos((tick * 0.6 + index) * 0.9) * 6;
+    const recentBoost = recents.some((r) => r.toLowerCase() === term.toLowerCase()) ? 8 : 0;
+    const heat = Math.max(12, Math.min(99, Math.round(base + wave + recentBoost)));
+    const matches = searchProducts(term).length;
+    const drift = Math.sin((tick + index) * 2.1);
+    const delta: TrendingSearch['delta'] =
+      index > seedTerms.size - 3 && drift > 0.55
+        ? 'new'
+        : drift > 0.25
+          ? 'up'
+          : drift < -0.35
+            ? 'down'
+            : 'stable';
+    return { term, heat, matches, delta };
+  });
+
+  scored.sort((a, b) => b.heat - a.heat || b.matches - a.matches);
+  return scored.slice(0, limit).map((item, i) => ({
+    ...item,
+    rank: i + 1,
+  }));
+}
 
 export const searchCategories = [
   { id: 'fruits-legumes', label: 'Fruits', image: require('../assets/images/catalog/circle-fruits.png') },

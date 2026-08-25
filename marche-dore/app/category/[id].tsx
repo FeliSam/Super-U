@@ -1,5 +1,6 @@
 import { CartTotalFab, IconCircle, ProductCard, Screen, Page } from '@/components/ui';
-import { colors, displayFont } from '@/constants/theme';
+import { displayFont, type AppColors } from '@/constants/theme';
+import { useColors } from '@/context/ThemeContext';
 import { categoryFilters, exploreCategories, products, productsInCategory } from '@/data/catalog';
 import { Feather } from '@expo/vector-icons';
 import { router, useLocalSearchParams } from 'expo-router';
@@ -7,6 +8,9 @@ import { useMemo, useState } from 'react';
 import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 
 export default function CategoryScreen() {
+  const colors = useColors();
+  const styles = useMemo(() => createStyles(colors), [colors]);
+
   const { id, filter } = useLocalSearchParams<{ id: string; filter?: string }>();
   const cat = exploreCategories.find((c) => c.id === id);
   const filters = categoryFilters[id] ?? ['Tous'];
@@ -69,7 +73,8 @@ export default function CategoryScreen() {
   );
 }
 
-const styles = StyleSheet.create({
+function createStyles(colors: AppColors) {
+  return StyleSheet.create({
   header: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -129,3 +134,4 @@ const styles = StyleSheet.create({
   grid: { paddingHorizontal: 20, paddingBottom: 88, flexDirection: 'row', flexWrap: 'wrap', gap: 12 },
   cell: { width: '48%', flexGrow: 1 },
 });
+}

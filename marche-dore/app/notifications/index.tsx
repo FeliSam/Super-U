@@ -1,12 +1,16 @@
 import { IconCircle, Screen, Page } from '@/components/ui';
-import { colors, displayFont } from '@/constants/theme';
+import { displayFont, type AppColors } from '@/constants/theme';
+import { useColors } from '@/context/ThemeContext';
 import { notifications } from '@/data/notifications';
 import { Feather } from '@expo/vector-icons';
 import { router } from 'expo-router';
+import { useMemo } from 'react';
 import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
 
 export default function NotificationsScreen() {
+  const colors = useColors();
+  const styles = useMemo(() => createStyles(colors), [colors]);
+
   const unread = notifications.filter((n) => !n.read).length;
 
   return (
@@ -51,7 +55,8 @@ export default function NotificationsScreen() {
   );
 }
 
-const styles = StyleSheet.create({
+function createStyles(colors: AppColors) {
+  return StyleSheet.create({
   flex: { flex: 1 },
   header: {
     flexDirection: 'row',
@@ -101,3 +106,4 @@ const styles = StyleSheet.create({
   preview: { color: colors.muted, fontSize: 13, lineHeight: 18 },
   time: { color: colors.placeholder, fontSize: 11, marginTop: 2 },
 });
+}

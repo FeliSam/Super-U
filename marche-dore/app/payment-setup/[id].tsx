@@ -1,6 +1,7 @@
 import { CtaButton, IconCircle, Screen, Page } from '@/components/ui';
 import { MotionView } from '@/components/motion';
-import { colors } from '@/constants/theme';
+import { type AppColors } from '@/constants/theme';
+import { useColors } from '@/context/ThemeContext';
 import {
   maskCard,
   maskPhone,
@@ -43,24 +44,24 @@ const METHODS: Record<
     subtitle: 'Un code USSD / notification sera envoyé sur ce numéro pour valider le paiement.',
   },
   wave: {
-    label: 'Wave',
+    label: 'MTN MoMo',
     accent: '#1c64f2',
     soft: '#e8f0fe',
     icon: 'zap',
-    title: 'Payer avec Wave',
-    subtitle: 'Vous recevrez une demande de paiement Wave à confirmer dans l’application.',
+    title: 'Payer avec MTN MoMo',
+    subtitle: 'Vous recevrez une demande de paiement MTN MoMo à confirmer dans l’application.',
   },
   card: {
     label: 'Carte bancaire',
-    accent: colors.gold,
-    soft: colors.cream,
+    accent: '#e2931d',
+    soft: '#fdf0d5',
     icon: 'credit-card',
     title: 'Carte Visa / Mastercard',
     subtitle: 'Paiement sécurisé. Vos données ne sont pas stockées sur cet appareil (démo).',
   },
   cod: {
     label: 'Paiement à la livraison',
-    accent: colors.green,
+    accent: '#498c53',
     soft: '#eaf4ec',
     icon: 'package',
     title: 'Payer à la livraison',
@@ -77,6 +78,8 @@ function Field({
   maxLength,
   secureTextEntry,
   autoComplete,
+  colors,
+  styles,
 }: {
   label: string;
   value: string;
@@ -86,6 +89,8 @@ function Field({
   maxLength?: number;
   secureTextEntry?: boolean;
   autoComplete?: 'tel' | 'cc-number' | 'cc-exp' | 'cc-csc' | 'name' | 'off';
+  colors: AppColors;
+  styles: ReturnType<typeof createStyles>;
 }) {
   return (
     <View style={styles.field}>
@@ -106,6 +111,9 @@ function Field({
 }
 
 export default function PaymentSetupScreen() {
+  const colors = useColors();
+  const styles = useMemo(() => createStyles(colors), [colors]);
+
   const { id } = useLocalSearchParams<{ id: string }>();
   const methodId = (['om', 'wave', 'card', 'cod'].includes(id ?? '') ? id : 'om') as PaymentId;
   const meta = METHODS[methodId];
@@ -113,7 +121,7 @@ export default function PaymentSetupScreen() {
   const { setup, setSetup } = useCheckoutPayment();
 
   const [phone, setPhone] = useState(
-    setup?.methodId === methodId && setup.phone ? setup.phone : userProfile.phone.replace('+221 ', ''),
+    setup?.methodId === methodId && setup.phone ? setup.phone : userProfile.phone.replace('+229 ', ''),
   );
   const [cardNumber, setCardNumber] = useState('');
   const [expiry, setExpiry] = useState('');
@@ -217,13 +225,15 @@ export default function PaymentSetupScreen() {
                     keyboardType="phone-pad"
                     maxLength={16}
                     autoComplete="tel"
+                    colors={colors}
+                    styles={styles}
                   />
                   <View style={styles.infoBox}>
                     <Feather name="info" size={16} color={meta.accent} />
                     <Text style={styles.infoText}>
                       {methodId === 'om'
                         ? 'Après validation du swipe, ouvrez Orange Money et confirmez le montant.'
-                        : 'Après validation du swipe, ouvrez Wave et acceptez la demande de paiement.'}
+                        : 'Après validation du swipe, ouvrez MTN MoMo et acceptez la demande de paiement.'}
                     </Text>
                   </View>
                   <View style={styles.savedRow}>
@@ -241,6 +251,8 @@ export default function PaymentSetupScreen() {
                     onChangeText={setCardName}
                     placeholder="Amina Diallo"
                     autoComplete="name"
+                    colors={colors}
+                    styles={styles}
                   />
                   <Field
                     label="Numéro de carte"
@@ -250,6 +262,8 @@ export default function PaymentSetupScreen() {
                     keyboardType="number-pad"
                     maxLength={19}
                     autoComplete="cc-number"
+                    colors={colors}
+                    styles={styles}
                   />
                   <View style={styles.row2}>
                     <View style={{ flex: 1 }}>
@@ -261,6 +275,8 @@ export default function PaymentSetupScreen() {
                         keyboardType="number-pad"
                         maxLength={5}
                         autoComplete="cc-exp"
+                        colors={colors}
+                        styles={styles}
                       />
                     </View>
                     <View style={{ flex: 1 }}>
@@ -273,6 +289,8 @@ export default function PaymentSetupScreen() {
                         maxLength={4}
                         secureTextEntry
                         autoComplete="cc-csc"
+                        colors={colors}
+                        styles={styles}
                       />
                     </View>
                   </View>
@@ -290,7 +308,7 @@ export default function PaymentSetupScreen() {
                   <View style={styles.codCard}>
                     <View style={styles.codRow}>
                       <Feather name="map-pin" size={16} color={colors.gold} />
-                      <Text style={styles.codText}>Livraison à Rue 23, Dakar Plateau</Text>
+                      <Text style={styles.codText}>Livraison à Rue 12, Ganhi</Text>
                     </View>
                     <View style={styles.codRow}>
                       <Feather name="phone" size={16} color={colors.gold} />
@@ -337,7 +355,8 @@ export default function PaymentSetupScreen() {
   );
 }
 
-const styles = StyleSheet.create({
+function createStyles(colors: AppColors) {
+  return StyleSheet.create({
   flex: { flex: 1 },
   header: {
     flexDirection: 'row',
@@ -430,3 +449,4 @@ const styles = StyleSheet.create({
   footerHint: { textAlign: 'center', color: colors.placeholder, fontSize: 12, fontWeight: '600' },
   footerHintOk: { textAlign: 'center', color: colors.green, fontSize: 12, fontWeight: '700' },
 });
+}

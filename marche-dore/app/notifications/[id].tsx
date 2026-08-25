@@ -1,12 +1,17 @@
 import { CtaButton, IconCircle, Screen, Page } from '@/components/ui';
-import { colors, displayFont } from '@/constants/theme';
+import { displayFont, type AppColors } from '@/constants/theme';
+import { useColors } from '@/context/ThemeContext';
 import { getNotification } from '@/data/notifications';
 import { navigateTab } from '@/lib/navigation';
 import { Feather } from '@expo/vector-icons';
 import { router, useLocalSearchParams } from 'expo-router';
+import { useMemo } from 'react';
 import { ScrollView, StyleSheet, Text, View } from 'react-native';
 
 export default function NotificationDetailScreen() {
+  const colors = useColors();
+  const styles = useMemo(() => createStyles(colors), [colors]);
+
   const { id } = useLocalSearchParams<{ id: string }>();
   const notification = getNotification(id ?? '');
 
@@ -67,7 +72,8 @@ export default function NotificationDetailScreen() {
   );
 }
 
-const styles = StyleSheet.create({
+function createStyles(colors: AppColors) {
+  return StyleSheet.create({
   flex: { flex: 1 },
   header: {
     flexDirection: 'row',
@@ -107,3 +113,4 @@ const styles = StyleSheet.create({
   empty: { flex: 1, alignItems: 'center', justifyContent: 'center', padding: 20 },
   emptyText: { color: colors.muted, fontSize: 15 },
 });
+}

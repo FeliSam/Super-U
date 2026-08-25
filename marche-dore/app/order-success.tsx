@@ -1,16 +1,20 @@
 import { Screen, Page } from '@/components/ui';
-import { colors, displayFont } from '@/constants/theme';
+import { displayFont, type AppColors } from '@/constants/theme';
+import { useColors } from '@/context/ThemeContext';
 import { formatOrderId, useOrders } from '@/context/OrdersContext';
 import { formatFcfa } from '@/lib/format';
 import { Feather } from '@expo/vector-icons';
 import { Href, router, useLocalSearchParams } from 'expo-router';
-import { useEffect, useRef, useState } from 'react';
+import { useMemo, useEffect, useRef, useState } from 'react';
 import { Animated, StyleSheet, Text, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 const REDIRECT_MS = 3000;
 
 export default function OrderSuccessScreen() {
+  const colors = useColors();
+  const styles = useMemo(() => createStyles(colors), [colors]);
+
   const insets = useSafeAreaInsets();
   const { id } = useLocalSearchParams<{ id?: string }>();
   const { getOrder, activeOrder } = useOrders();
@@ -88,7 +92,8 @@ export default function OrderSuccessScreen() {
   );
 }
 
-const styles = StyleSheet.create({
+function createStyles(colors: AppColors) {
+  return StyleSheet.create({
   flex: { flex: 1 },
   wrap: {
     flex: 1,
@@ -160,3 +165,4 @@ const styles = StyleSheet.create({
     borderRadius: 2,
   },
 });
+}

@@ -1,10 +1,15 @@
 import { IconCircle, Page, Screen } from '@/components/ui';
-import { colors } from '@/constants/theme';
+import { type AppColors } from '@/constants/theme';
+import { useColors } from '@/context/ThemeContext';
 import { legalSections } from '@/data/help';
 import { router } from 'expo-router';
+import { useMemo } from 'react';
 import { ScrollView, StyleSheet, Text, View } from 'react-native';
 
 export default function LegalScreen() {
+  const colors = useColors();
+  const styles = useMemo(() => createStyles(colors), [colors]);
+
   return (
     <Screen>
       <Page style={styles.flex}>
@@ -30,7 +35,8 @@ export default function LegalScreen() {
   );
 }
 
-const styles = StyleSheet.create({
+function createStyles(colors: AppColors) {
+  return StyleSheet.create({
   flex: { flex: 1 },
   header: {
     flexDirection: 'row',
@@ -54,3 +60,4 @@ const styles = StyleSheet.create({
   cardTitle: { color: colors.text, fontSize: 15, fontWeight: '800' },
   cardBody: { color: colors.muted, fontSize: 13, lineHeight: 20 },
 });
+}

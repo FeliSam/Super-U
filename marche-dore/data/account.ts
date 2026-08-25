@@ -1,3 +1,5 @@
+import { appLocation } from '@/constants/location';
+
 export type UserProfile = {
   firstName: string;
   lastName: string;
@@ -27,7 +29,7 @@ export const userProfile: UserProfile = {
   firstName: 'Amina',
   lastName: 'Diallo',
   email: 'amina.diallo@email.com',
-  phone: '+221 77 123 45 67',
+  phone: appLocation.phone,
   birthDate: '12/08/1990',
 };
 
@@ -35,24 +37,24 @@ export const deliveryAddresses: DeliveryAddress[] = [
   {
     id: 'home',
     label: 'Domicile',
-    line: 'Rue 23, Dakar Plateau',
-    city: 'Dakar',
-    phone: '+221 77 123 45 67',
+    line: appLocation.defaultLine,
+    city: appLocation.city,
+    phone: appLocation.phone,
     default: true,
   },
   {
     id: 'work',
     label: 'Bureau',
-    line: 'Av. Léopold Sédar Senghor, Almadies',
-    city: 'Dakar',
-    phone: '+221 77 123 45 67',
+    line: 'Boulevard de la Marina, Cadjehoun',
+    city: appLocation.city,
+    phone: appLocation.phone,
     default: false,
   },
 ];
 
 export const paymentMethods: PaymentMethod[] = [
-  { id: 'om', type: 'Orange Money', detail: '77 *** ** 67', icon: 'smartphone', default: true },
-  { id: 'wave', type: 'Wave', detail: '77 *** ** 67', icon: 'smartphone', default: false },
+  { id: 'om', type: 'Orange Money', detail: '97 *** ** 56', icon: 'smartphone', default: true },
+  { id: 'wave', type: 'MTN MoMo', detail: '97 *** ** 56', icon: 'smartphone', default: false },
   { id: 'card', type: 'Carte bancaire', detail: '**** 4242', icon: 'credit-card', default: false },
   { id: 'cod', type: 'Paiement à la livraison', detail: 'Espèces ou mobile money', icon: 'dollar-sign', default: false },
 ];
@@ -90,17 +92,6 @@ export const loyaltyAccount = {
   lifetimeSaved: 18500,
 };
 
-/** Stable payload encoded into each member's loyalty QR code. */
-export function buildLoyaltyQrPayload(account: typeof loyaltyAccount = loyaltyAccount) {
-  return JSON.stringify({
-    v: 1,
-    type: 'marche-dore-loyalty',
-    clientId: account.clientId,
-    card: account.cardNumber.replace(/\s·\s/g, '-').replace(/\s/g, ''),
-    name: account.memberName,
-  });
-}
-
 export const loyaltyRewards: LoyaltyReward[] = [
   {
     id: 'r1',
@@ -133,3 +124,14 @@ export const loyaltyEarnRules = [
   { icon: 'star' as const, title: '+50 pts avis', subtitle: 'Après un avis produit avec photo' },
   { icon: 'user-plus' as const, title: '+100 pts parrainage', subtitle: 'Quand un ami commande' },
 ];
+
+/** Stable payload encoded into each member's loyalty QR code. */
+export function buildLoyaltyQrPayload(account: typeof loyaltyAccount = loyaltyAccount) {
+  return JSON.stringify({
+    v: 1,
+    type: 'marche-dore-loyalty',
+    clientId: account.clientId,
+    card: account.cardNumber.replace(/\s·\s/g, '-').replace(/\s/g, ''),
+    name: account.memberName,
+  });
+}

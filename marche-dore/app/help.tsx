@@ -1,5 +1,6 @@
 import { IconCircle, Page, Screen } from '@/components/ui';
-import { colors, displayFont } from '@/constants/theme';
+import { displayFont, type AppColors } from '@/constants/theme';
+import { useColors } from '@/context/ThemeContext';
 import { faqItems } from '@/data/help';
 import { Feather } from '@expo/vector-icons';
 import { Href, router } from 'expo-router';
@@ -7,6 +8,9 @@ import { useMemo, useState } from 'react';
 import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 
 export default function HelpCenterScreen() {
+  const colors = useColors();
+  const styles = useMemo(() => createStyles(colors), [colors]);
+
   const [openId, setOpenId] = useState<string | null>(faqItems[0]?.id ?? null);
   const categories = useMemo(() => [...new Set(faqItems.map((f) => f.category))], []);
   const [category, setCategory] = useState('Tous');
@@ -72,7 +76,8 @@ export default function HelpCenterScreen() {
   );
 }
 
-const styles = StyleSheet.create({
+function createStyles(colors: AppColors) {
+  return StyleSheet.create({
   flex: { flex: 1 },
   header: {
     flexDirection: 'row',
@@ -136,3 +141,4 @@ const styles = StyleSheet.create({
   secondary: { alignItems: 'center', paddingVertical: 8 },
   secondaryText: { color: colors.gold, fontSize: 14, fontWeight: '700' },
 });
+}

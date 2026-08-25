@@ -1,8 +1,9 @@
-import { colors } from '@/constants/theme';
+import { useColors } from '@/context/ThemeContext';
 import { Stack } from 'expo-router';
 import { Platform } from 'react-native';
 
 export default function ChatLayout() {
+  const colors = useColors();
   return (
     <Stack
       screenOptions={{

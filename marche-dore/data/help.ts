@@ -25,7 +25,7 @@ export const faqItems: FaqItem[] = [
     category: 'Livraison',
     question: 'Quels sont les délais de livraison ?',
     answer:
-      'À Dakar, la plupart des commandes sont livrées le jour même entre 10h et 20h selon le créneau choisi.',
+      'À Cotonou, la plupart des commandes sont livrées le jour même entre 10h et 20h selon le créneau choisi.',
   },
   {
     id: '4',
@@ -39,7 +39,7 @@ export const faqItems: FaqItem[] = [
     category: 'Paiement',
     question: 'Quels moyens de paiement acceptez-vous ?',
     answer:
-      'Orange Money, Wave, cartes bancaires et paiement à la livraison selon disponibilité du quartier.',
+      'Orange Money, MTN MoMo, cartes bancaires et paiement à la livraison selon disponibilité du quartier.',
   },
   {
     id: '6',
@@ -69,17 +69,17 @@ export const contactChannels = [
     id: 'phone',
     icon: 'phone' as const,
     title: 'Appeler',
-    subtitle: '+221 33 000 00 00',
+    subtitle: '+229 21 00 00 00',
     action: 'tel' as const,
-    value: 'tel:+221330000000',
+    value: 'tel:+229210000000',
   },
   {
     id: 'whatsapp',
     icon: 'message-square' as const,
     title: 'WhatsApp',
-    subtitle: '+221 77 000 00 00',
+    subtitle: '+229 97 00 00 00',
     action: 'tel' as const,
-    value: 'tel:+221770000000',
+    value: 'tel:+229970000000',
   },
   {
     id: 'email',
@@ -95,7 +95,7 @@ export const legalSections = [
   {
     id: 'cgu',
     title: 'Conditions générales d’utilisation',
-    body: 'Marché Doré fournit un service de commande et de livraison de produits alimentaires à Dakar. En utilisant l’application, vous acceptez les présentes conditions, notamment les règles de commande, de paiement et de livraison.',
+    body: 'Marché Doré fournit un service de commande et de livraison de produits alimentaires à Cotonou. En utilisant l’application, vous acceptez les présentes conditions, notamment les règles de commande, de paiement et de livraison.',
   },
   {
     id: 'privacy',

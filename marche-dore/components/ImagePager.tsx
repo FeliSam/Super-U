@@ -1,5 +1,5 @@
 import { AppImage } from '@/components/AppImage';
-import { colors } from '@/constants/theme';
+import { useColors } from '@/context/ThemeContext';
 import { forwardRef, memo, useEffect, useImperativeHandle, useRef } from 'react';
 import {
   Animated,
@@ -24,6 +24,7 @@ function PagerImage({
   width: number;
   height: number;
 }) {
+  const colors = useColors();
   // RN Image is more reliable for the product hero on web (expo-image transitions can stick blank).
   if (Platform.OS === 'web') {
     return (
@@ -69,6 +70,7 @@ export const ImagePager = memo(
     },
     ref,
   ) {
+    const colors = useColors();
     const translateX = useRef(new Animated.Value(0)).current;
     const dragStart = useRef(0);
     const indexRef = useRef(0);

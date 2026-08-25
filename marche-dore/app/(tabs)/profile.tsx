@@ -1,5 +1,7 @@
-import { IconCircle, Screen, Page } from '@/components/ui';
-import { colors, displayFont, tabBarClearance } from '@/constants/theme';
+import { IconCircle, Screen, Page, TabHero } from '@/components/ui';
+import { PressScale } from '@/components/motion';
+import { displayFont, heroChrome, tabBarClearance, type AppColors } from '@/constants/theme';
+import { useColors, useTheme } from '@/context/ThemeContext';
 import { useCart } from '@/context/CartContext';
 import { useFavorites } from '@/context/FavoritesContext';
 import { formatOrderId, statusLabel, useOrders } from '@/context/OrdersContext';
@@ -7,10 +9,9 @@ import { avatar } from '@/data/catalog';
 import { notifications } from '@/data/notifications';
 import { navigateTab, tabPaths } from '@/lib/navigation';
 import { Feather } from '@expo/vector-icons';
-import { LinearGradient } from 'expo-linear-gradient';
 import { Href, router } from 'expo-router';
-import { memo, type ComponentProps } from 'react';
-import { Image, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { useMemo, memo, useState, type ComponentProps } from 'react';
+import { Dimensions, Image, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 
 type FeatherIcon = ComponentProps<typeof Feather>['name'];
 
@@ -29,8 +30,11 @@ type MenuSection = {
 
 const LOYALTY_POINTS = 450;
 const LOYALTY_TARGET = 500;
+const HERO_OVERLAP = 28;
 
 function MenuRow({ item }: { item: MenuItem }) {
+  const colors = useColors();
+  const styles = useMemo(() => createStyles(colors), [colors]);
   return (
     <Pressable style={({ pressed }) => [styles.row, pressed && styles.rowPressed]} onPress={item.onPress}>
       <View style={styles.rowLeft}>
@@ -55,6 +59,12 @@ function MenuRow({ item }: { item: MenuItem }) {
 }
 
 function ProfileScreen() {
+  const { scheme } = useTheme();
+  const colors = useColors();
+  const chrome = useMemo(() => heroChrome(scheme), [scheme]);
+  const styles = useMemo(() => createStyles(colors), [colors]);
+  const [heroHeight, setHeroHeight] = useState(280);
+
   const { count } = useCart();
   const { count: favoritesCount } = useFavorites();
   const { activeOrder, orders } = useOrders();
@@ -73,19 +83,19 @@ function ProfileScreen() {
         {
           icon: 'user',
           label: 'Informations personnelles',
-          subtitle: 'Amina Diallo · +221 77 123 45 67',
+          subtitle: 'Amina Diallo · +229 97 12 34 56',
           onPress: () => router.push('/account/personal-info'),
         },
         {
           icon: 'map-pin',
           label: 'Adresses de livraison',
-          subtitle: 'Rue 23, Dakar Plateau',
+          subtitle: 'Rue 12, Ganhi',
           onPress: () => router.push('/account/addresses'),
         },
         {
           icon: 'credit-card',
           label: 'Moyens de paiement',
-          subtitle: 'Orange Money · Wave',
+          subtitle: 'Orange Money · MTN MoMo',
           onPress: () => router.push('/account/payment-methods'),
         },
         {
@@ -172,7 +182,7 @@ function ProfileScreen() {
         {
           icon: 'phone',
           label: 'Nous contacter',
-          subtitle: '+221 33 000 00 00',
+          subtitle: '+229 21 00 00 00',
           onPress: () => router.push('/contact'),
         },
         {
@@ -193,32 +203,81 @@ function ProfileScreen() {
   return (
     <Screen>
       <Page style={styles.flex}>
-        <ScrollView
-          style={styles.flex}
-          contentContainerStyle={styles.scrollContent}
-          showsVerticalScrollIndicator={false}>
-          <LinearGradient colors={['#f8e4c4', colors.cream, colors.bg]} style={styles.hero}>
-            <View style={styles.heroBar}>
-              <Text style={styles.heroTitle}>Profil</Text>
-              <IconCircle name="settings" onPress={() => router.push('/account/settings')} bg="rgba(255,255,255,0.88)" />
-            </View>
-
-            <Pressable style={styles.heroIdentity} onPress={() => router.push('/account/personal-info')}>
-              <View style={styles.avatarRing}>
-                <Image source={avatar} style={styles.avatarHero} />
-              </View>
-              <Text style={styles.heroName}>Amina Diallo</Text>
-              <View style={styles.heroMetaRow}>
-                <Feather name="map-pin" size={13} color={colors.muted} />
-                <Text style={styles.heroMeta}>Dakar, Plateau</Text>
-              </View>
-              <View style={styles.memberBadge}>
+        <View
+          style={styles.heroBackdrop}
+          onLayout={(e) => setHeroHeight(e.nativeEvent.layout.height)}
+          pointerEvents="box-none">
+          <TabHero
+            title="Profil"
+            subtitle="Gérez votre compte, vos commandes et votre fidélité."
+            right={
+              <>
+                <IconCircle
+                  name="bell"
+                  variant="hero"
+                  badge={unreadNotifications}
+                  accessibilityLabel="Notifications"
+                  onPress={() => router.push('/notifications')}
+                />
+                <IconCircle
+                  name="settings"
+                  variant="hero"
+                  accessibilityLabel="Paramètres"
+                  onPress={() => router.push('/account/settings')}
+                />
+              </>
+            }>
+            <View style={styles.heroIdentity}>
+              <PressScale
+                onPress={() => router.push('/account/personal-info')}
+                scaleTo={0.98}
+                accessibilityLabel="Modifier le profil"
+                style={styles.heroIdentityHit}>
+                <View
+                  style={[
+                    styles.avatarRing,
+                    {
+                      backgroundColor: scheme === 'dark' ? colors.white : '#ffffff',
+                      borderColor: chrome.surfaceBorder,
+                    },
+                  ]}>
+                  <Image source={avatar} style={styles.avatarHero} />
+                </View>
+                <Text style={[styles.heroName, { color: chrome.ink }]}>Amina Diallo</Text>
+              </PressScale>
+              <PressScale
+                style={styles.heroMetaRow}
+                onPress={() => router.push('/account/addresses')}
+                scaleTo={0.97}
+                accessibilityLabel="Adresses de livraison">
+                <Feather name="map-pin" size={13} color={colors.gold} />
+                <Text style={[styles.heroMeta, { color: chrome.muted }]}>Cotonou, Ganhi</Text>
+                <Feather name="chevron-down" size={13} color={chrome.muted} />
+              </PressScale>
+              <PressScale
+                style={[
+                  styles.memberBadge,
+                  { backgroundColor: chrome.surface, borderColor: chrome.surfaceBorder },
+                ]}
+                onPress={() => router.push('/account/loyalty')}
+                scaleTo={0.96}
+                accessibilityLabel="Programme fidélité">
                 <Feather name="award" size={12} color={colors.gold} />
-                <Text style={styles.memberText}>Cliente fidèle · {LOYALTY_POINTS} pts</Text>
-              </View>
-            </Pressable>
-          </LinearGradient>
+                <Text style={[styles.memberText, { color: chrome.ink }]}>
+                  Cliente fidèle · {LOYALTY_POINTS} pts
+                </Text>
+              </PressScale>
+            </View>
+          </TabHero>
+        </View>
 
+        <ScrollView
+          style={styles.scrollLayer}
+          contentContainerStyle={[
+            styles.scrollContent,
+            { paddingTop: Math.max(0, heroHeight - HERO_OVERLAP) },
+          ]}
+          showsVerticalScrollIndicator={false}>
           <View style={styles.bodySheet}>
             {activeOrder ? (
               <Pressable
@@ -329,7 +388,7 @@ function ProfileScreen() {
               <Text style={styles.logoutText}>Se déconnecter</Text>
             </Pressable>
 
-            <Text style={styles.footer}>Marché Doré · v1.0.0 · Dakar, Sénégal</Text>
+            <Text style={styles.footer}>Marché Doré · v1.0.0 · Cotonou, Bénin</Text>
           </View>
         </ScrollView>
       </Page>
@@ -339,55 +398,56 @@ function ProfileScreen() {
 
 export default memo(ProfileScreen);
 
-const styles = StyleSheet.create({
+function createStyles(colors: AppColors) {
+  return StyleSheet.create({
   flex: { flex: 1 },
+  heroBackdrop: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    zIndex: 0,
+  },
+  scrollLayer: {
+    flex: 1,
+    zIndex: 1,
+  },
   scrollContent: { paddingBottom: tabBarClearance },
-  hero: {
-    paddingHorizontal: 20,
-    paddingTop: 8,
-    paddingBottom: 36,
-  },
-  heroBar: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    marginBottom: 20,
-  },
-  heroTitle: { color: colors.text, fontSize: 28, ...displayFont('700') },
-  heroIdentity: { alignItems: 'center', gap: 10 },
+  heroIdentity: { alignItems: 'center', gap: 10, marginTop: 20 },
+  heroIdentityHit: { alignItems: 'center', gap: 10 },
   avatarRing: {
     padding: 4,
     borderRadius: 999,
-    backgroundColor: colors.white,
-    shadowColor: colors.text,
+    borderWidth: 1,
+    shadowColor: '#1c1613',
     shadowOffset: { width: 0, height: 6 },
     shadowOpacity: 0.12,
     shadowRadius: 12,
     elevation: 4,
   },
   avatarHero: { width: 96, height: 96, borderRadius: 48 },
-  heroName: { color: colors.text, fontSize: 24, ...displayFont('800') },
+  heroName: { fontSize: 24, ...displayFont('800') },
   heroMetaRow: { flexDirection: 'row', alignItems: 'center', gap: 6 },
-  heroMeta: { color: colors.muted, fontSize: 14 },
+  heroMeta: { fontSize: 14 },
   memberBadge: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 6,
-    backgroundColor: 'rgba(255,255,255,0.72)',
     borderRadius: 999,
     paddingHorizontal: 14,
     paddingVertical: 6,
     marginTop: 4,
+    borderWidth: 1,
   },
-  memberText: { color: colors.text, fontSize: 12, fontWeight: '600' },
+  memberText: { fontSize: 12, fontWeight: '600' },
   bodySheet: {
-    marginTop: -24,
     backgroundColor: colors.bg,
     borderTopLeftRadius: 28,
     borderTopRightRadius: 28,
     paddingHorizontal: 20,
     paddingTop: 8,
     gap: 16,
+    minHeight: Dimensions.get('window').height,
   },
   activeOrder: {
     flexDirection: 'row',
@@ -555,3 +615,4 @@ const styles = StyleSheet.create({
     paddingBottom: 8,
   },
 });
+}

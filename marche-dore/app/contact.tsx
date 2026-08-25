@@ -1,11 +1,16 @@
 import { IconCircle, Page, Screen } from '@/components/ui';
-import { colors, displayFont } from '@/constants/theme';
+import { displayFont, type AppColors } from '@/constants/theme';
+import { useColors } from '@/context/ThemeContext';
 import { contactChannels } from '@/data/help';
 import { Feather } from '@expo/vector-icons';
 import { Href, router } from 'expo-router';
+import { useMemo } from 'react';
 import { Linking, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 
 export default function ContactScreen() {
+  const colors = useColors();
+  const styles = useMemo(() => createStyles(colors), [colors]);
+
   const onPress = (channel: (typeof contactChannels)[number]) => {
     if (channel.action === 'chat') {
       router.push('/chat/support' as Href);
@@ -48,7 +53,7 @@ export default function ContactScreen() {
 
           <View style={styles.card}>
             <Text style={styles.cardTitle}>Adresse</Text>
-            <Text style={styles.cardBody}>Marché Doré · Plateau, Dakar, Sénégal</Text>
+            <Text style={styles.cardBody}>Marché Doré · Ganhi, Cotonou, Bénin</Text>
             <Text style={styles.cardBody}>Horaires magasin : 8h – 21h</Text>
           </View>
         </ScrollView>
@@ -57,7 +62,8 @@ export default function ContactScreen() {
   );
 }
 
-const styles = StyleSheet.create({
+function createStyles(colors: AppColors) {
+  return StyleSheet.create({
   flex: { flex: 1 },
   header: {
     flexDirection: 'row',
@@ -115,3 +121,4 @@ const styles = StyleSheet.create({
   cardTitle: { color: colors.text, fontSize: 14, fontWeight: '700' },
   cardBody: { color: colors.muted, fontSize: 13, lineHeight: 18 },
 });
+}

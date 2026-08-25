@@ -1,6 +1,7 @@
 import { CtaButton, IconCircle, Page, Screen } from '@/components/ui';
 import { StarRating } from '@/components/StarRating';
-import { colors } from '@/constants/theme';
+import { type AppColors } from '@/constants/theme';
+import { useColors } from '@/context/ThemeContext';
 import { useReviews } from '@/context/ReviewsContext';
 import { getProduct } from '@/data/catalog';
 import { buildRatingSummary, catalogReviewsForProduct, type Review } from '@/data/reviews';
@@ -23,6 +24,8 @@ import {
 } from 'react-native';
 
 function ReviewImages({ images }: { images: ImageSourcePropType[] }) {
+  const colors = useColors();
+  const styles = useMemo(() => createStyles(colors), [colors]);
   if (!images.length) return null;
 
   return (
@@ -35,6 +38,8 @@ function ReviewImages({ images }: { images: ImageSourcePropType[] }) {
 }
 
 function ReviewCard({ review }: { review: Review }) {
+  const colors = useColors();
+  const styles = useMemo(() => createStyles(colors), [colors]);
   const initial = review.author.trim().charAt(0).toUpperCase();
 
   return (
@@ -66,6 +71,9 @@ function ReviewCard({ review }: { review: Review }) {
 }
 
 export default function ProductReviewsScreen() {
+  const colors = useColors();
+  const styles = useMemo(() => createStyles(colors), [colors]);
+
   const { id } = useLocalSearchParams<{ id: string }>();
   const product = getProduct(id);
   const { reviewsForProduct, addReview } = useReviews();
@@ -290,7 +298,8 @@ export default function ProductReviewsScreen() {
   );
 }
 
-const styles = StyleSheet.create({
+function createStyles(colors: AppColors) {
+  return StyleSheet.create({
   flex: { flex: 1 },
   hero: {
     paddingBottom: 20,
@@ -491,3 +500,4 @@ const styles = StyleSheet.create({
   reviewDate: { color: colors.placeholder, fontSize: 11, fontWeight: '500' },
   reviewComment: { color: colors.muted, fontSize: 14, lineHeight: 21 },
 });
+}

@@ -1,8 +1,9 @@
-import { colors } from '@/constants/theme';
+import { type AppColors } from '@/constants/theme';
+import { useColors } from '@/context/ThemeContext';
 import { softShadow } from '@/lib/shadow';
 import { Feather } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
-import { memo, useEffect, useRef, useState } from 'react';
+import { memo, useEffect, useMemo, useRef, useState } from 'react';
 import {
   Animated,
   PanResponder,
@@ -32,6 +33,8 @@ export const SwipeToConfirm = memo(function SwipeToConfirm({
   onConfirm,
   disabled = false,
 }: Props) {
+  const colors = useColors();
+  const styles = useMemo(() => createStyles(colors), [colors]);
   const [trackW, setTrackW] = useState(0);
   const maxX = Math.max(1, trackW - THUMB - PAD * 2);
   const translateX = useRef(new Animated.Value(0)).current;
@@ -169,60 +172,62 @@ export const SwipeToConfirm = memo(function SwipeToConfirm({
   );
 });
 
-const styles = StyleSheet.create({
-  track: {
-    height: 64,
-    borderRadius: 18,
-    overflow: 'hidden',
-    justifyContent: 'center',
-  },
-  trackDisabled: { opacity: 0.55 },
-  fill: {
-    position: 'absolute',
-    left: 0,
-    top: 0,
-    bottom: 0,
-    borderRadius: 18,
-    overflow: 'hidden',
-  },
-  centerCopy: {
-    position: 'absolute',
-    left: THUMB + 18,
-    right: 88,
-    justifyContent: 'center',
-  },
-  title: { color: colors.white, fontSize: 15, fontWeight: '800' },
-  subtitle: { color: 'rgba(255,255,255,0.82)', fontSize: 11, fontWeight: '600', marginTop: 2 },
-  doneCopy: {
-    position: 'absolute',
-    left: 0,
-    right: 0,
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: 8,
-  },
-  doneText: { color: colors.white, fontSize: 15, fontWeight: '800' },
-  amountWrap: {
-    position: 'absolute',
-    right: 16,
-    top: 0,
-    bottom: 0,
-    justifyContent: 'center',
-  },
-  amount: { color: colors.white, fontSize: 16, fontWeight: '800' },
-  thumb: {
-    position: 'absolute',
-    left: PAD,
-    top: PAD,
-    width: THUMB,
-    height: 64 - PAD * 2,
-    borderRadius: 14,
-    backgroundColor: colors.white,
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    ...softShadow({ y: 3, blur: 16, opacity: 0.18, elevation: 4 }),
-  },
-  thumbChevron2: { marginLeft: -14, opacity: 0.45 },
-});
+function createStyles(colors: AppColors) {
+  return StyleSheet.create({
+    track: {
+      height: 64,
+      borderRadius: 18,
+      overflow: 'hidden',
+      justifyContent: 'center',
+    },
+    trackDisabled: { opacity: 0.55 },
+    fill: {
+      position: 'absolute',
+      left: 0,
+      top: 0,
+      bottom: 0,
+      borderRadius: 18,
+      overflow: 'hidden',
+    },
+    centerCopy: {
+      position: 'absolute',
+      left: THUMB + 18,
+      right: 88,
+      justifyContent: 'center',
+    },
+    title: { color: colors.white, fontSize: 15, fontWeight: '800' },
+    subtitle: { color: 'rgba(255,255,255,0.82)', fontSize: 11, fontWeight: '600', marginTop: 2 },
+    doneCopy: {
+      position: 'absolute',
+      left: 0,
+      right: 0,
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'center',
+      gap: 8,
+    },
+    doneText: { color: colors.white, fontSize: 15, fontWeight: '800' },
+    amountWrap: {
+      position: 'absolute',
+      right: 16,
+      top: 0,
+      bottom: 0,
+      justifyContent: 'center',
+    },
+    amount: { color: colors.white, fontSize: 16, fontWeight: '800' },
+    thumb: {
+      position: 'absolute',
+      left: PAD,
+      top: PAD,
+      width: THUMB,
+      height: 64 - PAD * 2,
+      borderRadius: 14,
+      backgroundColor: colors.white,
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'center',
+      ...softShadow({ y: 3, blur: 16, opacity: 0.18, elevation: 4 }),
+    },
+    thumbChevron2: { marginLeft: -14, opacity: 0.45 },
+  });
+}

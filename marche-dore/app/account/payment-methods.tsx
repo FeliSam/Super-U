@@ -1,11 +1,11 @@
 import { CtaButton, IconCircle, Screen, Page } from '@/components/ui';
-import { colors, displayFont } from '@/constants/theme';
+import { displayFont, type AppColors } from '@/constants/theme';
+import { useColors } from '@/context/ThemeContext';
 import { paymentMethods, type PaymentMethod } from '@/data/account';
 import { Feather } from '@expo/vector-icons';
 import { router } from 'expo-router';
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
 
 function PaymentCard({
   method,
@@ -16,6 +16,8 @@ function PaymentCard({
   selected: boolean;
   onSelect: () => void;
 }) {
+  const colors = useColors();
+  const styles = useMemo(() => createStyles(colors), [colors]);
   return (
     <Pressable style={[styles.card, selected && styles.cardSelected]} onPress={onSelect}>
       <View style={styles.iconWrap}>
@@ -38,6 +40,9 @@ function PaymentCard({
 }
 
 export default function PaymentMethodsScreen() {
+  const colors = useColors();
+  const styles = useMemo(() => createStyles(colors), [colors]);
+
   const [selectedId, setSelectedId] = useState(
     paymentMethods.find((m) => m.default)?.id ?? paymentMethods[0]?.id,
   );
@@ -84,7 +89,8 @@ export default function PaymentMethodsScreen() {
   );
 }
 
-const styles = StyleSheet.create({
+function createStyles(colors: AppColors) {
+  return StyleSheet.create({
   flex: { flex: 1 },
   header: {
     flexDirection: 'row',
@@ -164,3 +170,4 @@ const styles = StyleSheet.create({
     backgroundColor: colors.white,
   },
 });
+}

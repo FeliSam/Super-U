@@ -1,16 +1,21 @@
 import { IconCircle, Page, Screen } from '@/components/ui';
-import { colors, displayFont } from '@/constants/theme';
+import { displayFont, type AppColors } from '@/constants/theme';
+import { useColors } from '@/context/ThemeContext';
 import { Feather } from '@expo/vector-icons';
 import { router } from 'expo-router';
+import { useMemo } from 'react';
 import { ScrollView, StyleSheet, Text, View } from 'react-native';
 
 const highlights = [
   { icon: 'shopping-bag' as const, title: 'Produits frais', text: 'Sélection locale et importée, mise à jour chaque matin.' },
-  { icon: 'truck' as const, title: 'Livraison Dakar', text: 'Créneaux flexibles, suivi en direct avec votre livreur.' },
+  { icon: 'truck' as const, title: 'Livraison Cotonou', text: 'Créneaux flexibles, suivi en direct avec votre livreur.' },
   { icon: 'award' as const, title: 'Fidélité', text: 'Points, QR code client et récompenses exclusives.' },
 ];
 
 export default function AboutScreen() {
+  const colors = useColors();
+  const styles = useMemo(() => createStyles(colors), [colors]);
+
   return (
     <Screen>
       <Page style={styles.flex}>
@@ -30,7 +35,7 @@ export default function AboutScreen() {
           </View>
 
           <Text style={styles.body}>
-            Marché Doré est une application de courses pensée pour Dakar : fruits, légumes, viandes,
+            Marché Doré est une application de courses pensée pour Cotonou : fruits, légumes, viandes,
             épicerie et boissons, avec une expérience simple du panier à la porte.
           </Text>
 
@@ -46,14 +51,15 @@ export default function AboutScreen() {
             </View>
           ))}
 
-          <Text style={styles.footer}>© 2026 Marché Doré · Dakar, Sénégal</Text>
+          <Text style={styles.footer}>© 2026 Marché Doré · Cotonou, Bénin</Text>
         </ScrollView>
       </Page>
     </Screen>
   );
 }
 
-const styles = StyleSheet.create({
+function createStyles(colors: AppColors) {
+  return StyleSheet.create({
   flex: { flex: 1 },
   header: {
     flexDirection: 'row',
@@ -104,3 +110,4 @@ const styles = StyleSheet.create({
   cardBody: { color: colors.muted, fontSize: 13, lineHeight: 18, marginTop: 2 },
   footer: { textAlign: 'center', color: colors.placeholder, fontSize: 12, marginTop: 8 },
 });
+}

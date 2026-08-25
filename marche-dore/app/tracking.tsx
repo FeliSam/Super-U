@@ -1,16 +1,17 @@
 import { AppImage } from '@/components/AppImage';
 import { IconCircle, Screen, Page } from '@/components/ui';
 import { MotionView, PressScale } from '@/components/motion';
-import { colors, displayFont } from '@/constants/theme';
+import { displayFont, type AppColors } from '@/constants/theme';
+import { useColors } from '@/context/ThemeContext';
 import { avatar } from '@/data/catalog';
-import { formatOrderId, statusLabel, useOrders, type Order, type OrderStatus } from '@/context/OrdersContext';
+import { formatOrderId, statusLabel, useOrders, canCancelOrder, DEMO_STATUS_TIMELINE, type Order, type OrderStatus } from '@/context/OrdersContext';
 import { formatFcfa } from '@/lib/format';
 import { softShadow } from '@/lib/shadow';
 import { Feather } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
 import { Href, router, useLocalSearchParams } from 'expo-router';
-import { useEffect, useMemo } from 'react';
-import { Linking, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { useEffect, useMemo, useState } from 'react';
+import { Alert, Linking, Modal, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import Animated, {
   Easing,
   useAnimatedStyle,
@@ -62,6 +63,8 @@ function statusRank(status: OrderStatus) {
       return 1;
     case 'confirmed':
       return 0;
+    case 'cancelled':
+      return -1;
     default:
       return 0;
   }
@@ -69,10 +72,10 @@ function statusRank(status: OrderStatus) {
 
 function buildSteps(order: Order): TimelineStep[] {
   const t = parseOrderDate(order.createdAt);
-  const prep = new Date(t.getTime() + 12 * 60_000);
-  const ship = new Date(t.getTime() + 45 * 60_000);
-  const done = new Date(t.getTime() + 90 * 60_000);
-  const rank = statusRank(order.status);
+  const at = (status: OrderStatus) => {
+    const step = DEMO_STATUS_TIMELINE.find((s) => s.status === status);
+    return new Date(t.getTime() + (step?.afterMs ?? 0));
+  };
 
   const defs: Omit<TimelineStep, 'state' | 'time'>[] = [
     { label: 'Commande confirmée', hint: paymentHint(order), icon: 'check' },
@@ -80,11 +83,26 @@ function buildSteps(order: Order): TimelineStep[] {
     { label: 'En route', hint: 'Votre livreur est en chemin', icon: 'truck' },
     { label: 'Livrée', hint: 'Bon appétit !', icon: 'home' },
   ];
+
+  if (order.status === 'cancelled') {
+    return [
+      {
+        label: 'Commande annulée',
+        hint: 'Annulée avant la préparation',
+        icon: 'x',
+        time: formatClock(t),
+        state: 'active' as const,
+      },
+      ...defs.slice(1).map((d) => ({ ...d, time: '', state: 'pending' as const })),
+    ];
+  }
+
+  const rank = statusRank(order.status);
   const times = [
-    formatClock(t),
-    rank >= 1 ? formatClock(prep) : '',
-    rank >= 2 ? formatClock(ship) : '',
-    rank >= 3 ? formatClock(done) : '',
+    formatClock(at('confirmed')),
+    rank >= 1 ? formatClock(at('preparing')) : '',
+    rank >= 2 ? formatClock(at('shipping')) : '',
+    rank >= 3 ? formatClock(at('delivered')) : '',
   ];
 
   return defs.map((d, i) => ({
@@ -104,12 +122,14 @@ function mapBadgeText(status: OrderStatus) {
       return 'Livreur en route vers vous';
     case 'delivered':
       return 'Commande livrée';
+    case 'cancelled':
+      return 'Commande annulée';
     default:
       return 'Suivi de votre commande';
   }
 }
 
-function statusTone(status: OrderStatus) {
+function statusTone(status: OrderStatus, colors: AppColors) {
   switch (status) {
     case 'confirmed':
       return { bg: '#eaf4ec', text: colors.green, dot: colors.green };
@@ -119,6 +139,8 @@ function statusTone(status: OrderStatus) {
       return { bg: colors.blush, text: colors.terracotta, dot: colors.terracotta };
     case 'delivered':
       return { bg: '#eaf4ec', text: colors.green, dot: colors.green };
+    case 'cancelled':
+      return { bg: '#f3eeeb', text: colors.muted, dot: colors.muted };
     default:
       return { bg: colors.cream, text: colors.gold, dot: colors.gold };
   }
@@ -139,7 +161,10 @@ function courierLeftPct(status: OrderStatus) {
   }
 }
 
-function PulseDot({ color = colors.terracotta }: { color?: string }) {
+function PulseDot({ color }: { color?: string }) {
+  const colors = useColors();
+  const styles = useMemo(() => createStyles(colors), [colors]);
+  const resolvedColor = color ?? colors.terracotta;
   const scale = useSharedValue(1);
   const opacity = useSharedValue(0.55);
 
@@ -166,13 +191,16 @@ function PulseDot({ color = colors.terracotta }: { color?: string }) {
 
   return (
     <View style={styles.pulseWrap}>
-      <Animated.View style={[styles.pulseRing, { backgroundColor: color }, ringStyle]} />
-      <View style={[styles.pulseCore, { backgroundColor: color }]} />
+      <Animated.View style={[styles.pulseRing, { backgroundColor: resolvedColor }, ringStyle]} />
+      <View style={[styles.pulseCore, { backgroundColor: resolvedColor }]} />
     </View>
   );
 }
 
 function CourierMarker() {
+  const colors = useColors();
+  const styles = useMemo(() => createStyles(colors), [colors]);
+
   const bob = useSharedValue(0);
 
   useEffect(() => {
@@ -212,6 +240,8 @@ function InfoRow({
   title: string;
   lines: string[];
 }) {
+  const colors = useColors();
+  const styles = useMemo(() => createStyles(colors), [colors]);
   return (
     <View style={styles.infoRow}>
       <View style={styles.infoIcon}>
@@ -230,9 +260,12 @@ function InfoRow({
 }
 
 export default function TrackingScreen() {
+  const colors = useColors();
+  const styles = useMemo(() => createStyles(colors), [colors]);
+
   const insets = useSafeAreaInsets();
   const { id } = useLocalSearchParams<{ id?: string }>();
-  const { getOrder, activeOrder, orders, ready } = useOrders();
+  const { getOrder, activeOrder, orders, ready, setStatus } = useOrders();
   const orderId = typeof id === 'string' ? id : Array.isArray(id) ? id[0] : undefined;
   const order = (orderId ? getOrder(orderId) : null) ?? activeOrder ?? orders[0] ?? null;
 
@@ -240,7 +273,37 @@ export default function TrackingScreen() {
   const activeStep = steps.findIndex((s) => s.state === 'active');
   const activeIndex = activeStep >= 0 ? activeStep : Math.max(0, steps.findIndex((s) => s.state === 'done'));
   const progress = steps.length > 1 ? ((activeIndex + 0.15) / (steps.length - 1)) * 100 : 0;
-  const tone = order ? statusTone(order.status) : statusTone('confirmed');
+  const tone = order ? statusTone(order.status, colors) : statusTone('confirmed', colors);
+  const cancellable = order ? canCancelOrder(order.status) : false;
+  const [menuOpen, setMenuOpen] = useState(false);
+
+  const closeMenu = () => setMenuOpen(false);
+
+  const confirmCancel = () => {
+    if (!order || !cancellable) return;
+    closeMenu();
+    Alert.alert(
+      'Annuler la commande ?',
+      'Possible uniquement avant le début de la préparation. Cette action est définitive.',
+      [
+        { text: 'Garder', style: 'cancel' },
+        {
+          text: 'Annuler la commande',
+          style: 'destructive',
+          onPress: () => {
+            setStatus(order.id, 'cancelled');
+            router.replace('/orders' as Href);
+          },
+        },
+      ],
+    );
+  };
+
+  const runMenu = (action: () => void) => {
+    closeMenu();
+    // Let the modal close before navigating / alerting.
+    requestAnimationFrame(action);
+  };
 
   if (!ready) {
     return (
@@ -296,8 +359,56 @@ export default function TrackingScreen() {
             <Text style={styles.title}>Suivi de commande</Text>
             <Text style={styles.sub}>N° {formatOrderId(order.id)}</Text>
           </View>
-          <IconCircle name="more-vertical" onPress={() => router.push(`/order/${order.id}` as Href)} />
+          <IconCircle name="more-vertical" onPress={() => setMenuOpen(true)} />
         </View>
+
+        <Modal visible={menuOpen} transparent animationType="fade" onRequestClose={closeMenu}>
+          <View style={styles.menuRoot}>
+            <Pressable style={styles.menuBackdrop} onPress={closeMenu} />
+            <View
+              style={[
+                styles.menuPanel,
+                softShadow({ y: 10, blur: 24, opacity: 0.14 }),
+                { top: Math.max(8, insets.top ? 4 : 8) + 48, right: 16 },
+              ]}>
+              <Pressable
+                style={styles.menuItem}
+                onPress={() => runMenu(() => router.push(`/order/${order.id}` as Href))}>
+                <Feather name="file-text" size={16} color={colors.text} />
+                <Text style={styles.menuItemText}>Voir le détail</Text>
+              </Pressable>
+              <Pressable
+                style={styles.menuItem}
+                onPress={() => runMenu(() => router.push('/orders' as Href))}>
+                <Feather name="list" size={16} color={colors.text} />
+                <Text style={styles.menuItemText}>Mes commandes</Text>
+              </Pressable>
+              {order.status !== 'cancelled' ? (
+                <Pressable
+                  style={styles.menuItem}
+                  onPress={() => runMenu(() => Linking.openURL(`tel:${order.courierPhone}`))}>
+                  <Feather name="phone" size={16} color={colors.text} />
+                  <Text style={styles.menuItemText}>Appeler le livreur</Text>
+                </Pressable>
+              ) : null}
+              <Pressable
+                style={styles.menuItem}
+                onPress={() => runMenu(() => router.push('/help' as Href))}>
+                <Feather name="help-circle" size={16} color={colors.text} />
+                <Text style={styles.menuItemText}>Aide & support</Text>
+              </Pressable>
+              {cancellable ? (
+                <>
+                  <View style={styles.menuDivider} />
+                  <Pressable style={styles.menuItem} onPress={confirmCancel}>
+                    <Feather name="x-circle" size={16} color={colors.terracotta} />
+                    <Text style={[styles.menuItemText, styles.menuItemDanger]}>Annuler la commande</Text>
+                  </Pressable>
+                </>
+              ) : null}
+            </View>
+          </View>
+        </Modal>
 
         <ScrollView
           contentContainerStyle={[styles.content, { paddingBottom: Math.max(28, insets.bottom + 16) }]}
@@ -336,6 +447,24 @@ export default function TrackingScreen() {
                 <Text style={styles.mapBadgeText}>{mapBadgeText(order.status)}</Text>
               </View>
             </LinearGradient>
+          </MotionView>
+
+          <MotionView preset="down" delay={60}>
+            <PressScale
+              style={[styles.details, softShadow({ y: 4, blur: 14, opacity: 0.05 })]}
+              onPress={() => router.push(`/order/${order.id}` as Href)}
+              scaleTo={0.985}>
+              <View style={styles.detailsIcon}>
+                <Feather name="shopping-bag" size={18} color={colors.gold} />
+              </View>
+              <View style={styles.detailsText}>
+                <Text style={styles.detailsLeft}>Articles & total</Text>
+                <Text style={styles.detailsRight}>
+                  {order.itemCount} article{order.itemCount > 1 ? 's' : ''} · {formatFcfa(order.total)}
+                </Text>
+              </View>
+              <Feather name="chevron-right" size={18} color={colors.placeholder} />
+            </PressScale>
           </MotionView>
 
           <MotionView preset="down" delay={80}>
@@ -450,38 +579,30 @@ export default function TrackingScreen() {
           </MotionView>
 
           <MotionView preset="down" delay={180}>
-            <View style={[styles.courier, softShadow({ y: 6, blur: 18, opacity: 0.06 })]}>
-              <View style={styles.avatarWrap}>
-                <AppImage source={avatar} frameStyle={styles.avatar} />
-                <View style={styles.onlineDot} />
+            {order.status === 'cancelled' ? (
+              <View style={[styles.cancelledBanner, softShadow({ y: 4, blur: 12, opacity: 0.05 })]}>
+                <Feather name="x-circle" size={18} color={colors.muted} />
+                <View style={styles.cancelledText}>
+                  <Text style={styles.cancelledTitle}>Commande annulée</Text>
+                  <Text style={styles.cancelledMeta}>Aucun livreur ne sera envoyé pour cette commande.</Text>
+                </View>
               </View>
-              <View style={styles.courierText}>
-                <Text style={styles.name}>{order.courierName}</Text>
-                <Text style={styles.meta}>Livreur Marché Doré · 4.9 ★</Text>
+            ) : (
+              <View style={[styles.courier, softShadow({ y: 6, blur: 18, opacity: 0.06 })]}>
+                <View style={styles.avatarWrap}>
+                  <AppImage source={avatar} frameStyle={styles.avatar} />
+                  <View style={styles.onlineDot} />
+                </View>
+                <View style={styles.courierText}>
+                  <Text style={styles.name}>{order.courierName}</Text>
+                  <Text style={styles.meta}>Livreur Marché Doré · 4.9 ★</Text>
+                </View>
+                <View style={styles.courierActions}>
+                  <IconCircle name="message-circle" onPress={() => router.push('/chat/courier-moussa' as Href)} />
+                  <IconCircle name="phone" onPress={() => Linking.openURL(`tel:${order.courierPhone}`)} />
+                </View>
               </View>
-              <View style={styles.courierActions}>
-                <IconCircle name="message-circle" onPress={() => router.push('/chat/courier-moussa' as Href)} />
-                <IconCircle name="phone" onPress={() => Linking.openURL(`tel:${order.courierPhone}`)} />
-              </View>
-            </View>
-          </MotionView>
-
-          <MotionView preset="down" delay={210}>
-            <PressScale
-              style={[styles.details, softShadow({ y: 4, blur: 14, opacity: 0.05 })]}
-              onPress={() => router.push(`/order/${order.id}` as Href)}
-              scaleTo={0.985}>
-              <View style={styles.detailsIcon}>
-                <Feather name="shopping-bag" size={18} color={colors.gold} />
-              </View>
-              <View style={styles.detailsText}>
-                <Text style={styles.detailsLeft}>Articles & total</Text>
-                <Text style={styles.detailsRight}>
-                  {order.itemCount} article{order.itemCount > 1 ? 's' : ''} · {formatFcfa(order.total)}
-                </Text>
-              </View>
-              <Feather name="chevron-right" size={18} color={colors.placeholder} />
-            </PressScale>
+            )}
           </MotionView>
 
           <PressScale style={styles.help} onPress={() => router.push('/help')} scaleTo={0.98}>
@@ -494,7 +615,8 @@ export default function TrackingScreen() {
   );
 }
 
-const styles = StyleSheet.create({
+function createStyles(colors: AppColors) {
+  return StyleSheet.create({
   flex: { flex: 1 },
   header: {
     flexDirection: 'row',
@@ -764,6 +886,49 @@ const styles = StyleSheet.create({
   detailsText: { flex: 1, gap: 2 },
   detailsLeft: { color: colors.text, fontWeight: '700', fontSize: 14 },
   detailsRight: { color: colors.muted, fontSize: 12, fontWeight: '600' },
+  cancelledBanner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+    backgroundColor: colors.white,
+    borderWidth: 1,
+    borderColor: colors.border,
+    borderRadius: 22,
+    padding: 14,
+  },
+  cancelledText: { flex: 1, gap: 2 },
+  cancelledTitle: { color: colors.text, fontSize: 15, fontWeight: '800' },
+  cancelledMeta: { color: colors.muted, fontSize: 12, fontWeight: '500', lineHeight: 17 },
+  menuRoot: { flex: 1 },
+  menuBackdrop: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: 'rgba(28,22,19,0.28)',
+  },
+  menuPanel: {
+    position: 'absolute',
+    minWidth: 220,
+    backgroundColor: colors.white,
+    borderRadius: 18,
+    borderWidth: 1,
+    borderColor: colors.border,
+    paddingVertical: 6,
+    overflow: 'hidden',
+  },
+  menuItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+    paddingHorizontal: 16,
+    paddingVertical: 13,
+  },
+  menuItemText: { color: colors.text, fontSize: 14, fontWeight: '700' },
+  menuItemDanger: { color: colors.terracotta },
+  menuDivider: {
+    height: 1,
+    backgroundColor: colors.border,
+    marginVertical: 4,
+    marginHorizontal: 12,
+  },
   help: {
     flexDirection: 'row',
     justifyContent: 'center',
@@ -801,3 +966,4 @@ const styles = StyleSheet.create({
   emptyGhost: { paddingVertical: 10, paddingHorizontal: 12 },
   emptyGhostText: { color: colors.gold, fontSize: 14, fontWeight: '700' },
 });
+}

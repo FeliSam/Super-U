@@ -1,7 +1,8 @@
 import { IconCircle, Screen, Page } from '@/components/ui';
 import { MotionView, PressScale } from '@/components/motion';
 import { SwipeToConfirm } from '@/components/SwipeToConfirm';
-import { colors, displayFont } from '@/constants/theme';
+import { displayFont, type AppColors } from '@/constants/theme';
+import { useColors } from '@/context/ThemeContext';
 import { useCart } from '@/context/CartContext';
 import { useCheckoutPayment, type PaymentId } from '@/context/CheckoutPaymentContext';
 import { useOrders } from '@/context/OrdersContext';
@@ -70,21 +71,20 @@ const EXPRESS_SLOTS: TimeSlot[] = [
 
 type PaymentIdLocal = PaymentId;
 
-const payments: {
-  id: PaymentIdLocal;
-  label: string;
-  hint: string;
-  icon: React.ComponentProps<typeof Feather>['name'];
-  accent: string;
-  soft: string;
-}[] = [
-  { id: 'om', label: 'Orange Money', hint: 'Mobile Money', icon: 'smartphone', accent: '#ff7900', soft: '#fff3e8' },
-  { id: 'wave', label: 'Wave', hint: 'Mobile Money', icon: 'zap', accent: '#1c64f2', soft: '#e8f0fe' },
-  { id: 'card', label: 'Carte', hint: 'Visa · Mastercard', icon: 'credit-card', accent: colors.gold, soft: colors.cream },
-  { id: 'cod', label: 'Livraison', hint: 'Espèces au livreur', icon: 'package', accent: colors.green, soft: '#eaf4ec' },
-];
+function buildPayments(colors: AppColors) {
+  return [
+    { id: 'om' as const, label: 'Orange Money', hint: 'Mobile Money', icon: 'smartphone' as const, accent: '#ff7900', soft: '#fff3e8' },
+    { id: 'wave' as const, label: 'MTN MoMo', hint: 'Mobile Money', icon: 'zap' as const, accent: '#1c64f2', soft: '#e8f0fe' },
+    { id: 'card' as const, label: 'Carte', hint: 'Visa · Mastercard', icon: 'credit-card' as const, accent: colors.gold, soft: colors.cream },
+    { id: 'cod' as const, label: 'Livraison', hint: 'Espèces au livreur', icon: 'package' as const, accent: colors.green, soft: '#eaf4ec' },
+  ];
+}
 
 export default function CheckoutScreen() {
+  const colors = useColors();
+  const styles = useMemo(() => createStyles(colors), [colors]);
+  const payments = useMemo(() => buildPayments(colors), [colors]);
+
   const insets = useSafeAreaInsets();
   const { subtotal, delivery, discount, count, lines, promoCode, clear, ready: cartReady } = useCart();
   const { isReady, detailFor, setup, clearSetup } = useCheckoutPayment();
@@ -196,8 +196,8 @@ export default function CheckoutScreen() {
                     <Text style={styles.badgeText}>Par défaut</Text>
                   </View>
                 </View>
-                <Text style={styles.meta}>Rue 23, Dakar Plateau</Text>
-                <Text style={styles.meta}>+221 77 123 45 67</Text>
+                <Text style={styles.meta}>Rue 12, Ganhi</Text>
+                <Text style={styles.meta}>+229 97 12 34 56</Text>
               </View>
               <Feather name="chevron-right" size={18} color={colors.placeholder} />
             </Pressable>
@@ -447,6 +447,8 @@ export default function CheckoutScreen() {
 }
 
 function Sum({ label, value, green }: { label: string; value: string; green?: boolean }) {
+  const colors = useColors();
+  const styles = useMemo(() => createStyles(colors), [colors]);
   return (
     <View style={styles.row}>
       <Text style={styles.sumLabel}>{label}</Text>
@@ -455,7 +457,8 @@ function Sum({ label, value, green }: { label: string; value: string; green?: bo
   );
 }
 
-const styles = StyleSheet.create({
+function createStyles(colors: AppColors) {
+  return StyleSheet.create({
   flex: { flex: 1 },
   header: {
     flexDirection: 'row',
@@ -733,3 +736,4 @@ const styles = StyleSheet.create({
     backgroundColor: colors.white,
   },
 });
+}

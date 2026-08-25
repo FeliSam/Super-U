@@ -1,6 +1,7 @@
 import { AppImage } from '@/components/AppImage';
 import { CtaButton, IconCircle, Page, ProductCard, Screen } from '@/components/ui';
-import { colors } from '@/constants/theme';
+import { type AppColors } from '@/constants/theme';
+import { useColors } from '@/context/ThemeContext';
 import { useCart } from '@/context/CartContext';
 import { useFavorites } from '@/context/FavoritesContext';
 import { promoProducts, type Product } from '@/data/catalog';
@@ -35,6 +36,8 @@ function FavoriteRow({
   onRemove: () => void;
   onAdd: () => void;
 }) {
+  const colors = useColors();
+  const styles = useMemo(() => createStyles(colors), [colors]);
   return (
     <View style={styles.row}>
       <Pressable style={styles.rowMain} onPress={() => router.push(`/product/${product.id}`)}>
@@ -71,6 +74,9 @@ function FavoriteRow({
 }
 
 export default function FavoritesScreen() {
+  const colors = useColors();
+  const styles = useMemo(() => createStyles(colors), [colors]);
+
   const { products, count, remove, clear, refresh } = useFavorites();
   const { add } = useCart();
   const insets = useSafeAreaInsets();
@@ -320,7 +326,8 @@ export default function FavoritesScreen() {
   );
 }
 
-const styles = StyleSheet.create({
+function createStyles(colors: AppColors) {
+  return StyleSheet.create({
   flex: { flex: 1 },
   scrollContent: { paddingBottom: 40 },
   hero: {
@@ -494,3 +501,4 @@ const styles = StyleSheet.create({
   suggestLink: { color: colors.gold, fontSize: 13, fontWeight: '700' },
   suggestRow: { gap: 12, paddingRight: 4 },
 });
+}

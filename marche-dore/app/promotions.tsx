@@ -1,5 +1,6 @@
 import { IconCircle, Page, ProductCard, PromoBanner, Screen } from '@/components/ui';
-import { colors, displayFont } from '@/constants/theme';
+import { displayFont, type AppColors } from '@/constants/theme';
+import { useColors } from '@/context/ThemeContext';
 import {
   homePromoBanners,
   promoProducts,
@@ -13,6 +14,9 @@ import { useMemo } from 'react';
 import { Pressable, ScrollView, StyleSheet, Text, useWindowDimensions, View } from 'react-native';
 
 export default function PromotionsScreen() {
+  const colors = useColors();
+  const styles = useMemo(() => createStyles(colors), [colors]);
+
   const { width } = useWindowDimensions();
   const products = useMemo(() => promoProducts(), []);
   const cardWidth = Math.min((Math.min(width, 430) - 52) / 2, 180);
@@ -92,7 +96,8 @@ export default function PromotionsScreen() {
   );
 }
 
-const styles = StyleSheet.create({
+function createStyles(colors: AppColors) {
+  return StyleSheet.create({
   flex: { flex: 1 },
   header: {
     flexDirection: 'row',
@@ -140,3 +145,4 @@ const styles = StyleSheet.create({
   },
   ctaText: { color: colors.white, fontSize: 15, fontWeight: '800' },
 });
+}

@@ -1,6 +1,7 @@
 import { LoyaltyQrCode } from '@/components/LoyaltyQrCode';
 import { CtaButton, IconCircle, Page, Screen } from '@/components/ui';
-import { colors, displayFont } from '@/constants/theme';
+import { displayFont, type AppColors } from '@/constants/theme';
+import { useColors } from '@/context/ThemeContext';
 import {
   buildLoyaltyQrPayload,
   loyaltyAccount,
@@ -17,6 +18,9 @@ import { useMemo, useState } from 'react';
 import { Modal, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 
 export default function LoyaltyScreen() {
+  const colors = useColors();
+  const styles = useMemo(() => createStyles(colors), [colors]);
+
   const [copiedCode, setCopiedCode] = useState<string | null>(null);
   const [qrOpen, setQrOpen] = useState(false);
 
@@ -214,7 +218,8 @@ export default function LoyaltyScreen() {
   );
 }
 
-const styles = StyleSheet.create({
+function createStyles(colors: AppColors) {
+  return StyleSheet.create({
   flex: { flex: 1 },
   header: {
     flexDirection: 'row',
@@ -455,3 +460,4 @@ const styles = StyleSheet.create({
   },
   modalCloseText: { color: colors.white, fontSize: 14, fontWeight: '700' },
 });
+}

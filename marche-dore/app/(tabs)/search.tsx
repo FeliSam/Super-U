@@ -1,5 +1,6 @@
 import { ProductCard, Screen, SearchField, Page } from '@/components/ui';
-import { colors, tabBarClearance } from '@/constants/theme';
+import { tabBarClearance, type AppColors } from '@/constants/theme';
+import { useColors } from '@/context/ThemeContext';
 import { useUiState } from '@/context/UiStateContext';
 import {
   popularSuggestions,
@@ -15,7 +16,6 @@ import { LinearGradient } from 'expo-linear-gradient';
 import { router } from 'expo-router';
 import { memo, useMemo } from 'react';
 import { Image, Platform, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
 
 type FilterKey = 'Prix' | 'Note' | 'Disponible' | 'Promo';
 
@@ -27,6 +27,8 @@ const filters: { key: FilterKey; icon: React.ComponentProps<typeof Feather>['nam
 ];
 
 function SearchScreen() {
+  const colors = useColors();
+  const styles = useMemo(() => createStyles(colors), [colors]);
   const {
     searchQuery,
     setSearchQuery,
@@ -310,7 +312,8 @@ function SearchScreen() {
 
 export default memo(SearchScreen);
 
-const styles = StyleSheet.create({
+function createStyles(colors: AppColors) {
+  return StyleSheet.create({
   flex: { flex: 1 },
   scrollContent: { paddingBottom: tabBarClearance },
   hero: {
@@ -523,3 +526,4 @@ const styles = StyleSheet.create({
   },
   emptyBtnText: { color: colors.white, fontSize: 13, fontWeight: '700' },
 });
+}

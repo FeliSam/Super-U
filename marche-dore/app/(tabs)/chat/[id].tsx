@@ -1,6 +1,7 @@
 import { AppImage } from '@/components/AppImage';
 import { IconCircle, Page, Screen } from '@/components/ui';
-import { colors, displayFont } from '@/constants/theme';
+import { displayFont, type AppColors } from '@/constants/theme';
+import { useColors } from '@/context/ThemeContext';
 import {
   getConversation,
   getThread,
@@ -24,6 +25,9 @@ import {
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 export default function ChatThreadScreen() {
+  const colors = useColors();
+  const styles = useMemo(() => createStyles(colors), [colors]);
+
   const { id } = useLocalSearchParams<{ id?: string }>();
   const insets = useSafeAreaInsets();
   const conversationId = id === 'MD-2024-0847' ? 'courier-moussa' : (id ?? 'support');
@@ -199,7 +203,8 @@ export default function ChatThreadScreen() {
   );
 }
 
-const styles = StyleSheet.create({
+function createStyles(colors: AppColors) {
+  return StyleSheet.create({
   flex: { flex: 1 },
   header: {
     flexDirection: 'row',
@@ -318,3 +323,4 @@ const styles = StyleSheet.create({
   },
   sendBtnDisabled: { opacity: 0.45 },
 });
+}

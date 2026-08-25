@@ -1,5 +1,6 @@
-import { colors, fontFamilies } from '@/constants/theme';
+import { colors as fallbackColors, fontFamilies } from '@/constants/theme';
 import { useCart } from '@/context/CartContext';
+import { useColors, useTheme } from '@/context/ThemeContext';
 import { unreadMessagesCount } from '@/data/messages';
 import { Feather } from '@expo/vector-icons';
 import { Tabs, usePathname } from 'expo-router';
@@ -15,6 +16,8 @@ import './chat/index';
 
 type FeatherIcon = React.ComponentProps<typeof Feather>['name'];
 
+const colors = fallbackColors;
+
 function TabBarItem({
   icon,
   label,
@@ -26,21 +29,24 @@ function TabBarItem({
   focused: boolean;
   badge?: number;
 }) {
+  const theme = useColors();
   return (
-    <View style={[styles.tabItemInner, focused && styles.tabItemInnerActive]}>
+    <View style={[styles.tabItemInner, focused && { backgroundColor: theme.cream }]}>
       <View style={styles.iconWrap}>
         <Feather
           name={icon}
           size={focused ? 21 : 20}
-          color={focused ? colors.terracotta : colors.placeholder}
+          color={focused ? theme.terracotta : theme.placeholder}
         />
         {badge && badge > 0 ? (
-          <View style={styles.badgePill}>
+          <View style={[styles.badgePill, { backgroundColor: theme.terracotta, borderColor: theme.white }]}>
             <Text style={styles.badgeText}>{badge > 99 ? '99+' : badge}</Text>
           </View>
         ) : null}
       </View>
-      <Text style={[styles.tabLabel, focused && styles.tabLabelActive]} numberOfLines={1}>
+      <Text
+        style={[styles.tabLabel, { color: theme.placeholder }, focused && { color: theme.terracotta, fontWeight: '800' }]}
+        numberOfLines={1}>
         {label}
       </Text>
     </View>
@@ -69,8 +75,11 @@ function isChatConversation(pathname: string) {
 export default function TabLayout() {
   const insets = useSafeAreaInsets();
   const pathname = usePathname();
+  const theme = useColors();
+  const { scheme } = useTheme();
   const hideTabBar = isChatConversation(pathname);
   const bottomOffset = Math.max(12, insets.bottom + 4);
+  const barBg = scheme === 'dark' ? 'rgba(30, 26, 23, 0.94)' : 'rgba(255, 255, 255, 0.94)';
 
   return (
     <Tabs
@@ -85,7 +94,14 @@ export default function TabLayout() {
         tabBarHideOnKeyboard: true,
         tabBarStyle: hideTabBar
           ? { display: 'none', height: 0, overflow: 'hidden' }
-          : [styles.bar, { bottom: bottomOffset }],
+          : [
+              styles.bar,
+              {
+                bottom: bottomOffset,
+                backgroundColor: barBg,
+                borderColor: theme.border,
+              },
+            ],
         tabBarItemStyle: styles.tabSlot,
         tabBarIconStyle: styles.tabIcon,
         tabBarButton: (props) => (
@@ -95,7 +111,7 @@ export default function TabLayout() {
             style={({ pressed }) => [props.style, styles.tabButton, pressed && styles.tabButtonPressed]}
           />
         ),
-        sceneContainerStyle: styles.scene,
+        sceneContainerStyle: [styles.scene, { backgroundColor: theme.bg }],
       }}>
       <Tabs.Screen
         name="index"

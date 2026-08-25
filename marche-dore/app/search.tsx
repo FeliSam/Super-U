@@ -1,6 +1,7 @@
 import { AppImage } from '@/components/AppImage';
 import { IconCircle, ProductCard, Screen, SearchField, Page } from '@/components/ui';
-import { colors, tabBarClearance } from '@/constants/theme';
+import { tabBarClearance, type AppColors } from '@/constants/theme';
+import { useColors } from '@/context/ThemeContext';
 import { useUiState } from '@/context/UiStateContext';
 import {
   popularSuggestions,
@@ -12,9 +13,16 @@ import {
   type SearchSort } from '@/data/catalog';
 import { Feather } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
-import { router } from 'expo-router';
-import { memo, useMemo } from 'react';
+import { router, useFocusEffect } from 'expo-router';
+import { memo, useCallback, useMemo } from 'react';
 import { Platform, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import Animated, {
+  Easing,
+  useAnimatedStyle,
+  useSharedValue,
+  withDelay,
+  withTiming,
+} from 'react-native-reanimated';
 
 type FilterKey = 'Prix' | 'Note' | 'Disponible' | 'Promo';
 
@@ -25,7 +33,49 @@ const filters: { key: FilterKey; icon: React.ComponentProps<typeof Feather>['nam
   { key: 'Promo', icon: 'tag' },
 ];
 
+const ENTER = { duration: 420, easing: Easing.out(Easing.cubic) };
+
 function SearchScreen() {
+  const colors = useColors();
+  const styles = useMemo(() => createStyles(colors), [colors]);
+  const heroProgress = useSharedValue(0);
+  const sheetProgress = useSharedValue(0);
+  const fieldProgress = useSharedValue(0);
+
+  useFocusEffect(
+    useCallback(() => {
+      heroProgress.value = 0;
+      sheetProgress.value = 0;
+      fieldProgress.value = 0;
+      heroProgress.value = withTiming(1, ENTER);
+      sheetProgress.value = withDelay(60, withTiming(1, ENTER));
+      fieldProgress.value = withDelay(120, withTiming(1, { duration: 380, easing: Easing.out(Easing.cubic) }));
+      return () => {
+        heroProgress.value = 0;
+        sheetProgress.value = 0;
+        fieldProgress.value = 0;
+      };
+    }, [fieldProgress, heroProgress, sheetProgress]),
+  );
+
+  const heroStyle = useAnimatedStyle(() => ({
+    opacity: heroProgress.value,
+    transform: [{ translateY: (1 - heroProgress.value) * -16 }],
+  }));
+
+  const sheetStyle = useAnimatedStyle(() => ({
+    opacity: sheetProgress.value,
+    transform: [{ translateY: (1 - sheetProgress.value) * 36 }],
+  }));
+
+  const fieldStyle = useAnimatedStyle(() => ({
+    opacity: fieldProgress.value,
+    transform: [
+      { translateY: (1 - fieldProgress.value) * 18 },
+      { scale: 0.96 + fieldProgress.value * 0.04 },
+    ],
+  }));
+
   const {
     searchQuery,
     setSearchQuery,
@@ -136,25 +186,29 @@ function SearchScreen() {
           contentContainerStyle={styles.scrollContent}
           showsVerticalScrollIndicator={false}
           keyboardShouldPersistTaps="handled">
-          <LinearGradient colors={['#f8e4c4', colors.cream, colors.bg]} style={styles.hero}>
-            <View style={styles.heroOrb} />
-            <View style={styles.heroBar}>
-              <IconCircle name="chevron-left" onPress={() => router.back()} bg="rgba(255,255,255,0.88)" />
-              <Text style={styles.heroTitle}>Rechercher</Text>
-              <View style={styles.heroSpacer} />
-            </View>
-            <Text style={styles.heroSub}>Trouvez vos produits frais, locaux et en promotion.</Text>
-          </LinearGradient>
+          <Animated.View style={heroStyle}>
+            <LinearGradient colors={['#f8e4c4', colors.cream, colors.bg]} style={styles.hero}>
+              <View style={styles.heroOrb} />
+              <View style={styles.heroBar}>
+                <IconCircle name="chevron-left" onPress={() => router.back()} bg="rgba(255,255,255,0.88)" color="#1c1613" />
+                <Text style={styles.heroTitle}>Rechercher</Text>
+                <View style={styles.heroSpacer} />
+              </View>
+              <Text style={styles.heroSub}>Trouvez vos produits frais, locaux et en promotion.</Text>
+            </LinearGradient>
+          </Animated.View>
 
-          <View style={styles.bodySheet}>
-            <SearchField
-              value={searchQuery}
-              onChangeText={setSearchQuery}
-              onSubmitEditing={commitSearch}
-              active
-              placeholder="Tomates, mangues, lait…"
-              showFilter={false}
-            />
+          <Animated.View style={[styles.bodySheet, sheetStyle]}>
+            <Animated.View style={fieldStyle}>
+              <SearchField
+                value={searchQuery}
+                onChangeText={setSearchQuery}
+                onSubmitEditing={commitSearch}
+                active
+                placeholder="Tomates, mangues, lait…"
+                showFilter={false}
+              />
+            </Animated.View>
 
             <ScrollView
               horizontal
@@ -302,7 +356,7 @@ function SearchScreen() {
                 </View>
               )}
             </View>
-          </View>
+          </Animated.View>
         </ScrollView>
       </Page>
     </Screen>
@@ -311,7 +365,8 @@ function SearchScreen() {
 
 export default memo(SearchScreen);
 
-const styles = StyleSheet.create({
+function createStyles(colors: AppColors) {
+  return StyleSheet.create({
   flex: { flex: 1 },
   scrollContent: { paddingBottom: tabBarClearance },
   hero: {
@@ -498,3 +553,4 @@ const styles = StyleSheet.create({
     paddingHorizontal: 18,
     paddingVertical: 10 },
   emptyBtnText: { color: colors.white, fontSize: 13, fontWeight: '700' } });
+}

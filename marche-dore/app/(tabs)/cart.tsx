@@ -1,7 +1,8 @@
 import { AppImage } from '@/components/AppImage';
-import { Page, ProductCard, Screen } from '@/components/ui';
+import { Page, ProductCard, Screen, TabHero } from '@/components/ui';
 import { MotionView, PressScale } from '@/components/motion';
-import { colors, displayFont, tabBarClearance } from '@/constants/theme';
+import { displayFont, heroChrome, tabBarClearance, type AppColors } from '@/constants/theme';
+import { useColors, useTheme } from '@/context/ThemeContext';
 import { CartLine, lineListTotal, lineProduct, lineTotal, useCart } from '@/context/CartContext';
 import { chipRoute, getProducts, homeCategories, recommendedIds } from '@/data/catalog';
 import { formatFcfa } from '@/lib/format';
@@ -12,6 +13,7 @@ import { router } from 'expo-router';
 import { memo, useMemo, useRef, useState } from 'react';
 import {
   Animated,
+  Dimensions,
   PanResponder,
   Pressable,
   ScrollView,
@@ -27,6 +29,7 @@ const OVERSWIPE = 28;
 const FREE_DELIVERY_THRESHOLD = 15000;
 const AUTO_DISCOUNT_THRESHOLD = 10000;
 const SUGGESTED_PROMOS = ['FRAIS20', 'MARCHE10', 'SUPERU'] as const;
+const HERO_OVERLAP = 28;
 
 function SwipeCartItem({
   line,
@@ -37,6 +40,8 @@ function SwipeCartItem({
   onRemove: () => void;
   onSetQty: (qty: number) => void;
 }) {
+  const colors = useColors();
+  const styles = useMemo(() => createStyles(colors), [colors]);
   const p = lineProduct(line);
   const translateX = useRef(new Animated.Value(0)).current;
   const rowOpacity = useRef(new Animated.Value(1)).current;
@@ -194,6 +199,8 @@ function SwipeCartItem({
 }
 
 function SummaryRow({ label, value, green }: { label: string; value: string; green?: boolean }) {
+  const colors = useColors();
+  const styles = useMemo(() => createStyles(colors), [colors]);
   return (
     <View style={styles.sumRow}>
       <Text style={styles.sumLabel}>{label}</Text>
@@ -203,6 +210,12 @@ function SummaryRow({ label, value, green }: { label: string; value: string; gre
 }
 
 function CartScreen() {
+  const { scheme } = useTheme();
+  const colors = useColors();
+  const chrome = useMemo(() => heroChrome(scheme), [scheme]);
+  const styles = useMemo(() => createStyles(colors), [colors]);
+  const [heroHeight, setHeroHeight] = useState(140);
+
   const {
     lines,
     count,
@@ -219,7 +232,7 @@ function CartScreen() {
     promoMessage,
   } = useCart();
   const [promo, setPromo] = useState('');
-  const [summaryOpen, setSummaryOpen] = useState(true);
+  const [summaryOpen, setSummaryOpen] = useState(false);
 
   const savings = Math.max(0, listSubtotal - subtotal);
   const freeDeliveryLeft = Math.max(0, FREE_DELIVERY_THRESHOLD - subtotal);
@@ -242,133 +255,160 @@ function CartScreen() {
   return (
     <Screen>
       <Page style={styles.flex}>
-        <LinearGradient colors={['#f8e4c4', colors.cream, colors.bg]} style={styles.hero}>
-          <View style={styles.header}>
-            <View style={styles.headerLeft}>
-              <Text style={styles.title}>Mon panier</Text>
-              {count > 0 ? (
-                <View style={styles.countPill}>
-                  <Text style={styles.countPillText}>{count}</Text>
-                </View>
-              ) : null}
-            </View>
-            <Pressable style={styles.continueBtn} onPress={() => navigateTab(tabPaths.home)}>
-              <Text style={styles.continueText}>Continuer</Text>
-              <Feather name="chevron-right" size={14} color={colors.gold} />
-            </Pressable>
-          </View>
-          {count > 0 ? (
-            <Text style={styles.heroSub}>{itemLabel} · Total {formatFcfa(total)}</Text>
-          ) : (
-            <Text style={styles.heroSub}>Ajoutez des produits pour démarrer votre commande.</Text>
-          )}
-        </LinearGradient>
+        <View
+          style={styles.heroBackdrop}
+          onLayout={(e) => setHeroHeight(e.nativeEvent.layout.height)}
+          pointerEvents="box-none">
+          <TabHero
+            title="Panier"
+            subtitle={
+              count > 0
+                ? `${itemLabel} · Total ${formatFcfa(total)}`
+                : 'Ajoutez des produits pour démarrer votre commande.'
+            }
+            right={
+              <>
+                {count > 0 ? (
+                  <PressScale
+                    style={[
+                      styles.countPill,
+                      { backgroundColor: chrome.iconBg, borderColor: chrome.iconBorder },
+                    ]}
+                    onPress={() => router.push('/checkout')}
+                    scaleTo={0.94}
+                    accessibilityLabel={`${count} articles — passer commande`}>
+                    <Text style={[styles.countPillText, { color: colors.gold }]}>{count}</Text>
+                  </PressScale>
+                ) : null}
+                <PressScale
+                  style={[
+                    styles.continueBtn,
+                    { backgroundColor: chrome.iconBg, borderColor: chrome.iconBorder },
+                  ]}
+                  onPress={() => navigateTab(tabPaths.home)}
+                  scaleTo={0.96}
+                  accessibilityLabel="Continuer les achats">
+                  <Text style={[styles.continueText, { color: chrome.ink }]}>Continuer</Text>
+                  <Feather name="chevron-right" size={14} color={colors.gold} />
+                </PressScale>
+              </>
+            }
+          />
+        </View>
 
         {lines.length === 0 ? (
           <ScrollView
-            style={styles.flex}
-            contentContainerStyle={styles.emptyScroll}
+            style={styles.scrollLayer}
+            contentContainerStyle={[
+              styles.emptyScroll,
+              { paddingTop: Math.max(0, heroHeight - HERO_OVERLAP) },
+            ]}
             showsVerticalScrollIndicator={false}>
-            <MotionView preset="up" delay={40} style={styles.emptyHeroCard}>
-              <View style={styles.emptyArt}>
-                <View style={styles.emptyBlobA} />
-                <View style={styles.emptyBlobB} />
-                <View style={styles.emptyIconRing}>
-                  <Feather name="shopping-bag" size={34} color={colors.terracotta} />
+            <View style={styles.bodySheet}>
+              <MotionView preset="up" delay={40} style={styles.emptyHeroCard}>
+                <View style={styles.emptyArt}>
+                  <View style={styles.emptyBlobA} />
+                  <View style={styles.emptyBlobB} />
+                  <View style={styles.emptyIconRing}>
+                    <Feather name="shopping-bag" size={34} color={colors.terracotta} />
+                  </View>
+                  <View style={styles.emptyBadge}>
+                    <Feather name="sun" size={12} color={colors.gold} />
+                    <Text style={styles.emptyBadgeText}>Marché Doré</Text>
+                  </View>
                 </View>
-                <View style={styles.emptyBadge}>
-                  <Feather name="sun" size={12} color={colors.gold} />
-                  <Text style={styles.emptyBadgeText}>Marché Doré</Text>
-                </View>
-              </View>
-              <Text style={styles.emptyTitle}>Votre panier attend{'\n'}ses premiers frais</Text>
-              <Text style={styles.emptySub}>
-                Composez une commande en quelques taps — fruits du jour, viandes, boissons et plus encore.
-              </Text>
-              <PressScale style={styles.emptyCta} onPress={() => navigateTab(tabPaths.home)} scaleTo={0.97}>
-                <LinearGradient
-                  colors={['#c84b31', '#a83c26']}
-                  start={{ x: 0, y: 0 }}
-                  end={{ x: 1, y: 0 }}
-                  style={styles.emptyCtaGradient}>
-                  <Feather name="compass" size={16} color={colors.white} />
-                  <Text style={styles.emptyCtaText}>Découvrir les produits</Text>
-                </LinearGradient>
-              </PressScale>
-              <Pressable style={styles.emptySecondary} onPress={() => navigateTab(tabPaths.search)}>
-                <Feather name="search" size={15} color={colors.gold} />
-                <Text style={styles.emptySecondaryText}>Rechercher un produit</Text>
-              </Pressable>
-            </MotionView>
-
-            <View style={styles.emptyPerks}>
-              <View style={styles.emptyPerk}>
-                <Feather name="truck" size={15} color={colors.gold} />
-                <Text style={styles.emptyPerkText}>Livraison rapide</Text>
-              </View>
-              <View style={styles.emptyPerk}>
-                <Feather name="shield" size={15} color={colors.green} />
-                <Text style={styles.emptyPerkText}>Qualité garantie</Text>
-              </View>
-              <View style={styles.emptyPerk}>
-                <Feather name="refresh-cw" size={15} color={colors.terracotta} />
-                <Text style={styles.emptyPerkText}>Frais du jour</Text>
-              </View>
-            </View>
-
-            <View style={styles.emptySection}>
-              <View style={styles.emptySectionHead}>
-                <Text style={styles.emptySectionTitle}>Rayons du moment</Text>
-                <Pressable onPress={() => navigateTab(tabPaths.explore)}>
-                  <Text style={styles.emptySectionLink}>Tout voir</Text>
+                <Text style={styles.emptyTitle}>Votre panier attend{'\n'}ses premiers frais</Text>
+                <Text style={styles.emptySub}>
+                  Composez une commande en quelques taps — fruits du jour, viandes, boissons et plus encore.
+                </Text>
+                <PressScale style={styles.emptyCta} onPress={() => navigateTab(tabPaths.home)} scaleTo={0.97}>
+                  <LinearGradient
+                    colors={['#c84b31', '#a83c26']}
+                    start={{ x: 0, y: 0 }}
+                    end={{ x: 1, y: 0 }}
+                    style={styles.emptyCtaGradient}>
+                    <Feather name="compass" size={16} color={colors.white} />
+                    <Text style={styles.emptyCtaText}>Découvrir les produits</Text>
+                  </LinearGradient>
+                </PressScale>
+                <Pressable style={styles.emptySecondary} onPress={() => router.push('/search')}>
+                  <Feather name="search" size={15} color={colors.gold} />
+                  <Text style={styles.emptySecondaryText}>Rechercher un produit</Text>
                 </Pressable>
-              </View>
-              <ScrollView
-                horizontal
-                showsHorizontalScrollIndicator={false}
-                contentContainerStyle={styles.emptyCatsRow}>
-                {emptyCategories.map((cat) => (
-                  <Pressable
-                    key={cat.id}
-                    style={styles.emptyCat}
-                    onPress={() => router.push(chipRoute(cat))}>
-                    <AppImage source={cat.image} frameStyle={styles.emptyCatImg} />
-                    <Text style={styles.emptyCatLabel} numberOfLines={1}>
-                      {cat.label}
-                    </Text>
-                  </Pressable>
-                ))}
-              </ScrollView>
-            </View>
+              </MotionView>
 
-            <View style={styles.emptySection}>
-              <View style={styles.emptySectionHead}>
-                <Text style={styles.emptySectionTitle}>Idées pour démarrer</Text>
-                <Text style={styles.emptySectionMeta}>Sélection du jour</Text>
+              <View style={styles.emptyPerks}>
+                <View style={styles.emptyPerk}>
+                  <Feather name="truck" size={15} color={colors.gold} />
+                  <Text style={styles.emptyPerkText}>Livraison rapide</Text>
+                </View>
+                <View style={styles.emptyPerk}>
+                  <Feather name="shield" size={15} color={colors.green} />
+                  <Text style={styles.emptyPerkText}>Qualité garantie</Text>
+                </View>
+                <View style={styles.emptyPerk}>
+                  <Feather name="refresh-cw" size={15} color={colors.terracotta} />
+                  <Text style={styles.emptyPerkText}>Frais du jour</Text>
+                </View>
               </View>
-              <ScrollView
-                horizontal
-                showsHorizontalScrollIndicator={false}
-                contentContainerStyle={styles.emptyProductsRow}>
-                {emptySuggestions.map((product, index) => (
-                  <ProductCard
-                    key={product.id}
-                    product={product}
-                    width={148}
-                    imageHeight={118}
-                    compact
-                    index={index}
-                    animate={index < 4}
-                  />
-                ))}
-              </ScrollView>
+
+              <View style={styles.emptySection}>
+                <View style={styles.emptySectionHead}>
+                  <Text style={styles.emptySectionTitle}>Rayons du moment</Text>
+                  <Pressable onPress={() => navigateTab(tabPaths.explore)}>
+                    <Text style={styles.emptySectionLink}>Tout voir</Text>
+                  </Pressable>
+                </View>
+                <ScrollView
+                  horizontal
+                  showsHorizontalScrollIndicator={false}
+                  contentContainerStyle={styles.emptyCatsRow}>
+                  {emptyCategories.map((cat) => (
+                    <Pressable
+                      key={cat.id}
+                      style={styles.emptyCat}
+                      onPress={() => router.push(chipRoute(cat))}>
+                      <AppImage source={cat.image} frameStyle={styles.emptyCatImg} />
+                      <Text style={styles.emptyCatLabel} numberOfLines={1}>
+                        {cat.label}
+                      </Text>
+                    </Pressable>
+                  ))}
+                </ScrollView>
+              </View>
+
+              <View style={styles.emptySection}>
+                <View style={styles.emptySectionHead}>
+                  <Text style={styles.emptySectionTitle}>Idées pour démarrer</Text>
+                  <Text style={styles.emptySectionMeta}>Sélection du jour</Text>
+                </View>
+                <ScrollView
+                  horizontal
+                  showsHorizontalScrollIndicator={false}
+                  contentContainerStyle={styles.emptyProductsRow}>
+                  {emptySuggestions.map((product, index) => (
+                    <ProductCard
+                      key={product.id}
+                      product={product}
+                      width={148}
+                      imageHeight={118}
+                      compact
+                      index={index}
+                      animate={index < 4}
+                    />
+                  ))}
+                </ScrollView>
+              </View>
             </View>
           </ScrollView>
         ) : (
           <View style={styles.flex}>
             <ScrollView
-              style={styles.flex}
-              contentContainerStyle={styles.content}
+              style={styles.scrollLayer}
+              contentContainerStyle={[
+                styles.content,
+                { paddingTop: Math.max(0, heroHeight - HERO_OVERLAP) },
+              ]}
               showsVerticalScrollIndicator={false}
               keyboardShouldPersistTaps="handled">
               <View style={styles.bodySheet}>
@@ -378,7 +418,7 @@ function CartScreen() {
                   </View>
                   <View style={styles.deliveryText}>
                     <Text style={styles.deliveryLabel}>Livraison à</Text>
-                    <Text style={styles.deliveryAddress}>Rue 23, Dakar Plateau</Text>
+                    <Text style={styles.deliveryAddress}>Rue 12, Ganhi</Text>
                     <Text style={styles.deliveryEta}>Demain, 14h – 16h · {formatFcfa(delivery)}</Text>
                   </View>
                   <Feather name="chevron-right" size={18} color={colors.placeholder} />
@@ -495,7 +535,34 @@ function CartScreen() {
                     </View>
                   ) : null}
                 </View>
+              </View>
+            </ScrollView>
 
+            <View style={styles.checkoutDock} pointerEvents="box-none">
+              <View style={styles.checkoutBar}>
+                <Pressable
+                  style={styles.checkoutSummary}
+                  onPress={() => setSummaryOpen((v) => !v)}
+                  accessibilityRole="button"
+                  accessibilityLabel={summaryOpen ? 'Masquer le détail' : 'Voir le détail du total'}>
+                  <View>
+                    <Text style={styles.checkoutLabel}>Total à payer</Text>
+                    <View style={styles.checkoutTotalRow}>
+                      <Text style={styles.checkoutTotal}>{formatFcfa(total)}</Text>
+                      {listSubtotal + delivery > total ? (
+                        <Text style={styles.checkoutOld}>{formatFcfa(listSubtotal + delivery)}</Text>
+                      ) : null}
+                    </View>
+                  </View>
+                  <View style={styles.checkoutToggle}>
+                    <Text style={styles.checkoutToggleText}>{summaryOpen ? 'Masquer' : 'Détails'}</Text>
+                    <Feather
+                      name={summaryOpen ? 'chevron-down' : 'chevron-up'}
+                      size={15}
+                      color={colors.muted}
+                    />
+                  </View>
+                </Pressable>
                 {summaryOpen ? (
                   <View style={styles.inlineSummary}>
                     <SummaryRow label="Sous-total" value={formatFcfa(subtotal)} />
@@ -508,35 +575,24 @@ function CartScreen() {
                     ) : null}
                   </View>
                 ) : null}
+                <PressScale
+                  style={styles.checkoutBtn}
+                  onPress={() => router.push('/checkout')}
+                  scaleTo={0.98}
+                  accessibilityLabel={`Commander pour ${formatFcfa(total)}`}>
+                  <LinearGradient
+                    colors={['#e2931d', '#c98412']}
+                    start={{ x: 0, y: 0 }}
+                    end={{ x: 1, y: 0 }}
+                    style={styles.checkoutGradient}>
+                    <Text style={styles.checkoutBtnText}>Commander</Text>
+                    <View style={styles.checkoutBtnRight}>
+                      <Text style={styles.checkoutBtnPrice}>{formatFcfa(total)}</Text>
+                      <Feather name="arrow-right" size={17} color="#ffffff" />
+                    </View>
+                  </LinearGradient>
+                </PressScale>
               </View>
-            </ScrollView>
-
-            <View style={styles.checkoutBar}>
-              <Pressable style={styles.checkoutSummary} onPress={() => setSummaryOpen((v) => !v)}>
-                <View>
-                  <Text style={styles.checkoutLabel}>Total à payer</Text>
-                  <View style={styles.checkoutTotalRow}>
-                    <Text style={styles.checkoutTotal}>{formatFcfa(total)}</Text>
-                    {listSubtotal + delivery > total ? (
-                      <Text style={styles.checkoutOld}>{formatFcfa(listSubtotal + delivery)}</Text>
-                    ) : null}
-                  </View>
-                </View>
-                <View style={styles.checkoutToggle}>
-                  <Text style={styles.checkoutToggleText}>{summaryOpen ? 'Masquer' : 'Détails'}</Text>
-                  <Feather name={summaryOpen ? 'chevron-down' : 'chevron-up'} size={15} color={colors.muted} />
-                </View>
-              </Pressable>
-              <Pressable style={styles.checkoutBtn} onPress={() => router.push('/checkout')}>
-                <LinearGradient
-                  colors={['#e2931d', '#c98412']}
-                  start={{ x: 0, y: 0 }}
-                  end={{ x: 1, y: 0 }}
-                  style={styles.checkoutGradient}>
-                  <Text style={styles.checkoutBtnText}>Commander</Text>
-                  <Feather name="arrow-right" size={17} color={colors.white} />
-                </LinearGradient>
-              </Pressable>
             </View>
           </View>
         )}
@@ -547,66 +603,111 @@ function CartScreen() {
 
 export default memo(CartScreen);
 
-const CHECKOUT_BAR_HEIGHT = 124;
-
-const styles = StyleSheet.create({
+function createStyles(colors: AppColors) {
+  return StyleSheet.create({
   flex: { flex: 1 },
-  hero: {
-    paddingHorizontal: 20,
-    paddingTop: 10,
-    paddingBottom: 28,
+  heroBackdrop: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    zIndex: 0,
   },
-  header: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
+  scrollLayer: {
+    flex: 1,
+    zIndex: 1,
   },
-  headerLeft: { flexDirection: 'row', alignItems: 'center', gap: 10 },
-  title: { color: colors.text, fontSize: 28, letterSpacing: -0.4, ...displayFont('800') },
   countPill: {
-    minWidth: 26,
-    height: 26,
-    borderRadius: 13,
-    backgroundColor: 'rgba(255,255,255,0.85)',
+    minWidth: 28,
+    height: 28,
+    borderRadius: 14,
     borderWidth: 1,
-    borderColor: colors.border,
     alignItems: 'center',
     justifyContent: 'center',
     paddingHorizontal: 8,
   },
-  countPillText: { color: colors.gold, fontSize: 13, fontWeight: '800' },
+  countPillText: { fontSize: 13, fontWeight: '800' },
   continueBtn: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 2,
-    backgroundColor: 'rgba(255,255,255,0.85)',
     borderWidth: 1,
-    borderColor: colors.border,
     borderRadius: 999,
     paddingHorizontal: 12,
     paddingVertical: 8,
   },
-  continueText: { color: colors.gold, fontSize: 13, fontWeight: '700' },
-  heroSub: { color: colors.muted, fontSize: 13, fontWeight: '500', marginTop: 8 },
+  continueText: { fontSize: 13, fontWeight: '700' },
   bodySheet: {
-    marginTop: -14,
     backgroundColor: colors.bg,
     borderTopLeftRadius: 28,
     borderTopRightRadius: 28,
     paddingHorizontal: 20,
     paddingTop: 18,
     gap: 12,
+    minHeight: Dimensions.get('window').height,
   },
   content: {
-    paddingBottom: CHECKOUT_BAR_HEIGHT + tabBarClearance,
+    paddingBottom: tabBarClearance + 132,
   },
   emptyScroll: {
     paddingBottom: tabBarClearance + 24,
-    gap: 18,
+  },
+  checkoutDock: {
+    position: 'absolute',
+    left: 0,
+    right: 0,
+    bottom: 96,
+    zIndex: 30,
+    paddingHorizontal: 16,
+  },
+  checkoutBar: {
+    backgroundColor: colors.white,
+    borderWidth: 1,
+    borderColor: colors.border,
+    borderRadius: 22,
+    paddingHorizontal: 16,
+    paddingTop: 12,
+    paddingBottom: 12,
+    gap: 10,
+    shadowColor: '#1c1613',
+    shadowOffset: { width: 0, height: 8 },
+    shadowOpacity: 0.14,
+    shadowRadius: 18,
+    elevation: 10,
+  },
+  checkoutSummary: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+  },
+  checkoutLabel: { color: colors.muted, fontSize: 11, fontWeight: '600' },
+  checkoutTotalRow: { flexDirection: 'row', alignItems: 'baseline', gap: 8 },
+  checkoutTotal: { color: colors.text, fontSize: 22, fontWeight: '800' },
+  checkoutOld: {
+    color: colors.placeholder,
+    fontSize: 13,
+    fontWeight: '500',
+    textDecorationLine: 'line-through',
+  },
+  checkoutToggle: { flexDirection: 'row', alignItems: 'center', gap: 3 },
+  checkoutToggleText: { color: colors.muted, fontSize: 12, fontWeight: '600' },
+  checkoutBtn: { borderRadius: 14, overflow: 'hidden' },
+  checkoutGradient: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 12,
+    paddingVertical: 14,
+    paddingHorizontal: 18,
+  },
+  checkoutBtnText: { color: '#ffffff', fontSize: 15, fontWeight: '800' },
+  checkoutBtnRight: { flexDirection: 'row', alignItems: 'center', gap: 8 },
+  checkoutBtnPrice: {
+    color: '#ffffff',
+    fontSize: 15,
+    fontWeight: '700',
   },
   emptyHeroCard: {
-    marginHorizontal: 20,
-    marginTop: -8,
     backgroundColor: colors.white,
     borderRadius: 28,
     borderWidth: 1,
@@ -704,7 +805,6 @@ const styles = StyleSheet.create({
   emptyPerks: {
     flexDirection: 'row',
     gap: 8,
-    paddingHorizontal: 20,
   },
   emptyPerk: {
     flex: 1,
@@ -723,12 +823,11 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'baseline',
     justifyContent: 'space-between',
-    paddingHorizontal: 20,
   },
   emptySectionTitle: { color: colors.text, fontSize: 17, fontWeight: '800' },
   emptySectionLink: { color: colors.gold, fontSize: 13, fontWeight: '700' },
   emptySectionMeta: { color: colors.muted, fontSize: 12, fontWeight: '600' },
-  emptyCatsRow: { gap: 12, paddingHorizontal: 20 },
+  emptyCatsRow: { gap: 12, paddingRight: 4 },
   emptyCat: { width: 76, alignItems: 'center', gap: 8 },
   emptyCatImg: {
     width: 68,
@@ -739,7 +838,7 @@ const styles = StyleSheet.create({
     backgroundColor: colors.white,
   },
   emptyCatLabel: { color: colors.text, fontSize: 12, fontWeight: '600', textAlign: 'center' },
-  emptyProductsRow: { gap: 12, paddingHorizontal: 20, paddingBottom: 4 },
+  emptyProductsRow: { gap: 12, paddingRight: 4, paddingBottom: 4 },
   deliveryCard: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -963,59 +1062,14 @@ const styles = StyleSheet.create({
   promoOk: { flexDirection: 'row', alignItems: 'center', gap: 6 },
   promoOkText: { color: colors.green, fontSize: 13, fontWeight: '600' },
   inlineSummary: {
-    backgroundColor: colors.white,
-    borderWidth: 1,
-    borderColor: colors.border,
-    borderRadius: 16,
-    padding: 14,
-    gap: 10,
+    backgroundColor: colors.bg,
+    borderRadius: 14,
+    padding: 12,
+    gap: 8,
   },
   sumRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
   sumLabel: { color: colors.muted, fontSize: 14 },
   sumVal: { color: colors.text, fontWeight: '600', fontSize: 14 },
   sumValGreen: { color: colors.green },
-  checkoutBar: {
-    position: 'absolute',
-    left: 12,
-    right: 12,
-    bottom: tabBarClearance - 18,
-    backgroundColor: colors.white,
-    borderWidth: 1,
-    borderColor: colors.border,
-    borderRadius: 22,
-    paddingHorizontal: 16,
-    paddingTop: 12,
-    paddingBottom: 12,
-    gap: 10,
-    shadowColor: colors.text,
-    shadowOffset: { width: 0, height: 8 },
-    shadowOpacity: 0.1,
-    shadowRadius: 16,
-    elevation: 10,
-  },
-  checkoutSummary: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-  },
-  checkoutLabel: { color: colors.muted, fontSize: 11, fontWeight: '600' },
-  checkoutTotalRow: { flexDirection: 'row', alignItems: 'baseline', gap: 8 },
-  checkoutTotal: { color: colors.text, fontSize: 22, fontWeight: '800' },
-  checkoutOld: {
-    color: colors.placeholder,
-    fontSize: 13,
-    fontWeight: '500',
-    textDecorationLine: 'line-through',
-  },
-  checkoutToggle: { flexDirection: 'row', alignItems: 'center', gap: 3 },
-  checkoutToggleText: { color: colors.muted, fontSize: 12, fontWeight: '600' },
-  checkoutBtn: { borderRadius: 14, overflow: 'hidden' },
-  checkoutGradient: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: 8,
-    paddingVertical: 14,
-  },
-  checkoutBtnText: { color: colors.white, fontSize: 15, fontWeight: '800' },
 });
+}
