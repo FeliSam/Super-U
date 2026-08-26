@@ -1,5 +1,5 @@
 import { CartTotalFab, IconCircle, Page, ProductCard, Screen, SmartNavbar } from '@/components/ui';
-import { MotionView, PressScale } from '@/components/motion';
+import { PressScale } from '@/components/motion';
 import { ImagePager, type ImagePagerHandle } from '@/components/ImagePager';
 import { ImageViewer } from '@/components/ImageViewer';
 import { AppImage } from '@/components/AppImage';
@@ -19,6 +19,7 @@ import {
   type Product,
 } from '@/data/catalog';
 import { formatFcfa } from '@/lib/format';
+import { useExpandableSheet } from '@/lib/expandableSheet';
 import { navigateTab, tabPaths } from '@/lib/navigation';
 import { Feather } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
@@ -27,7 +28,6 @@ import { router, useLocalSearchParams } from 'expo-router';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   Alert,
-  Dimensions,
   NativeScrollEvent,
   NativeSyntheticEvent,
   Platform,
@@ -39,16 +39,16 @@ import {
   useWindowDimensions,
   View,
 } from 'react-native';
+import { Gesture, GestureDetector, GestureHandlerRootView } from 'react-native-gesture-handler';
 import Animated, {
   useAnimatedStyle,
   useSharedValue,
   withSequence,
-  withSpring } from 'react-native-reanimated';
+  withSpring,
+} from 'react-native-reanimated';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 const HERO_H = Math.round(432 * 1.08);
-const SHEET_RADIUS = 28;
-const SHEET_OVERLAP = 88;
 const GRID_IMAGE_HEIGHT = 168;
 
 function NutriRow({ label, value }: { label: string; value: string }) {
@@ -68,6 +68,23 @@ export default function ProductScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
   const product = getProduct(id);
   const insets = useSafeAreaInsets();
+  const { width: windowWidth } = useWindowDimensions();
+  const {
+    sheetMin,
+    sheetMax,
+    sheetAnimStyle,
+    sheetHandleGesture,
+    sheetPullDownGesture,
+    sheetScrollRef,
+    onSheetScroll,
+    onSheetScrollBeginDrag,
+    onSheetScrollEndDrag,
+    onFiltersScroll,
+  } = useExpandableSheet();
+  const sheetScrollGesture = useMemo(
+    () => Gesture.Simultaneous(sheetPullDownGesture, Gesture.Native()),
+    [sheetPullDownGesture],
+  );
   const { add, setQty: setCartQty, lines, count: cartCount, subtotal: cartSubtotal, listSubtotal: cartListSubtotal } =
     useCart();
   const { isFavorite, toggle } = useFavorites();
@@ -77,7 +94,6 @@ export default function ProductScreen() {
   const [heroIndex, setHeroIndex] = useState(0);
   const [justAdded, setJustAdded] = useState(false);
   const heroPagerRef = useRef<ImagePagerHandle>(null);
-  const { width: windowWidth } = useWindowDimensions();
   const cartQty = lines.find((l) => l.productId === id)?.qty ?? 0;
   const inCart = cartQty > 0;
   const similar = useMemo(() => similarProducts(id ?? ''), [id]);
@@ -118,8 +134,9 @@ export default function ProductScreen() {
     setDiscoverPages((pages) => Math.min(pages + 1, 3));
   }, []);
 
-  const onMainScroll = useCallback(
+  const onProductScroll = useCallback(
     (event: NativeSyntheticEvent<NativeScrollEvent>) => {
+      onSheetScroll(event);
       const { layoutMeasurement, contentOffset, contentSize } = event.nativeEvent;
       const nearBottom = layoutMeasurement.height + contentOffset.y >= contentSize.height - 320;
       if (!nearBottom || loadingDiscover.current) return;
@@ -129,8 +146,10 @@ export default function ProductScreen() {
         loadingDiscover.current = false;
       });
     },
-    [loadMoreDiscover],
+    [loadMoreDiscover, onSheetScroll],
   );
+
+  const footerPad = Math.max(14, insets.bottom + 8) + 76;
 
   if (!product) {
     return (
@@ -220,6 +239,7 @@ export default function ProductScreen() {
   return (
     <Screen>
       <Page style={styles.page} edgeToEdge>
+        <GestureHandlerRootView style={styles.flex}>
         <View style={[styles.heroBackdrop, { height: HERO_H }]} pointerEvents="box-none">
           <ImagePager
             ref={heroPagerRef}
@@ -235,7 +255,7 @@ export default function ProductScreen() {
               <Text style={styles.heroDiscountText}>{product.discount}</Text>
             </View>
           ) : null}
-          <View style={[styles.dots, { pointerEvents: 'box-none' }]}>
+          <View style={[styles.dots, { bottom: sheetMin + 16, pointerEvents: 'box-none' }]}>
             {gallery.map((_, i) => (
               <Pressable key={i} onPress={() => goToSlide(i)} hitSlop={8}>
                 <View style={[styles.dot, i === heroIndex && styles.dotOn]} />
@@ -284,31 +304,47 @@ export default function ProductScreen() {
           />
         </View>
 
-        <ScrollView
-          style={styles.scrollLayer}
-          contentContainerStyle={[
-            styles.scrollContent,
-            { paddingBottom: !inCart && cartSubtotal > 0 ? 180 : 120 },
-          ]}
-          showsVerticalScrollIndicator={false}
-          scrollEventThrottle={16}
-          onScroll={onMainScroll}
-          bounces
-          keyboardShouldPersistTaps="handled"
-          nestedScrollEnabled>
-          {/* Transparent gap over the hero — taps pass through to ImagePager. */}
-          <View style={{ height: HERO_H - SHEET_OVERLAP }} pointerEvents="box-none" />
-          <MotionView preset="up" delay={40} style={styles.body}>
-            <View style={styles.sheetHandle}>
+        <Animated.View style={[styles.sheet, { height: sheetMax }, sheetAnimStyle]}>
+          <GestureDetector gesture={sheetHandleGesture}>
+            <Animated.View
+              style={styles.sheetHandle}
+              accessibilityRole={Platform.OS === 'web' ? undefined : 'button'}
+              accessibilityLabel="Agrandir ou réduire la feuille"
+              accessibilityHint="Glisser pour redimensionner, toucher pour basculer">
               <View style={styles.sheetHandleBar} />
-            </View>
+            </Animated.View>
+          </GestureDetector>
 
+          <GestureDetector gesture={sheetScrollGesture}>
+          <ScrollView
+            ref={sheetScrollRef}
+            style={styles.sheetScroll}
+            contentContainerStyle={[
+              styles.sheetScrollContent,
+              { paddingBottom: !inCart && cartSubtotal > 0 ? footerPad + 60 : footerPad },
+            ]}
+            showsVerticalScrollIndicator={false}
+            bounces
+            overScrollMode="auto"
+            keyboardShouldPersistTaps="handled"
+            nestedScrollEnabled
+            scrollEventThrottle={16}
+            onScroll={onProductScroll}
+            onScrollBeginDrag={onSheetScrollBeginDrag}
+            onScrollEndDrag={onSheetScrollEndDrag}>
             {gallery.length > 0 ? (
               <ScrollView
                 horizontal
                 showsHorizontalScrollIndicator={false}
                 contentContainerStyle={styles.thumbRow}
-                style={styles.thumbScroll}>
+                style={styles.thumbScroll}
+                bounces={false}
+                nestedScrollEnabled
+                keyboardShouldPersistTaps="handled"
+                scrollEventThrottle={16}
+                onScroll={onFiltersScroll}
+                onScrollBeginDrag={onSheetScrollBeginDrag}
+                onMomentumScrollBegin={onSheetScrollBeginDrag}>
                 {gallery.map((src, i) => {
                   const on = i === heroIndex;
                   return (
@@ -509,8 +545,9 @@ export default function ProductScreen() {
               </View>
               <Text style={styles.feedHint}>Faites défiler pour voir plus de produits…</Text>
             </View>
-          </MotionView>
-        </ScrollView>
+          </ScrollView>
+          </GestureDetector>
+        </Animated.View>
 
         <ImageViewer
           visible={viewerOpen}
@@ -610,6 +647,7 @@ export default function ProductScreen() {
         {!inCart ? (
           <CartTotalFab bottom={Math.max(14, insets.bottom + 8) + 76} />
         ) : null}
+        </GestureHandlerRootView>
       </Page>
     </Screen>
   );
@@ -618,6 +656,7 @@ export default function ProductScreen() {
 function createStyles(colors: AppColors) {
   return StyleSheet.create({
   page: { flex: 1, backgroundColor: colors.bg },
+  flex: { flex: 1 },
   heroBackdrop: {
     position: 'absolute',
     top: 0,
@@ -627,12 +666,6 @@ function createStyles(colors: AppColors) {
     overflow: 'hidden',
     backgroundColor: colors.border,
   },
-  scrollLayer: {
-    flex: 1,
-    zIndex: 3,
-    backgroundColor: 'transparent',
-  },
-  scrollContent: { flexGrow: 1, paddingBottom: 120 },
   missing: { flex: 1, alignItems: 'center', justifyContent: 'center', gap: 12 },
   missingTitle: { color: colors.text, fontSize: 18, fontWeight: '700' },
   missingLink: { color: colors.gold, fontSize: 15, fontWeight: '700' },
@@ -648,7 +681,6 @@ function createStyles(colors: AppColors) {
   heroDiscountText: { color: '#ffffff', fontSize: 12, fontWeight: '800' },
   dots: {
     position: 'absolute',
-    bottom: SHEET_OVERLAP + 16,
     left: 0,
     right: 0,
     flexDirection: 'row',
@@ -680,18 +712,16 @@ function createStyles(colors: AppColors) {
     alignItems: 'center',
     gap: 8,
   },
-  body: {
+  sheet: {
+    position: 'absolute',
+    left: 0,
+    right: 0,
+    bottom: 0,
     zIndex: 4,
-    elevation: Platform.OS === 'web' ? undefined : 16,
     backgroundColor: colors.bg,
-    borderTopLeftRadius: SHEET_RADIUS,
-    borderTopRightRadius: SHEET_RADIUS,
-    paddingHorizontal: 20,
-    paddingTop: 10,
-    paddingBottom: 20,
-    gap: 14,
-    minHeight: Dimensions.get('window').height * 0.55,
-    position: 'relative' as const,
+    borderTopLeftRadius: 28,
+    borderTopRightRadius: 28,
+    paddingTop: 8,
     ...Platform.select({
       web: {
         boxShadow: '0 -12px 40px rgba(0,0,0,0.28)',
@@ -707,14 +737,30 @@ function createStyles(colors: AppColors) {
   sheetHandle: {
     alignItems: 'center',
     justifyContent: 'center',
-    paddingVertical: 6,
-    marginBottom: 2,
+    paddingVertical: 8,
+    zIndex: 8,
+    ...(Platform.OS === 'web'
+      ? ({ touchAction: 'none', userSelect: 'none', WebkitUserSelect: 'none', cursor: 'grab' } as object)
+      : {}),
   },
   sheetHandleBar: {
     width: 44,
     height: 4,
     borderRadius: 999,
     backgroundColor: colors.border,
+  },
+  sheetScroll: {
+    flex: 1,
+    minHeight: 0,
+    ...(Platform.OS === 'web'
+      ? ({ touchAction: 'pan-y', overscrollBehavior: 'contain' } as object)
+      : {}),
+  },
+  sheetScrollContent: {
+    flexGrow: 1,
+    gap: 14,
+    paddingHorizontal: 20,
+    paddingBottom: 20,
   },
   thumbScroll: { marginHorizontal: -4 },
   thumbRow: {

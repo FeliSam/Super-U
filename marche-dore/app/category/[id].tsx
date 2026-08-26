@@ -34,7 +34,7 @@ import {
   useWindowDimensions,
   View,
 } from 'react-native';
-import { GestureDetector, GestureHandlerRootView } from 'react-native-gesture-handler';
+import { Gesture, GestureDetector, GestureHandlerRootView } from 'react-native-gesture-handler';
 import Animated from 'react-native-reanimated';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
@@ -109,10 +109,17 @@ export default function CategoryScreen() {
     sheetMax,
     sheetAnimStyle,
     sheetHandleGesture,
+    sheetPullDownGesture,
+    sheetScrollRef,
     onSheetScroll,
     onSheetScrollBeginDrag,
+    onSheetScrollEndDrag,
     onFiltersScroll,
   } = useExpandableSheet();
+  const sheetScrollGesture = useMemo(
+    () => Gesture.Simultaneous(sheetPullDownGesture, Gesture.Native()),
+    [sheetPullDownGesture],
+  );
 
   const { id, filter } = useLocalSearchParams<{ id: string; filter?: string }>();
   const cat = exploreCategories.find((c) => c.id === id);
@@ -201,17 +208,20 @@ export default function CategoryScreen() {
               </Animated.View>
             </GestureDetector>
 
+            <GestureDetector gesture={sheetScrollGesture}>
             <ScrollView
+              ref={sheetScrollRef}
               style={styles.sheetScroll}
               contentContainerStyle={[styles.sheetScrollContent, { paddingBottom: fabBottom + 96 }]}
               showsVerticalScrollIndicator={false}
-              bounces={Platform.OS === 'ios'}
-              overScrollMode="never"
+              bounces
+              overScrollMode="auto"
               keyboardShouldPersistTaps="handled"
               nestedScrollEnabled
               scrollEventThrottle={16}
               onScroll={onSheetScroll}
-              onScrollBeginDrag={onSheetScrollBeginDrag}>
+              onScrollBeginDrag={onSheetScrollBeginDrag}
+              onScrollEndDrag={onSheetScrollEndDrag}>
               <ScrollView
                 horizontal
                 showsHorizontalScrollIndicator={false}
@@ -300,6 +310,7 @@ export default function CategoryScreen() {
                 </View>
               )}
             </ScrollView>
+            </GestureDetector>
 
             <CartTotalFab bottom={fabBottom} />
           </Animated.View>

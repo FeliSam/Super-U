@@ -66,28 +66,6 @@ export const conversations: Conversation[] = [
     orderId: 'MD-2024-0845',
   },
   {
-    id: 'order-0846',
-    kind: 'order',
-    name: 'Suivi commande #MD-2024-0846',
-    subtitle: 'Livrée · hier',
-    preview: 'Votre commande a bien été livrée. Merci et à bientôt !',
-    time: 'Hier',
-    unread: 0,
-    icon: 'package',
-    orderId: 'MD-2024-0846',
-  },
-  {
-    id: 'order-0844',
-    kind: 'order',
-    name: 'Suivi commande #MD-2024-0844',
-    subtitle: 'En préparation · aujourd’hui',
-    preview: 'Votre panier est en cours de préparation au magasin.',
-    time: 'Hier',
-    unread: 0,
-    icon: 'shopping-bag',
-    orderId: 'MD-2024-0844',
-  },
-  {
     id: 'courier-ibrahima',
     kind: 'courier',
     name: 'Ibrahima Sarr',
@@ -99,28 +77,6 @@ export const conversations: Conversation[] = [
     avatar,
     phone: '+229976667788',
     orderId: 'MD-2024-0842',
-  },
-  {
-    id: 'order-0840',
-    kind: 'order',
-    name: 'Suivi commande #MD-2024-0840',
-    subtitle: 'Livrée · lundi',
-    preview: 'Commande livrée. Laissez un avis pour gagner des points.',
-    time: 'Lundi',
-    unread: 0,
-    icon: 'package',
-    orderId: 'MD-2024-0840',
-  },
-  {
-    id: 'order-0838',
-    kind: 'order',
-    name: 'Suivi commande #MD-2024-0838',
-    subtitle: 'Remboursée · samedi',
-    preview: 'Le remboursement a été crédité sur Orange Money.',
-    time: 'Sam.',
-    unread: 0,
-    icon: 'refresh-cw',
-    orderId: 'MD-2024-0838',
   },
 ];
 
@@ -191,34 +147,6 @@ export const conversationThreads: Record<string, ChatMessage[]> = {
       time: '09:18',
     },
   ],
-  'order-0846': [
-    {
-      id: 'o1',
-      from: 'them',
-      text: 'Votre commande #MD-2024-0846 a été livrée hier à 15:42. Merci pour votre confiance !',
-      time: 'Hier',
-    },
-    {
-      id: 'o2',
-      from: 'me',
-      text: 'Parfait, tout est reçu. Merci !',
-      time: 'Hier',
-    },
-  ],
-  'order-0844': [
-    {
-      id: 'p1',
-      from: 'them',
-      text: 'Votre commande #MD-2024-0844 a été confirmée. Préparation en cours.',
-      time: 'Hier',
-    },
-    {
-      id: 'p2',
-      from: 'them',
-      text: 'Votre panier est en cours de préparation au magasin.',
-      time: 'Hier',
-    },
-  ],
   'courier-ibrahima': [
     {
       id: 'i1',
@@ -231,28 +159,6 @@ export const conversationThreads: Record<string, ChatMessage[]> = {
       from: 'me',
       text: 'Merci beaucoup !',
       time: '2 j',
-    },
-  ],
-  'order-0840': [
-    {
-      id: 'd1',
-      from: 'them',
-      text: 'Commande #MD-2024-0840 livrée lundi. Laissez un avis pour gagner des points fidélité.',
-      time: 'Lundi',
-    },
-  ],
-  'order-0838': [
-    {
-      id: 'r1',
-      from: 'them',
-      text: 'Votre demande de remboursement pour #MD-2024-0838 a été acceptée.',
-      time: 'Sam.',
-    },
-    {
-      id: 'r2',
-      from: 'them',
-      text: 'Le remboursement a été crédité sur Orange Money.',
-      time: 'Sam.',
     },
   ],
 };
@@ -271,6 +177,7 @@ export function getThread(id: string) {
   return conversationThreads[id] ?? [];
 }
 
+/** Static seed total — prefer `useChat().unreadTotal` for live badges. */
 export function unreadMessagesCount() {
   return conversations.reduce((sum, c) => sum + c.unread, 0);
 }

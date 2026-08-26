@@ -1,7 +1,7 @@
 import { colors as fallbackColors, fontFamilies, TAB_BAR_HEIGHT, tabBarBottomOffset } from '@/constants/theme';
 import { useCart } from '@/context/CartContext';
+import { useChat } from '@/context/ChatContext';
 import { useColors, useTheme } from '@/context/ThemeContext';
-import { unreadMessagesCount } from '@/data/messages';
 import { Feather } from '@expo/vector-icons';
 import { Tabs, usePathname } from 'expo-router';
 import { Platform, Pressable, StyleSheet, Text, View } from 'react-native';
@@ -59,8 +59,8 @@ function CartTabBarItem({ focused }: { focused: boolean }) {
 }
 
 function ChatTabBarItem({ focused }: { focused: boolean }) {
-  const unread = unreadMessagesCount();
-  return <TabBarItem icon="message-circle" label="Chat" focused={focused} badge={unread} />;
+  const { unreadTotal } = useChat();
+  return <TabBarItem icon="message-circle" label="Chat" focused={focused} badge={unreadTotal} />;
 }
 
 const keepTabMounted = {

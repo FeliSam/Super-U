@@ -1,17 +1,79 @@
 import { AppImage } from '@/components/AppImage';
-import { IconCircle, Page, Screen, TabHero } from '@/components/ui';
-import { displayFont, tabBarClearance, type AppColors } from '@/constants/theme';
-import { useColors } from '@/context/ThemeContext';
-import { conversations, type Conversation } from '@/data/messages';
+import { IconCircle, Page, Screen } from '@/components/ui';
+import { displayFont, heroChrome, tabBarClearance, type AppColors } from '@/constants/theme';
+import { useChat } from '@/context/ChatContext';
+import {
+  formatOrderId,
+  statusLabel,
+  useOrders,
+  type Order,
+  type OrderStatus,
+} from '@/context/OrdersContext';
+import { useColors, useTheme } from '@/context/ThemeContext';
+import { type Conversation } from '@/data/messages';
 import { avatar } from '@/data/catalog';
+import { formatFcfa } from '@/lib/format';
+import { useExpandableSheet } from '@/lib/expandableSheet';
 import { Feather } from '@expo/vector-icons';
+import { LinearGradient } from 'expo-linear-gradient';
 import { Href, router } from 'expo-router';
-import { useMemo, memo, useState } from 'react';
-import { Dimensions, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
-
-const HERO_OVERLAP = 28;
+import { useMemo, memo, useState, type ComponentProps } from 'react';
+import { Platform, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { Gesture, GestureDetector, GestureHandlerRootView } from 'react-native-gesture-handler';
+import Animated from 'react-native-reanimated';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 type InboxTab = 'messages' | 'orders';
+
+const ICON_BG = 'rgba(255,255,255,0.92)';
+
+function isActiveStatus(status: OrderStatus) {
+  return status === 'confirmed' || status === 'preparing' || status === 'shipping';
+}
+
+function orderTimeLabel(iso: string) {
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return '';
+  const now = new Date();
+  const startToday = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
+  const startThat = new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime();
+  const dayDiff = Math.round((startToday - startThat) / 86_400_000);
+  if (dayDiff <= 0) return d.toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' });
+  if (dayDiff === 1) return 'Hier';
+  if (dayDiff < 7) return d.toLocaleDateString('fr-FR', { weekday: 'short' });
+  return d.toLocaleDateString('fr-FR', { day: 'numeric', month: 'short' });
+}
+
+function orderPreview(order: Order) {
+  const label = formatOrderId(order.id);
+  switch (order.status) {
+    case 'confirmed':
+      return `${label} confirmée · ${order.itemCount} article${order.itemCount > 1 ? 's' : ''}`;
+    case 'preparing':
+      return `Préparation en cours chez ${order.storeName || 'Super U'}`;
+    case 'shipping':
+      return `${order.courierName || 'Votre livreur'} est en route`;
+    case 'delivered':
+      return `${label} livrée · ${formatFcfa(order.total)}`;
+    case 'cancelled':
+      return `${label} annulée`;
+  }
+}
+
+function orderIcon(status: OrderStatus): ComponentProps<typeof Feather>['name'] {
+  switch (status) {
+    case 'confirmed':
+      return 'check-circle';
+    case 'preparing':
+      return 'shopping-bag';
+    case 'shipping':
+      return 'truck';
+    case 'delivered':
+      return 'package';
+    case 'cancelled':
+      return 'x-circle';
+  }
+}
 
 function ConversationRow({ item }: { item: Conversation }) {
   const colors = useColors();
@@ -60,206 +122,275 @@ function ConversationRow({ item }: { item: Conversation }) {
   );
 }
 
-function ChatInboxScreen() {
+function OrderSuiviRow({ order }: { order: Order }) {
   const colors = useColors();
   const styles = useMemo(() => createStyles(colors), [colors]);
-  const [heroHeight, setHeroHeight] = useState(140);
+  const active = isActiveStatus(order.status);
+
+  return (
+    <Pressable
+      style={({ pressed }) => [styles.row, active && styles.rowUnread, pressed && styles.rowPressed]}
+      onPress={() =>
+        router.push((active ? `/tracking?id=${order.id}` : `/order/${order.id}`) as Href)
+      }>
+      <View style={styles.avatarWrap}>
+        <View style={styles.avatarFallback}>
+          <Feather name={orderIcon(order.status)} size={20} color={colors.gold} />
+        </View>
+      </View>
+      <View style={styles.rowBody}>
+        <View style={styles.rowTop}>
+          <Text style={[styles.rowName, active && styles.rowNameUnread]} numberOfLines={1}>
+            Suivi commande {formatOrderId(order.id)}
+          </Text>
+          <Text style={styles.rowTime}>{orderTimeLabel(order.createdAt)}</Text>
+        </View>
+        <Text style={styles.rowSub} numberOfLines={1}>
+          {statusLabel(order.status)} · {order.dayLabel}
+        </Text>
+        <Text style={[styles.rowPreview, active && styles.rowPreviewUnread]} numberOfLines={1}>
+          {orderPreview(order)}
+        </Text>
+      </View>
+      <Feather name="chevron-right" size={18} color={colors.placeholder} />
+    </Pressable>
+  );
+}
+
+function ChatInboxScreen() {
+  const { scheme } = useTheme();
+  const colors = useColors();
+  const chrome = useMemo(() => heroChrome(scheme), [scheme]);
+  const styles = useMemo(() => createStyles(colors), [colors]);
+  const insets = useSafeAreaInsets();
+  const { conversations } = useChat();
+  const { orders } = useOrders();
   const [tab, setTab] = useState<InboxTab>('messages');
 
-  const support = useMemo(() => conversations.find((c) => c.kind === 'support'), []);
+  const {
+    sheetMax,
+    sheetAnimStyle,
+    sheetHandleGesture,
+    sheetPullDownGesture,
+    sheetScrollRef,
+    onSheetScroll,
+    onSheetScrollBeginDrag,
+    onSheetScrollEndDrag,
+  } = useExpandableSheet({ initiallyExpanded: true });
+  const sheetScrollGesture = useMemo(
+    () => Gesture.Simultaneous(sheetPullDownGesture, Gesture.Native()),
+    [sheetPullDownGesture],
+  );
+
+  const support = useMemo(() => conversations.find((c) => c.kind === 'support'), [conversations]);
   const messageThreads = useMemo(
     () => conversations.filter((c) => c.kind === 'courier'),
-    [],
+    [conversations],
   );
-  const orderThreads = useMemo(
-    () => conversations.filter((c) => c.kind === 'order'),
-    [],
+  const orderList = orders;
+  const activeOrdersCount = useMemo(
+    () => orderList.filter((o) => isActiveStatus(o.status)).length,
+    [orderList],
   );
 
   const messagesUnread =
     (support?.unread ?? 0) + messageThreads.reduce((sum, c) => sum + c.unread, 0);
-  const ordersUnread = orderThreads.reduce((sum, c) => sum + c.unread, 0);
-
-  const heroSubtitle =
-    tab === 'messages'
-      ? messagesUnread > 0
-        ? `${messagesUnread} message${messagesUnread > 1 ? 's' : ''} non lu${messagesUnread > 1 ? 's' : ''}`
-        : 'Assistance et échanges avec vos livreurs'
-      : ordersUnread > 0
-        ? `${ordersUnread} mise${ordersUnread > 1 ? 's' : ''} à jour`
-        : 'Suivi et notifications de vos commandes';
 
   return (
     <Screen>
-      <Page style={styles.flex}>
-        <View
-          style={styles.heroBackdrop}
-          onLayout={(e) => setHeroHeight(e.nativeEvent.layout.height)}
-          pointerEvents="box-none">
-          <TabHero
-            title={tab === 'messages' ? 'Messages' : 'Suivi'}
-            subtitle={heroSubtitle}
-            right={
-              tab === 'messages' ? (
-                <IconCircle
-                  name="edit-3"
-                  variant="hero"
-                  accessibilityLabel="Contacter l’assistance"
-                  onPress={() => router.push('/chat/support' as Href)}
-                />
-              ) : (
-                <IconCircle
-                  name="package"
-                  variant="hero"
-                  accessibilityLabel="Voir mes commandes"
-                  onPress={() => router.push('/orders' as Href)}
-                />
-              )
-            }
-          />
-        </View>
+      <Page style={styles.flex} edgeToEdge>
+        <GestureHandlerRootView style={styles.flex}>
+          <View style={styles.hero} pointerEvents="box-none">
+            <LinearGradient colors={chrome.gradient} style={StyleSheet.absoluteFill} />
+            <View style={[styles.heroOrb, { backgroundColor: chrome.orb }]} />
 
-        <ScrollView
-          style={styles.scrollLayer}
-          contentContainerStyle={[
-            styles.scrollContent,
-            { paddingTop: Math.max(0, heroHeight - HERO_OVERLAP) },
-          ]}
-          showsVerticalScrollIndicator={false}>
-          <View style={styles.bodySheet}>
-            <View style={styles.menu}>
-              <Pressable
-                style={[styles.menuTab, tab === 'messages' && styles.menuTabOn]}
-                onPress={() => setTab('messages')}>
-                <Feather
-                  name="message-circle"
-                  size={15}
-                  color={tab === 'messages' ? colors.white : colors.muted}
-                />
-                <Text style={[styles.menuTabText, tab === 'messages' && styles.menuTabTextOn]}>
-                  Messages
-                </Text>
-                {messagesUnread > 0 ? (
-                  <View style={[styles.menuBadge, tab === 'messages' && styles.menuBadgeOn]}>
-                    <Text style={[styles.menuBadgeText, tab === 'messages' && styles.menuBadgeTextOn]}>
-                      {messagesUnread}
-                    </Text>
-                  </View>
-                ) : null}
-              </Pressable>
-              <Pressable
-                style={[styles.menuTab, tab === 'orders' && styles.menuTabOn]}
-                onPress={() => setTab('orders')}>
-                <Feather
-                  name="package"
-                  size={15}
-                  color={tab === 'orders' ? colors.white : colors.muted}
-                />
-                <Text style={[styles.menuTabText, tab === 'orders' && styles.menuTabTextOn]}>
-                  Suivi commande
-                </Text>
-                {ordersUnread > 0 ? (
-                  <View style={[styles.menuBadge, tab === 'orders' && styles.menuBadgeOn]}>
-                    <Text style={[styles.menuBadgeText, tab === 'orders' && styles.menuBadgeTextOn]}>
-                      {ordersUnread}
-                    </Text>
-                  </View>
-                ) : null}
-              </Pressable>
+            <View style={[styles.heroBar, { paddingTop: Math.max(10, insets.top + 6) }]}>
+              <Text style={[styles.heroTitle, { color: chrome.ink }]} numberOfLines={1}>
+                {tab === 'messages' ? 'Messages' : 'Suivi'}
+              </Text>
+              <IconCircle
+                name={tab === 'messages' ? 'edit-3' : 'package'}
+                bg={ICON_BG}
+                accessibilityLabel={
+                  tab === 'messages' ? 'Contacter l’assistance' : 'Voir mes commandes'
+                }
+                onPress={() => {
+                  if (tab === 'messages') router.push('/chat/support' as Href);
+                  else router.push('/orders' as Href);
+                }}
+              />
             </View>
-
-            {tab === 'messages' ? (
-              <>
-                {support ? (
-                  <Pressable
-                    style={styles.supportCard}
-                    onPress={() => router.push(`/chat/${support.id}` as Href)}>
-                    <View style={styles.supportIcon}>
-                      <Feather name="headphones" size={22} color="#ffffff" />
-                    </View>
-                    <View style={styles.supportText}>
-                      <Text style={styles.supportTitle}>Assistance Marché Doré</Text>
-                      <Text style={styles.supportSub}>Aide commandes, paiement, livraison · 7j/7</Text>
-                    </View>
-                    {support.unread > 0 ? (
-                      <View style={styles.unreadBadge}>
-                        <Text style={styles.unreadText}>{support.unread}</Text>
-                      </View>
-                    ) : (
-                      <Feather name="chevron-right" size={18} color={colors.placeholder} />
-                    )}
-                  </Pressable>
-                ) : null}
-
-                <View style={styles.sectionHead}>
-                  <Text style={styles.sectionTitle}>Livreurs</Text>
-                  <Text style={styles.sectionMeta}>{messageThreads.length}</Text>
-                </View>
-
-                {messageThreads.length > 0 ? (
-                  <View style={styles.list}>
-                    {messageThreads.map((item) => (
-                      <ConversationRow key={item.id} item={item} />
-                    ))}
-                  </View>
-                ) : (
-                  <View style={styles.emptyCard}>
-                    <Feather name="message-circle" size={22} color={colors.gold} />
-                    <Text style={styles.emptyTitle}>Aucun message livreur</Text>
-                    <Text style={styles.emptyText}>
-                      Vos livreurs apparaîtront ici dès qu’une commande est en route.
-                    </Text>
-                  </View>
-                )}
-
-                <View style={styles.tip}>
-                  <AppImage source={avatar} frameStyle={styles.tipAvatar} />
-                  <Text style={styles.tipText}>
-                    Votre livreur vous contacte ici dès qu’une commande est en préparation ou en route.
-                  </Text>
-                </View>
-              </>
-            ) : (
-              <>
-                <View style={styles.sectionHead}>
-                  <Text style={styles.sectionTitle}>Suivi de commande</Text>
-                  <Text style={styles.sectionMeta}>{orderThreads.length}</Text>
-                </View>
-
-                {orderThreads.length > 0 ? (
-                  <View style={styles.list}>
-                    {orderThreads.map((item) => (
-                      <ConversationRow key={item.id} item={item} />
-                    ))}
-                  </View>
-                ) : (
-                  <View style={styles.emptyCard}>
-                    <Feather name="package" size={22} color={colors.gold} />
-                    <Text style={styles.emptyTitle}>Aucun suivi</Text>
-                    <Text style={styles.emptyText}>
-                      Les mises à jour de vos commandes s’afficheront ici.
-                    </Text>
-                  </View>
-                )}
-
-                <Pressable style={styles.ordersLink} onPress={() => router.push('/orders' as Href)}>
-                  <Feather name="list" size={16} color={colors.gold} />
-                  <Text style={styles.ordersLinkText}>Voir toutes mes commandes</Text>
-                  <Feather name="chevron-right" size={16} color={colors.placeholder} />
-                </Pressable>
-
-                <View style={styles.tip}>
-                  <View style={styles.tipIcon}>
-                    <Feather name="bell" size={16} color={colors.gold} />
-                  </View>
-                  <Text style={styles.tipText}>
-                    Recevez ici les alertes de préparation, d’expédition et de livraison.
-                  </Text>
-                </View>
-              </>
-            )}
           </View>
-        </ScrollView>
+
+          <Animated.View
+            style={[
+              styles.sheet,
+              { height: sheetMax },
+              sheetAnimStyle,
+              { paddingBottom: Math.max(8, insets.bottom) },
+            ]}>
+            <GestureDetector gesture={sheetHandleGesture}>
+              <Animated.View
+                style={styles.sheetHandle}
+                accessibilityRole={Platform.OS === 'web' ? undefined : 'button'}
+                accessibilityLabel="Agrandir ou réduire la feuille"
+                accessibilityHint="Glisser pour redimensionner, toucher pour basculer">
+                <View style={styles.sheetHandleBar} />
+              </Animated.View>
+            </GestureDetector>
+
+            <GestureDetector gesture={sheetScrollGesture}>
+            <ScrollView
+              ref={sheetScrollRef}
+              style={styles.sheetScroll}
+              contentContainerStyle={[styles.sheetScrollContent, { paddingBottom: tabBarClearance }]}
+              showsVerticalScrollIndicator={false}
+              bounces
+              overScrollMode="auto"
+              keyboardShouldPersistTaps="handled"
+              scrollEventThrottle={16}
+              onScroll={onSheetScroll}
+              onScrollBeginDrag={onSheetScrollBeginDrag}
+              onScrollEndDrag={onSheetScrollEndDrag}>
+              <View style={styles.menu}>
+                <Pressable
+                  style={[styles.menuTab, tab === 'messages' && styles.menuTabOn]}
+                  onPress={() => setTab('messages')}>
+                  <Feather
+                    name="message-circle"
+                    size={15}
+                    color={tab === 'messages' ? colors.white : colors.muted}
+                  />
+                  <Text style={[styles.menuTabText, tab === 'messages' && styles.menuTabTextOn]}>
+                    Messages
+                  </Text>
+                  {messagesUnread > 0 ? (
+                    <View style={[styles.menuBadge, tab === 'messages' && styles.menuBadgeOn]}>
+                      <Text
+                        style={[styles.menuBadgeText, tab === 'messages' && styles.menuBadgeTextOn]}>
+                        {messagesUnread}
+                      </Text>
+                    </View>
+                  ) : null}
+                </Pressable>
+                <Pressable
+                  style={[styles.menuTab, tab === 'orders' && styles.menuTabOn]}
+                  onPress={() => setTab('orders')}>
+                  <Feather
+                    name="package"
+                    size={15}
+                    color={tab === 'orders' ? colors.white : colors.muted}
+                  />
+                  <Text style={[styles.menuTabText, tab === 'orders' && styles.menuTabTextOn]}>
+                    Suivi commande
+                  </Text>
+                  {activeOrdersCount > 0 ? (
+                    <View style={[styles.menuBadge, tab === 'orders' && styles.menuBadgeOn]}>
+                      <Text style={[styles.menuBadgeText, tab === 'orders' && styles.menuBadgeTextOn]}>
+                        {activeOrdersCount}
+                      </Text>
+                    </View>
+                  ) : null}
+                </Pressable>
+              </View>
+
+              {tab === 'messages' ? (
+                <>
+                  {support ? (
+                    <Pressable
+                      style={styles.supportCard}
+                      onPress={() => router.push(`/chat/${support.id}` as Href)}>
+                      <View style={styles.supportIcon}>
+                        <Feather name="headphones" size={22} color="#ffffff" />
+                      </View>
+                      <View style={styles.supportText}>
+                        <Text style={styles.supportTitle}>Assistance Marché Doré</Text>
+                        <Text style={styles.supportSub}>
+                          Aide commandes, paiement, livraison · 7j/7
+                        </Text>
+                      </View>
+                      {support.unread > 0 ? (
+                        <View style={styles.unreadBadge}>
+                          <Text style={styles.unreadText}>{support.unread}</Text>
+                        </View>
+                      ) : (
+                        <Feather name="chevron-right" size={18} color={colors.placeholder} />
+                      )}
+                    </Pressable>
+                  ) : null}
+
+                  <View style={styles.sectionHead}>
+                    <Text style={styles.sectionTitle}>Livreurs</Text>
+                    <Text style={styles.sectionMeta}>{messageThreads.length}</Text>
+                  </View>
+
+                  {messageThreads.length > 0 ? (
+                    <View style={styles.list}>
+                      {messageThreads.map((item) => (
+                        <ConversationRow key={item.id} item={item} />
+                      ))}
+                    </View>
+                  ) : (
+                    <View style={styles.emptyCard}>
+                      <Feather name="message-circle" size={22} color={colors.gold} />
+                      <Text style={styles.emptyTitle}>Aucun message livreur</Text>
+                      <Text style={styles.emptyText}>
+                        Vos livreurs apparaîtront ici dès qu’une commande est en route.
+                      </Text>
+                    </View>
+                  )}
+
+                  <View style={styles.tip}>
+                    <AppImage source={avatar} frameStyle={styles.tipAvatar} />
+                    <Text style={styles.tipText}>
+                      Votre livreur vous contacte ici dès qu’une commande est en préparation ou en
+                      route.
+                    </Text>
+                  </View>
+                </>
+              ) : (
+                <>
+                  <View style={styles.sectionHead}>
+                    <Text style={styles.sectionTitle}>Suivi de commande</Text>
+                    <Text style={styles.sectionMeta}>{orderList.length}</Text>
+                  </View>
+
+                  {orderList.length > 0 ? (
+                    <View style={styles.list}>
+                      {orderList.map((order) => (
+                        <OrderSuiviRow key={order.id} order={order} />
+                      ))}
+                    </View>
+                  ) : (
+                    <View style={styles.emptyCard}>
+                      <Feather name="package" size={22} color={colors.gold} />
+                      <Text style={styles.emptyTitle}>Aucune commande</Text>
+                      <Text style={styles.emptyText}>
+                        Vos commandes Marché Doré apparaîtront ici, comme sur votre profil.
+                      </Text>
+                    </View>
+                  )}
+
+                  <Pressable style={styles.ordersLink} onPress={() => router.push('/orders' as Href)}>
+                    <Feather name="list" size={16} color={colors.gold} />
+                    <Text style={styles.ordersLinkText}>Voir toutes mes commandes</Text>
+                    <Feather name="chevron-right" size={16} color={colors.placeholder} />
+                  </Pressable>
+
+                  <View style={styles.tip}>
+                    <View style={styles.tipIcon}>
+                      <Feather name="bell" size={16} color={colors.gold} />
+                    </View>
+                    <Text style={styles.tipText}>
+                      Recevez ici les alertes de préparation, d’expédition et de livraison.
+                    </Text>
+                  </View>
+                </>
+              )}
+            </ScrollView>
+            </GestureDetector>
+          </Animated.View>
+        </GestureHandlerRootView>
       </Page>
     </Screen>
   );
@@ -270,30 +401,98 @@ export default memo(ChatInboxScreen);
 function createStyles(colors: AppColors) {
   return StyleSheet.create({
     flex: { flex: 1 },
-    heroBackdrop: {
+    hero: {
+      ...StyleSheet.absoluteFill,
+    },
+    heroOrb: {
+      position: 'absolute',
+      top: -40,
+      right: -30,
+      width: 180,
+      height: 180,
+      borderRadius: 90,
+      opacity: 0.55,
+    },
+    heroBar: {
       position: 'absolute',
       top: 0,
       left: 0,
       right: 0,
-      zIndex: 0 },
-    scrollLayer: {
+      zIndex: 2,
+      flexDirection: 'row',
+      justifyContent: 'space-between',
+      alignItems: 'center',
+      paddingHorizontal: 16,
+      gap: 12,
+    },
+    heroTitle: {
+      ...displayFont('800'),
       flex: 1,
-      zIndex: 1 },
-    scrollContent: { paddingBottom: tabBarClearance },
-    bodySheet: {
+      fontSize: 28,
+      lineHeight: 34,
+      letterSpacing: -0.4,
+    },
+    sheet: {
+      position: 'absolute',
+      left: 0,
+      right: 0,
+      bottom: 0,
       backgroundColor: colors.bg,
       borderTopLeftRadius: 28,
       borderTopRightRadius: 28,
+      paddingTop: 8,
+      zIndex: 5,
+      overflow: 'hidden',
+      flexDirection: 'column',
+      ...Platform.select({
+        ios: {
+          shadowColor: '#1c1613',
+          shadowOffset: { width: 0, height: -4 },
+          shadowOpacity: 0.14,
+          shadowRadius: 16,
+        },
+        android: { elevation: 8 },
+        web: {
+          willChange: 'transform',
+          backfaceVisibility: 'hidden',
+        } as object,
+        default: {},
+      }),
+    },
+    sheetHandle: {
+      alignItems: 'center',
+      justifyContent: 'center',
+      paddingVertical: 8,
+      zIndex: 8,
+      ...(Platform.OS === 'web'
+        ? ({ touchAction: 'none', userSelect: 'none', WebkitUserSelect: 'none', cursor: 'grab' } as object)
+        : {}),
+    },
+    sheetHandleBar: {
+      width: 44,
+      height: 4,
+      borderRadius: 999,
+      backgroundColor: colors.border,
+    },
+    sheetScroll: {
+      flex: 1,
+      minHeight: 0,
+      ...(Platform.OS === 'web'
+        ? ({ touchAction: 'pan-y', overscrollBehavior: 'contain' } as object)
+        : {}),
+    },
+    sheetScrollContent: {
+      flexGrow: 1,
       paddingHorizontal: 20,
-      paddingTop: 20,
       gap: 14,
-      minHeight: Dimensions.get('window').height },
+    },
     menu: {
       flexDirection: 'row',
       gap: 8,
       backgroundColor: colors.white,
       borderRadius: 16,
-      padding: 5 },
+      padding: 5,
+    },
     menuTab: {
       flex: 1,
       flexDirection: 'row',
@@ -302,15 +501,19 @@ function createStyles(colors: AppColors) {
       gap: 6,
       paddingVertical: 11,
       paddingHorizontal: 8,
-      borderRadius: 12 },
+      borderRadius: 12,
+    },
     menuTabOn: {
-      backgroundColor: colors.terracotta },
+      backgroundColor: colors.terracotta,
+    },
     menuTabText: {
       color: colors.muted,
       fontSize: 13,
-      fontWeight: '700' },
+      fontWeight: '700',
+    },
     menuTabTextOn: {
-      color: '#ffffff' },
+      color: '#ffffff',
+    },
     menuBadge: {
       minWidth: 18,
       height: 18,
@@ -318,29 +521,35 @@ function createStyles(colors: AppColors) {
       backgroundColor: colors.cream,
       alignItems: 'center',
       justifyContent: 'center',
-      paddingHorizontal: 4 },
+      paddingHorizontal: 4,
+    },
     menuBadgeOn: {
-      backgroundColor: 'rgba(255,255,255,0.22)' },
+      backgroundColor: 'rgba(255,255,255,0.22)',
+    },
     menuBadgeText: {
       color: colors.terracotta,
       fontSize: 10,
-      fontWeight: '800' },
+      fontWeight: '800',
+    },
     menuBadgeTextOn: {
-      color: '#ffffff' },
+      color: '#ffffff',
+    },
     supportCard: {
       flexDirection: 'row',
       alignItems: 'center',
       gap: 12,
       backgroundColor: colors.white,
       borderRadius: 18,
-      padding: 14 },
+      padding: 14,
+    },
     supportIcon: {
       width: 48,
       height: 48,
       borderRadius: 16,
       backgroundColor: colors.terracotta,
       alignItems: 'center',
-      justifyContent: 'center' },
+      justifyContent: 'center',
+    },
     supportText: { flex: 1, gap: 3 },
     supportTitle: { color: colors.text, fontSize: 15, ...displayFont('700') },
     supportSub: { color: colors.muted, fontSize: 12 },
@@ -348,13 +557,15 @@ function createStyles(colors: AppColors) {
       flexDirection: 'row',
       alignItems: 'center',
       justifyContent: 'space-between',
-      marginTop: 4 },
+      marginTop: 4,
+    },
     sectionTitle: { color: colors.text, fontSize: 16, ...displayFont('700') },
     sectionMeta: { color: colors.muted, fontSize: 13, fontWeight: '600' },
     list: {
       backgroundColor: colors.white,
       borderRadius: 18,
-      overflow: 'hidden' },
+      overflow: 'hidden',
+    },
     row: {
       flexDirection: 'row',
       alignItems: 'center',
@@ -362,7 +573,8 @@ function createStyles(colors: AppColors) {
       paddingHorizontal: 14,
       paddingVertical: 13,
       borderBottomWidth: StyleSheet.hairlineWidth,
-      borderBottomColor: colors.border },
+      borderBottomColor: colors.border,
+    },
     rowUnread: { backgroundColor: colors.cream },
     rowPressed: { backgroundColor: colors.bg },
     avatarWrap: { position: 'relative' },
@@ -373,7 +585,8 @@ function createStyles(colors: AppColors) {
       borderRadius: 24,
       backgroundColor: colors.cream,
       alignItems: 'center',
-      justifyContent: 'center' },
+      justifyContent: 'center',
+    },
     avatarSupport: { backgroundColor: colors.terracotta },
     onlineDot: {
       position: 'absolute',
@@ -383,9 +596,15 @@ function createStyles(colors: AppColors) {
       height: 12,
       borderRadius: 6,
       backgroundColor: colors.green,
-      borderColor: colors.white },
+      borderColor: colors.white,
+    },
     rowBody: { flex: 1, gap: 2 },
-    rowTop: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 8 },
+    rowTop: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'space-between',
+      gap: 8,
+    },
     rowName: { flex: 1, color: colors.text, fontSize: 14, fontWeight: '600' },
     rowNameUnread: { fontWeight: '800' },
     rowTime: { color: colors.placeholder, fontSize: 11, fontWeight: '600' },
@@ -399,7 +618,8 @@ function createStyles(colors: AppColors) {
       backgroundColor: colors.terracotta,
       alignItems: 'center',
       justifyContent: 'center',
-      paddingHorizontal: 5 },
+      paddingHorizontal: 5,
+    },
     unreadText: { color: '#ffffff', fontSize: 11, fontWeight: '800' },
     emptyCard: {
       alignItems: 'center',
@@ -407,7 +627,8 @@ function createStyles(colors: AppColors) {
       backgroundColor: colors.white,
       borderRadius: 18,
       paddingVertical: 28,
-      paddingHorizontal: 20 },
+      paddingHorizontal: 20,
+    },
     emptyTitle: { color: colors.text, fontSize: 15, fontWeight: '700' },
     emptyText: { color: colors.muted, fontSize: 13, textAlign: 'center', lineHeight: 18 },
     ordersLink: {
@@ -417,7 +638,8 @@ function createStyles(colors: AppColors) {
       backgroundColor: colors.white,
       borderRadius: 16,
       paddingHorizontal: 14,
-      paddingVertical: 14 },
+      paddingVertical: 14,
+    },
     ordersLinkText: { flex: 1, color: colors.text, fontSize: 14, fontWeight: '700' },
     tip: {
       flexDirection: 'row',
@@ -425,7 +647,8 @@ function createStyles(colors: AppColors) {
       gap: 10,
       backgroundColor: colors.cream,
       borderRadius: 14,
-      padding: 12 },
+      padding: 12,
+    },
     tipAvatar: { width: 36, height: 36, borderRadius: 18 },
     tipIcon: {
       width: 36,
@@ -433,6 +656,8 @@ function createStyles(colors: AppColors) {
       borderRadius: 12,
       backgroundColor: colors.white,
       alignItems: 'center',
-      justifyContent: 'center' },
-    tipText: { flex: 1, color: colors.muted, fontSize: 12, lineHeight: 17 } });
+      justifyContent: 'center',
+    },
+    tipText: { flex: 1, color: colors.muted, fontSize: 12, lineHeight: 17 },
+  });
 }

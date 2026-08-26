@@ -29,7 +29,7 @@ import {
   Text,
   View,
 } from 'react-native';
-import { GestureDetector, GestureHandlerRootView } from 'react-native-gesture-handler';
+import { Gesture, GestureDetector, GestureHandlerRootView } from 'react-native-gesture-handler';
 import Animated from 'react-native-reanimated';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
@@ -89,9 +89,16 @@ function ProfileScreen() {
     sheetMax,
     sheetAnimStyle,
     sheetHandleGesture,
+    sheetPullDownGesture,
+    sheetScrollRef,
     onSheetScroll,
     onSheetScrollBeginDrag,
+    onSheetScrollEndDrag,
   } = useExpandableSheet();
+  const sheetScrollGesture = useMemo(
+    () => Gesture.Simultaneous(sheetPullDownGesture, Gesture.Native()),
+    [sheetPullDownGesture],
+  );
 
   const { count } = useCart();
   const { count: favoritesCount } = useFavorites();
@@ -292,9 +299,6 @@ function ProfileScreen() {
               ]}
               pointerEvents="none">
               <Text style={[styles.heroTitle, { color: chrome.ink }]}>Profil</Text>
-              <Text style={[styles.heroSub, { color: chrome.muted }]}>
-                Gérez votre compte, vos commandes et votre fidélité.
-              </Text>
             </View>
 
             <View style={[styles.heroIdentityWrap, { bottom: sheetMin + 20 }]} pointerEvents="box-none">
@@ -363,16 +367,19 @@ function ProfileScreen() {
               </Animated.View>
             </GestureDetector>
 
+            <GestureDetector gesture={sheetScrollGesture}>
             <ScrollView
+              ref={sheetScrollRef}
               style={styles.sheetScroll}
               contentContainerStyle={[styles.sheetScrollContent, { paddingBottom: tabBarClearance }]}
               showsVerticalScrollIndicator={false}
-              bounces={Platform.OS === 'ios'}
-              overScrollMode="never"
+              bounces
+              overScrollMode="auto"
               keyboardShouldPersistTaps="handled"
               scrollEventThrottle={16}
               onScroll={onSheetScroll}
-              onScrollBeginDrag={onSheetScrollBeginDrag}>
+              onScrollBeginDrag={onSheetScrollBeginDrag}
+              onScrollEndDrag={onSheetScrollEndDrag}>
               {activeOrder ? (
                 <Pressable
                   style={styles.activeOrder}
@@ -486,6 +493,7 @@ function ProfileScreen() {
                 {session?.email ? `${session.email} · ` : ''}Marché Doré · v1.0.0 · Cotonou, Bénin
               </Text>
             </ScrollView>
+            </GestureDetector>
           </Animated.View>
         </GestureHandlerRootView>
       </Page>
@@ -530,10 +538,6 @@ function createStyles(colors: AppColors) {
       fontSize: 28,
       lineHeight: 34,
       letterSpacing: -0.4,
-    },
-    heroSub: {
-      fontSize: 14,
-      fontWeight: '600',
     },
     heroIdentityWrap: {
       position: 'absolute',
