@@ -1,17 +1,21 @@
 import { AppImage } from '@/components/AppImage';
 import { useColors } from '@/context/ThemeContext';
-import { forwardRef, memo, useEffect, useImperativeHandle, useRef } from 'react';
-import {
-  Animated,
-  Image as RNImage,
-  type ImageSourcePropType,
-  PanResponder,
-  Platform,
-  Pressable,
-  View,
-  type StyleProp,
-  type ViewStyle,
-} from 'react-native';
+import { forwardRef, memo, useCallback, useEffect, useImperativeHandle, useRef } from 'react';
+import { type ImageSourcePropType, type StyleProp, type ViewStyle, View } from 'react-native';
+import { Gesture, GestureDetector, GestureHandlerRootView } from 'react-native-gesture-handler';
+import Animated, {
+  Easing,
+  cancelAnimation,
+  runOnJS,
+  useAnimatedStyle,
+  useSharedValue,
+  withTiming,
+} from 'react-native-reanimated';
+
+const SNAP = {
+  duration: 180,
+  easing: Easing.bezier(0.22, 1, 0.36, 1),
+} as const;
 
 function PagerImage({
   source,
@@ -25,18 +29,13 @@ function PagerImage({
   height: number;
 }) {
   const colors = useColors();
-  // RN Image is more reliable for the product hero on web (expo-image transitions can stick blank).
-  if (Platform.OS === 'web') {
-    return (
-      <RNImage
-        source={source}
-        style={{ width, height, backgroundColor: colors.border }}
-        resizeMode="cover"
-        accessibilityIgnoresInvertColors
-      />
-    );
-  }
-  return <AppImage source={source} recyclingKey={recyclingKey} frameStyle={{ width, height }} />;
+  return (
+    <AppImage
+      source={source}
+      recyclingKey={recyclingKey}
+      frameStyle={{ width, height, backgroundColor: colors.border }}
+    />
+  );
 }
 
 export type ImagePagerHandle = {
@@ -71,33 +70,40 @@ export const ImagePager = memo(
     ref,
   ) {
     const colors = useColors();
-    const translateX = useRef(new Animated.Value(0)).current;
-    const dragStart = useRef(0);
+    const translateX = useSharedValue(0);
+    const dragStart = useSharedValue(0);
+    const indexSV = useSharedValue(0);
+    const widthSV = useSharedValue(Math.max(1, width));
+    const lenSV = useSharedValue(images.length);
     const indexRef = useRef(0);
-    const widthRef = useRef(width);
-    const lenRef = useRef(images.length);
     const onIndexChangeRef = useRef(onIndexChange);
+    const onPressRef = useRef(onPress);
     onIndexChangeRef.current = onIndexChange;
+    onPressRef.current = onPress;
 
-    widthRef.current = width;
-    lenRef.current = images.length;
+    widthSV.value = Math.max(1, width);
+    lenSV.value = images.length;
 
-    const snapTo = (nextIndex: number, animated = true) => {
-      const w = Math.max(1, widthRef.current);
-      const clamped = Math.max(0, Math.min(lenRef.current - 1, nextIndex));
-      indexRef.current = clamped;
-      onIndexChangeRef.current?.(clamped);
-      if (animated) {
-        Animated.spring(translateX, {
-          toValue: -clamped * w,
-          useNativeDriver: true,
-          friction: 8,
-          tension: 70,
-        }).start();
-      } else {
-        translateX.setValue(-clamped * w);
-      }
-    };
+    const notifyIndex = useCallback((next: number) => {
+      indexRef.current = next;
+      onIndexChangeRef.current?.(next);
+    }, []);
+
+    const snapTo = useCallback(
+      (nextIndex: number, animated = true) => {
+        const w = Math.max(1, widthSV.value);
+        const clamped = Math.max(0, Math.min(Math.max(0, lenSV.value - 1), nextIndex));
+        indexSV.value = clamped;
+        notifyIndex(clamped);
+        const dest = -clamped * w;
+        if (animated) {
+          translateX.value = withTiming(dest, SNAP);
+        } else {
+          translateX.value = dest;
+        }
+      },
+      [indexSV, lenSV, notifyIndex, translateX, widthSV],
+    );
 
     useImperativeHandle(ref, () => ({
       goTo: (i: number) => snapTo(i, true),
@@ -105,99 +111,118 @@ export const ImagePager = memo(
 
     useEffect(() => {
       indexRef.current = 0;
-      translateX.setValue(0);
+      indexSV.value = 0;
+      translateX.value = 0;
       onIndexChangeRef.current?.(0);
-    }, [recyclingKeyPrefix, images.length, translateX]);
+    }, [recyclingKeyPrefix, images.length, indexSV, translateX]);
 
     useEffect(() => {
-      translateX.setValue(-indexRef.current * width);
+      translateX.value = -indexRef.current * width;
     }, [width, translateX]);
 
-    const panResponder = useRef(
-      PanResponder.create({
-        onStartShouldSetPanResponder: () => false,
-        onStartShouldSetPanResponderCapture: () => false,
-        onMoveShouldSetPanResponder: (_, g) => {
-          const ax = Math.abs(g.dx);
-          const ay = Math.abs(g.dy);
-          if (ax < 6 && ay < 6) return false;
-          return ax > ay * 1.2;
-        },
-        onMoveShouldSetPanResponderCapture: (_, g) => {
-          const ax = Math.abs(g.dx);
-          const ay = Math.abs(g.dy);
-          if (ax < 8 && ay < 8) return false;
-          return ax > ay * 1.35;
-        },
-        onPanResponderTerminationRequest: () => false,
-        onPanResponderGrant: () => {
-          translateX.stopAnimation((v) => {
-            dragStart.current = v;
-          });
-        },
-        onPanResponderMove: (_, g) => {
-          const w = widthRef.current;
-          const max = -Math.max(0, lenRef.current - 1) * w;
-          const next = Math.min(0, Math.max(max, dragStart.current + g.dx));
-          translateX.setValue(next);
-        },
-        onPanResponderRelease: (_, g) => {
-          const w = Math.max(1, widthRef.current);
-          const projected = dragStart.current + g.dx + g.vx * 90;
-          snapTo(Math.round(-projected / w), true);
-        },
-      }),
-    ).current;
+    const pan = Gesture.Pan()
+      .maxPointers(1)
+      .activeOffsetX([-6, 6])
+      .failOffsetY([-18, 18])
+      .onBegin(() => {
+        cancelAnimation(translateX);
+        dragStart.value = translateX.value;
+      })
+      .onUpdate((e) => {
+        const w = widthSV.value;
+        const max = -Math.max(0, lenSV.value - 1) * w;
+        const raw = dragStart.value + e.translationX;
+        if (raw > 0) {
+          translateX.value = raw * 0.22;
+        } else if (raw < max) {
+          translateX.value = max + (raw - max) * 0.22;
+        } else {
+          translateX.value = raw;
+        }
+      })
+      .onEnd((e) => {
+        const w = Math.max(1, widthSV.value);
+        const last = Math.max(0, lenSV.value - 1);
+        const current = indexSV.value;
+        const projected = translateX.value + e.velocityX * 0.16;
+        let next = Math.round(-projected / w);
+        if (e.velocityX < -550) next = current + 1;
+        else if (e.velocityX > 550) next = current - 1;
+        else if (e.translationX < -w * 0.12) next = current + 1;
+        else if (e.translationX > w * 0.12) next = current - 1;
+        next = Math.max(0, Math.min(last, next));
+        indexSV.value = next;
+        translateX.value = withTiming(-next * w, SNAP);
+        runOnJS(notifyIndex)(next);
+      });
+
+    const tap = Gesture.Tap().onEnd(() => {
+      const press = onPressRef.current;
+      if (press) runOnJS(press)();
+    });
+
+    const composed = Gesture.Exclusive(pan, tap);
+
+    const stripStyle = useAnimatedStyle(() => ({
+      transform: [{ translateX: translateX.value }],
+    }));
 
     if (width <= 0 || images.length === 0) {
       return <View style={[{ width: '100%', height, backgroundColor: colors.border }, style]} />;
     }
 
+    const pages = (
+      <Animated.View
+        style={[
+          {
+            flexDirection: 'row',
+            height,
+            width: width * images.length,
+          },
+          stripStyle,
+        ]}>
+        {images.map((src, i) => (
+          <View key={`${recyclingKeyPrefix}-${i}`} style={{ width, height }}>
+            <PagerImage
+              source={src}
+              recyclingKey={`${recyclingKeyPrefix}-${i}`}
+              width={width}
+              height={height}
+            />
+          </View>
+        ))}
+      </Animated.View>
+    );
+
     if (images.length === 1) {
       return (
-        <Pressable
-          onPress={onPress}
-          accessibilityRole="imagebutton"
-          accessibilityLabel="Agrandir les photos"
-          style={[{ width, height, overflow: 'hidden' }, style]}>
-          <PagerImage
-            source={images[0]}
-            recyclingKey={`${recyclingKeyPrefix}-0`}
-            width={width}
-            height={height}
-          />
-        </Pressable>
+        <GestureHandlerRootView style={[{ width, height, overflow: 'hidden' }, style]}>
+          <GestureDetector gesture={tap}>
+            <Animated.View
+              accessible
+              accessibilityRole="imagebutton"
+              accessibilityLabel="Agrandir les photos"
+              style={{ width, height }}>
+              {pages}
+            </Animated.View>
+          </GestureDetector>
+        </GestureHandlerRootView>
       );
     }
 
     return (
-      <View
-        style={[{ width, height, overflow: 'hidden', backgroundColor: colors.border }, style]}
-        {...panResponder.panHandlers}>
-        <Animated.View
-          style={{
-            flexDirection: 'row',
-            height,
-            width: width * images.length,
-            transform: [{ translateX }],
-          }}>
-          {images.map((src, i) => (
-            <Pressable
-              key={`${recyclingKeyPrefix}-${i}`}
-              onPress={onPress}
-              accessibilityRole="imagebutton"
-              accessibilityLabel="Agrandir les photos"
-              style={{ width, height }}>
-              <PagerImage
-                source={src}
-                recyclingKey={`${recyclingKeyPrefix}-${i}`}
-                width={width}
-                height={height}
-              />
-            </Pressable>
-          ))}
-        </Animated.View>
-      </View>
+      <GestureHandlerRootView
+        style={[{ width, height, overflow: 'hidden', backgroundColor: colors.border }, style]}>
+        <GestureDetector gesture={composed}>
+          <Animated.View
+            accessible
+            accessibilityRole="adjustable"
+            accessibilityLabel="Photos du produit"
+            style={{ width, height }}>
+            {pages}
+          </Animated.View>
+        </GestureDetector>
+      </GestureHandlerRootView>
     );
   }),
 );

@@ -153,8 +153,8 @@ export default function TabLayout() {
           tabBarIcon: ({ focused }) => <TabBarItem icon="user" label="Profil" focused={focused} />,
         }}
       />
-      {/* Search lives on the root stack (`/search`), not in the tab bar. */}
-      <Tabs.Screen name="search" options={{ href: null, title: 'Rechercher' }} />
+      {/* Search lives on the root stack (`/search`). Keep lazy so it does not mount (and steal keyboard) on home. */}
+      <Tabs.Screen name="search" options={{ href: null, title: 'Rechercher', lazy: true }} />
     </Tabs>
   );
 }

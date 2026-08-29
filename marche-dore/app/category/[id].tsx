@@ -1,6 +1,6 @@
 import { AppImage } from '@/components/AppImage';
 import { EmptyStateHero } from '@/components/EmptyStateHero';
-import { MotionView, PressScale } from '@/components/motion';
+import { PressScale } from '@/components/motion';
 import {
   CartTotalFab,
   IconCircle,
@@ -19,7 +19,7 @@ import {
   type Product,
 } from '@/data/catalog';
 import { openSearchScreen } from '@/lib/searchNav';
-import { useExpandableSheet } from '@/lib/expandableSheet';
+import { useExpandableSheet, SHEET_MIN_RATIO } from '@/lib/expandableSheet';
 import { Feather } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
 import { router, useLocalSearchParams } from 'expo-router';
@@ -34,7 +34,7 @@ import {
   useWindowDimensions,
   View,
 } from 'react-native';
-import { Gesture, GestureDetector, GestureHandlerRootView } from 'react-native-gesture-handler';
+import { GestureDetector, GestureHandlerRootView } from 'react-native-gesture-handler';
 import Animated from 'react-native-reanimated';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
@@ -56,7 +56,7 @@ function filterCategoryList(list: Product[], active: string) {
     return list.filter((p) => /mangue|banane|pomme|papaye|ananas|plantain/i.test(p.name));
   }
   if (active === 'Légumes') {
-    return list.filter((p) => /tomate|gombo|patate|carotte|gingembre/i.test(p.name));
+    return list.filter((p) => /tomate|gombo|patate|carotte|gingembre|légume|legume/i.test(p.name));
   }
   if (active === 'Locaux') {
     return list.filter((p) => p.badge === 'local' || /bénin|local|ferme/i.test(p.producer ?? ''));
@@ -76,6 +76,28 @@ function filterCategoryList(list: Product[], active: string) {
   if (active === 'Bâtonnets') {
     return list.filter((p) => /bâtonnet|batonnet/i.test(p.name));
   }
+  if (active === 'Riz') return list.filter((p) => /riz/i.test(p.name));
+  if (active === 'Attiéké') return list.filter((p) => /attiéké|attieke/i.test(p.name));
+  if (active === 'Farines') return list.filter((p) => /farine|semoule|gari/i.test(p.name));
+  if (active === 'Huiles') return list.filter((p) => /huile/i.test(p.name));
+  if (active === 'Sauces') return list.filter((p) => /sauce|concentré|mayonnaise|cube/i.test(p.name));
+  if (active === 'Pain') return list.filter((p) => /pain|baguette/i.test(p.name));
+  if (active === 'Viennoiserie') return list.filter((p) => /croissant|brioche/i.test(p.name));
+  if (active === 'Salé') return list.filter((p) => /chip|cacahu/i.test(p.name));
+  if (active === 'Sucré') return list.filter((p) => /biscuit/i.test(p.name));
+  if (active === 'Café') return list.filter((p) => /café|cafe/i.test(p.name));
+  if (active === 'Thé') return list.filter((p) => /thé|the |kinkeliba/i.test(p.name));
+  if (active === 'Plats') return list.filter((p) => /pizza|filet/i.test(p.name));
+  if (active === 'Poisson') return list.filter((p) => /sardine|thon/i.test(p.name));
+  if (active === 'Bière') return list.filter((p) => /bière|biere/i.test(p.name));
+  if (active === 'Vin') return list.filter((p) => /vin/i.test(p.name));
+  if (active === 'Corps') return list.filter((p) => /savon|shampoing|papier/i.test(p.name));
+  if (active === 'Oral') return list.filter((p) => /dentifrice/i.test(p.name));
+  if (active === 'Entretien') return list.filter((p) => /lessive|vaisselle|javel|sac/i.test(p.name));
+  if (active === 'Couches') return list.filter((p) => /couche|lingette/i.test(p.name));
+  if (active === 'Repas') return list.filter((p) => /lait 2|petit.?pot/i.test(p.name));
+  if (active === 'Chien') return list.filter((p) => /chien/i.test(p.name));
+  if (active === 'Chat') return list.filter((p) => /chat|litière|litiere/i.test(p.name));
   return list;
 }
 
@@ -102,24 +124,25 @@ export default function CategoryScreen() {
   const styles = useMemo(() => createStyles(colors), [colors]);
   const insets = useSafeAreaInsets();
   const { width } = useWindowDimensions();
-  const cellWidth = Math.floor((width - 40 - 12) / 2);
+  const cellWidth = Math.floor((width - 40 - 2) / 2);
 
   const {
     sheetMin,
     sheetMax,
     sheetAnimStyle,
     sheetHandleGesture,
-    sheetPullDownGesture,
+    sheetScrollGesture,
     sheetScrollRef,
+    listScrollEnabled,
     onSheetScroll,
     onSheetScrollBeginDrag,
     onSheetScrollEndDrag,
     onFiltersScroll,
-  } = useExpandableSheet();
-  const sheetScrollGesture = useMemo(
-    () => Gesture.Simultaneous(sheetPullDownGesture, Gesture.Native()),
-    [sheetPullDownGesture],
-  );
+    onSheetWheel,
+  } = useExpandableSheet({
+    minRatio: SHEET_MIN_RATIO * 0.7,
+    lockCollapseToHandle: true,
+  });
 
   const { id, filter } = useLocalSearchParams<{ id: string; filter?: string }>();
   const cat = exploreCategories.find((c) => c.id === id);
@@ -171,13 +194,13 @@ export default function CategoryScreen() {
             <View style={[styles.heroBar, { paddingTop: Math.max(10, insets.top + 6) }]}>
               <IconCircle
                 name="chevron-left"
-                bg="rgba(255,255,255,0.92)"
+                variant="onPhoto"
                 accessibilityLabel="Retour"
                 onPress={() => router.back()}
               />
               <IconCircle
                 name="search"
-                bg="rgba(255,255,255,0.92)"
+                variant="onPhoto"
                 accessibilityLabel="Rechercher"
                 onPress={openSearchScreen}
               />
@@ -209,19 +232,8 @@ export default function CategoryScreen() {
             </GestureDetector>
 
             <GestureDetector gesture={sheetScrollGesture}>
-            <ScrollView
-              ref={sheetScrollRef}
-              style={styles.sheetScroll}
-              contentContainerStyle={[styles.sheetScrollContent, { paddingBottom: fabBottom + 96 }]}
-              showsVerticalScrollIndicator={false}
-              bounces
-              overScrollMode="auto"
-              keyboardShouldPersistTaps="handled"
-              nestedScrollEnabled
-              scrollEventThrottle={16}
-              onScroll={onSheetScroll}
-              onScrollBeginDrag={onSheetScrollBeginDrag}
-              onScrollEndDrag={onSheetScrollEndDrag}>
+            <Animated.View style={styles.sheetBody}>
+            <View style={styles.sheetChrome}>
               <ScrollView
                 horizontal
                 showsHorizontalScrollIndicator={false}
@@ -231,9 +243,7 @@ export default function CategoryScreen() {
                 nestedScrollEnabled
                 keyboardShouldPersistTaps="handled"
                 scrollEventThrottle={16}
-                onScroll={onFiltersScroll}
-                onScrollBeginDrag={onSheetScrollBeginDrag}
-                onMomentumScrollBegin={onSheetScrollBeginDrag}>
+                onScroll={onFiltersScroll}>
                 {filters.map((f) => {
                   const on = active === f;
                   return (
@@ -267,7 +277,23 @@ export default function CategoryScreen() {
                   <Feather name="chevron-down" size={13} color={colors.muted} />
                 </Pressable>
               </View>
+            </View>
 
+            <ScrollView
+              ref={sheetScrollRef}
+              style={styles.sheetScroll}
+              contentContainerStyle={[styles.sheetScrollContent, { paddingBottom: fabBottom + 96 }]}
+              showsVerticalScrollIndicator={false}
+              bounces
+              overScrollMode="auto"
+              keyboardShouldPersistTaps="handled"
+              nestedScrollEnabled
+              scrollEnabled={listScrollEnabled}
+              scrollEventThrottle={1}
+              onScroll={onSheetScroll}
+              onScrollBeginDrag={onSheetScrollBeginDrag}
+              onScrollEndDrag={onSheetScrollEndDrag}
+              onWheel={onSheetWheel}>
               {list.length === 0 ? (
                 <View style={styles.emptyWrap}>
                   <EmptyStateHero
@@ -292,11 +318,7 @@ export default function CategoryScreen() {
               ) : (
                 <View style={styles.grid}>
                   {list.map((p, i) => (
-                    <MotionView
-                      key={p.id}
-                      index={i}
-                      preset="up"
-                      style={[styles.cell, { width: cellWidth }]}>
+                    <View key={p.id} style={[styles.cell, { width: cellWidth }]}>
                       <ProductCard
                         product={p}
                         width="100%"
@@ -305,11 +327,12 @@ export default function CategoryScreen() {
                         index={i}
                         animate={false}
                       />
-                    </MotionView>
+                    </View>
                   ))}
                 </View>
               )}
             </ScrollView>
+            </Animated.View>
             </GestureDetector>
 
             <CartTotalFab bottom={fabBottom} />
@@ -433,7 +456,16 @@ function createStyles(colors: AppColors) {
       width: 44,
       height: 4,
       borderRadius: 999,
-      backgroundColor: colors.border,
+      backgroundColor: colors.grabber,
+    },
+    sheetBody: {
+      flex: 1,
+      minHeight: 0,
+    },
+    sheetChrome: {
+      backgroundColor: colors.bg,
+      paddingBottom: 6,
+      zIndex: 6,
     },
     sheetScroll: {
       flex: 1,
@@ -444,7 +476,6 @@ function createStyles(colors: AppColors) {
     },
     sheetScrollContent: {
       flexGrow: 1,
-      gap: 16,
     },
     filtersScroll: {
       flexGrow: 0,
@@ -497,7 +528,7 @@ function createStyles(colors: AppColors) {
       paddingHorizontal: 20,
       flexDirection: 'row',
       flexWrap: 'wrap',
-      gap: 12,
+      gap: 2,
     },
     cell: {},
     emptyWrap: {

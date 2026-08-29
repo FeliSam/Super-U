@@ -19,7 +19,9 @@ import { StoresProvider } from '@/context/StoresContext';
 import { ThemeProvider, useTheme } from '@/context/ThemeContext';
 import { UiStateProvider } from '@/context/UiStateContext';
 import { lightColors } from '@/constants/theme';
+import { LOCAL_DB_NAME, migrateLocalDb } from '@/lib/db';
 import { DarkTheme, DefaultTheme, Stack, ThemeProvider as NavigationThemeProvider } from 'expo-router';
+import { SQLiteProvider } from 'expo-sqlite';
 import { StatusBar } from 'expo-status-bar';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Platform, StatusBar as RNStatusBar, View } from 'react-native';
@@ -143,6 +145,12 @@ export default function RootLayout() {
 
   return (
     <ThemeProvider>
+      <SQLiteProvider
+        databaseName={LOCAL_DB_NAME}
+        onInit={migrateLocalDb}
+        onError={(error) => {
+          console.warn('[sqlite]', error);
+        }}>
       <View style={{ flex: 1, backgroundColor: lightColors.bg }}>
         <ThemedAppShell>
           <Stack.Screen name="(auth)" options={{ headerShown: false, animation: 'fade' }} />
@@ -160,9 +168,15 @@ export default function RootLayout() {
           <Stack.Screen name="contact" />
           <Stack.Screen name="legal" />
           <Stack.Screen name="about" />
-          <Stack.Screen name="product/[id]" />
+          <Stack.Screen
+            name="product/[id]"
+            options={{ animation: 'none', animationDuration: 0 }}
+          />
           <Stack.Screen name="product/reviews/[id]" />
-          <Stack.Screen name="category/[id]" />
+          <Stack.Screen
+            name="category/[id]"
+            options={{ animation: 'none', animationDuration: 0 }}
+          />
           <Stack.Screen name="checkout" />
           <Stack.Screen name="order-success" options={{ gestureEnabled: false }} />
           <Stack.Screen name="payment-setup/[id]" />
@@ -180,6 +194,7 @@ export default function RootLayout() {
         </ThemedAppShell>
         {!splashDone ? <AnimatedSplash onFinish={onSplashFinish} /> : null}
       </View>
+      </SQLiteProvider>
     </ThemeProvider>
   );
 }

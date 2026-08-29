@@ -178,13 +178,6 @@ function HomeScreen() {
         default: {} }) };
   });
 
-  const handleAnimStyle = useAnimatedStyle(() => ({
-    opacity: interpolate(scrollY.value, [0, 60], [1, 0.35], Extrapolation.CLAMP),
-    transform: [
-      {
-        scaleX: interpolate(scrollY.value, [0, 80], [1, 0.7], Extrapolation.CLAMP) },
-    ] }));
-
   /** Hero SmartNavbar — fades / lifts as the sheet rises. */
   const heroNavStyle = useAnimatedStyle(() => {
     const y = scrollY.value;
@@ -366,10 +359,6 @@ function HomeScreen() {
           scrollEventThrottle={16}
           onScroll={onScroll}>
           <Animated.View style={[styles.bodySheet, sheetAnimStyle]}>
-            <View style={styles.sheetHandle}>
-              <Animated.View style={[styles.sheetHandleBar, handleAnimStyle]} />
-            </View>
-
             <MotionView delay={40} preset="down">
               <SearchField onPress={openSearchScreen} />
             </MotionView>
@@ -426,11 +415,10 @@ function HomeScreen() {
                     <MotionView key={cat.id} index={i} preset="zoom" delay={Math.min(i * 40, 200)}>
                       <PressScale
                         style={styles.chipHit}
-                        onPress={() => setHomeActiveChipId(cat.id)}
+                        onPress={() => router.push(chipRoute(cat))}
                         scaleTo={0.94}
                         accessibilityRole="button"
-                        accessibilityState={{ selected: active }}
-                        accessibilityLabel={cat.label}>
+                        accessibilityLabel={`Ouvrir ${cat.label}`}>
                         <View style={[styles.chipRing, active && styles.chipRingActive]}>
                           <View style={[styles.chipThumb, active && styles.chipThumbActive]}>
                             <Image
@@ -589,7 +577,7 @@ function HomeScreen() {
                 </View>
               ) : null}
               <Text style={styles.feedHint}>Faites défiler pour voir plus de produits…</Text>
-            </View>
+    </View>
           </Animated.View>
         </Animated.ScrollView>
         <CartTotalFab aboveTabs />
@@ -695,12 +683,6 @@ function createStyles(colors: AppColors) {
           shadowRadius: 16 },
         android: { elevation: 8 },
         default: {} }) },
-    sheetHandle: { alignItems: 'center', paddingVertical: 8 },
-    sheetHandleBar: {
-      width: 44,
-      height: 4,
-      borderRadius: 999,
-      backgroundColor: colors.border },
     orderBanner: {
       flexDirection: 'row',
       alignItems: 'center',
@@ -720,7 +702,7 @@ function createStyles(colors: AppColors) {
     orderSub: { color: colors.muted, fontSize: 12 },
     quickGrid: { flexDirection: 'row', gap: 10 },
     quickTile: {
-      flex: 1,
+    flex: 1,
       alignItems: 'center',
       gap: 8,
       backgroundColor: colors.white,
@@ -802,8 +784,8 @@ function createStyles(colors: AppColors) {
       height: 20,
       borderRadius: 10,
       backgroundColor: colors.gold,
-      alignItems: 'center',
-      justifyContent: 'center',
+    alignItems: 'center',
+    justifyContent: 'center',
       borderWidth: 2,
       borderColor: colors.bg,
     },

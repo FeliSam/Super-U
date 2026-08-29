@@ -167,7 +167,7 @@ export default function ProductReviewsScreen() {
           behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
           <LinearGradient colors={['#f8e4c4', colors.cream, colors.bg]} style={styles.hero}>
             <View style={styles.header}>
-              <IconCircle name="chevron-left" onPress={() => router.back()} bg="rgba(255,255,255,0.9)" />
+              <IconCircle name="chevron-left" onPress={() => router.back()} variant="hero" />
               <View style={styles.headerCenter}>
                 <Text style={styles.title}>Avis clients</Text>
                 <Text style={styles.subtitle} numberOfLines={1}>

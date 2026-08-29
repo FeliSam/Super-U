@@ -1,4 +1,4 @@
-import { IconCircle, Screen, Page } from '@/components/ui';
+import { IconCircle, Page, Screen, SmartNavbar } from '@/components/ui';
 import { PressScale } from '@/components/motion';
 import { displayFont, heroChrome, tabBarClearance, type AppColors } from '@/constants/theme';
 import { useAddresses } from '@/context/AddressesContext';
@@ -29,7 +29,7 @@ import {
   Text,
   View,
 } from 'react-native';
-import { Gesture, GestureDetector, GestureHandlerRootView } from 'react-native-gesture-handler';
+import { GestureDetector, GestureHandlerRootView } from 'react-native-gesture-handler';
 import Animated from 'react-native-reanimated';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
@@ -49,7 +49,6 @@ type MenuSection = {
 };
 
 const LOYALTY_TARGET = 500;
-const ICON_BG = 'rgba(255,255,255,0.92)';
 
 function MenuRow({ item }: { item: MenuItem }) {
   const colors = useColors();
@@ -89,16 +88,14 @@ function ProfileScreen() {
     sheetMax,
     sheetAnimStyle,
     sheetHandleGesture,
-    sheetPullDownGesture,
+    sheetScrollGesture,
     sheetScrollRef,
+    listScrollEnabled,
     onSheetScroll,
     onSheetScrollBeginDrag,
     onSheetScrollEndDrag,
+    onSheetWheel,
   } = useExpandableSheet();
-  const sheetScrollGesture = useMemo(
-    () => Gesture.Simultaneous(sheetPullDownGesture, Gesture.Native()),
-    [sheetPullDownGesture],
-  );
 
   const { count } = useCart();
   const { count: favoritesCount } = useFavorites();
@@ -273,33 +270,8 @@ function ProfileScreen() {
       <Page style={styles.flex} edgeToEdge>
         <GestureHandlerRootView style={styles.flex}>
           <View style={styles.hero} pointerEvents="box-none">
-            <LinearGradient colors={chrome.gradient} style={StyleSheet.absoluteFill} />
-            <View style={[styles.heroOrb, { backgroundColor: chrome.orb }]} />
-
-            <View style={[styles.heroBar, { paddingTop: Math.max(10, insets.top + 6) }]}>
-              <IconCircle
-                name="bell"
-                bg={ICON_BG}
-                badge={unreadNotifications}
-                accessibilityLabel="Notifications"
-                onPress={() => router.push('/notifications')}
-              />
-              <IconCircle
-                name="settings"
-                bg={ICON_BG}
-                accessibilityLabel="Paramètres"
-                onPress={() => router.push('/account/settings')}
-              />
-            </View>
-
-            <View
-              style={[
-                styles.heroTitleBlock,
-                { paddingTop: Math.max(10, insets.top + 6) + 52 },
-              ]}
-              pointerEvents="none">
-              <Text style={[styles.heroTitle, { color: chrome.ink }]}>Profil</Text>
-            </View>
+            <LinearGradient colors={chrome.gradient} style={StyleSheet.absoluteFill} pointerEvents="none" />
+            <View style={[styles.heroOrb, { backgroundColor: chrome.orb }]} pointerEvents="none" />
 
             <View style={[styles.heroIdentityWrap, { bottom: sheetMin + 20 }]} pointerEvents="box-none">
               <View style={styles.heroIdentity}>
@@ -350,6 +322,30 @@ function ProfileScreen() {
             </View>
           </View>
 
+          <View style={styles.navbarFloat} pointerEvents="box-none">
+            <SmartNavbar
+              left={
+                <IconCircle
+                  name="bell"
+                  variant="hero"
+                  badge={unreadNotifications}
+                  accessibilityLabel="Notifications"
+                  onPress={() => router.push('/notifications')}
+                />
+              }
+              right={
+                <View style={styles.navActions}>
+                  <IconCircle
+                    name="settings"
+                    variant="hero"
+                    accessibilityLabel="Paramètres"
+                    onPress={() => router.push('/account/settings')}
+                  />
+                </View>
+              }
+            />
+          </View>
+
           <Animated.View
             style={[
               styles.sheet,
@@ -376,10 +372,12 @@ function ProfileScreen() {
               bounces
               overScrollMode="auto"
               keyboardShouldPersistTaps="handled"
-              scrollEventThrottle={16}
+              scrollEnabled={listScrollEnabled}
+              scrollEventThrottle={1}
               onScroll={onSheetScroll}
               onScrollBeginDrag={onSheetScrollBeginDrag}
-              onScrollEndDrag={onSheetScrollEndDrag}>
+              onScrollEndDrag={onSheetScrollEndDrag}
+              onWheel={onSheetWheel}>
               {activeOrder ? (
                 <Pressable
                   style={styles.activeOrder}
@@ -518,26 +516,19 @@ function createStyles(colors: AppColors) {
       borderRadius: 90,
       opacity: 0.55,
     },
-    heroBar: {
+    navbarFloat: {
       position: 'absolute',
       top: 0,
       left: 0,
       right: 0,
-      zIndex: 2,
-      flexDirection: 'row',
-      justifyContent: 'space-between',
-      paddingHorizontal: 16,
-    },
-    heroTitleBlock: {
+      zIndex: 10,
       paddingHorizontal: 20,
-      gap: 4,
-      zIndex: 1,
+      paddingTop: 8,
     },
-    heroTitle: {
-      ...displayFont('800'),
-      fontSize: 28,
-      lineHeight: 34,
-      letterSpacing: -0.4,
+    navActions: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 8,
     },
     heroIdentityWrap: {
       position: 'absolute',
@@ -578,7 +569,7 @@ function createStyles(colors: AppColors) {
       backgroundColor: colors.bg,
       borderTopLeftRadius: 28,
       borderTopRightRadius: 28,
-      paddingTop: 8,
+      paddingTop: 4,
       zIndex: 5,
       overflow: 'hidden',
       flexDirection: 'column',
@@ -607,10 +598,10 @@ function createStyles(colors: AppColors) {
         : {}),
     },
     sheetHandleBar: {
-      width: 44,
-      height: 4,
+      width: 48,
+      height: 5,
       borderRadius: 999,
-      backgroundColor: colors.border,
+      backgroundColor: colors.grabber,
     },
     sheetScroll: {
       flex: 1,

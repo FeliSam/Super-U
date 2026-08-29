@@ -1,5 +1,5 @@
 import { AppImage } from '@/components/AppImage';
-import { Page, ProductCard, Screen, TabHero } from '@/components/ui';
+import { IconCircle, Page, ProductCard, Screen, SmartNavbar, TabHero } from '@/components/ui';
 import { MotionView, PressScale } from '@/components/motion';
 import { displayFont, floatingAboveTabBar, heroChrome, tabBarClearance, type AppColors } from '@/constants/theme';
 import { useAddresses } from '@/context/AddressesContext';
@@ -265,7 +265,7 @@ function CartScreen() {
         <View
           style={styles.heroBackdrop}
           onLayout={(e) => setHeroHeight(e.nativeEvent.layout.height)}
-          pointerEvents="box-none">
+          pointerEvents="none">
           <TabHero
             title="Panier"
             subtitle={
@@ -273,8 +273,14 @@ function CartScreen() {
                 ? `${itemLabel} · Total ${formatFcfa(total)}`
                 : 'Ajoutez des produits pour démarrer votre commande.'
             }
+            navbar={<View style={styles.navbarSpacer} />}
+          />
+        </View>
+
+        <View style={styles.navbarFloat} pointerEvents="box-none">
+          <SmartNavbar
             right={
-              <>
+              <View style={styles.navActions}>
                 {count > 0 ? (
                   <PressScale
                     style={[
@@ -287,18 +293,30 @@ function CartScreen() {
                     <Text style={[styles.countPillText, { color: colors.gold }]}>{count}</Text>
                   </PressScale>
                 ) : null}
+                <IconCircle
+                  name="search"
+                  variant="hero"
+                  accessibilityLabel="Rechercher"
+                  onPress={openSearchScreen}
+                />
+                <IconCircle
+                  name="tag"
+                  variant="hero"
+                  accessibilityLabel="Promotions"
+                  onPress={() => router.push('/promotions')}
+                />
                 <PressScale
                   style={[
                     styles.continueBtn,
                     { backgroundColor: chrome.iconBg, borderColor: chrome.iconBorder },
                   ]}
-                  onPress={() => navigateTab(tabPaths.home)}
+                  onPress={() => navigateTab(tabPaths.explore)}
                   scaleTo={0.96}
                   accessibilityLabel="Continuer les achats">
                   <Text style={[styles.continueText, { color: chrome.ink }]}>Continuer</Text>
                   <Feather name="chevron-right" size={14} color={colors.gold} />
                 </PressScale>
-              </>
+              </View>
             }
           />
         </View>
@@ -328,7 +346,7 @@ function CartScreen() {
                 <Text style={styles.emptySub}>
                   Composez une commande en quelques taps — fruits du jour, viandes, boissons et plus encore.
                 </Text>
-                <PressScale style={styles.emptyCta} onPress={() => navigateTab(tabPaths.home)} scaleTo={0.97}>
+                <PressScale style={styles.emptyCta} onPress={() => navigateTab(tabPaths.explore)} scaleTo={0.97}>
                   <LinearGradient
                     colors={['#c84b31', '#a83c26']}
                     start={{ x: 0, y: 0 }}
@@ -345,18 +363,21 @@ function CartScreen() {
               </MotionView>
 
               <View style={styles.emptyPerks}>
-                <View style={styles.emptyPerk}>
+                <PressScale style={styles.emptyPerk} onPress={() => router.push('/tracking')} scaleTo={0.97}>
                   <Feather name="truck" size={15} color={colors.gold} />
                   <Text style={styles.emptyPerkText}>Livraison rapide</Text>
-                </View>
-                <View style={styles.emptyPerk}>
+                </PressScale>
+                <PressScale style={styles.emptyPerk} onPress={() => router.push('/about')} scaleTo={0.97}>
                   <Feather name="shield" size={15} color={colors.green} />
                   <Text style={styles.emptyPerkText}>Qualité garantie</Text>
-                </View>
-                <View style={styles.emptyPerk}>
+                </PressScale>
+                <PressScale
+                  style={styles.emptyPerk}
+                  onPress={() => router.push('/category/fruits-legumes')}
+                  scaleTo={0.97}>
                   <Feather name="refresh-cw" size={15} color={colors.terracotta} />
                   <Text style={styles.emptyPerkText}>Frais du jour</Text>
-                </View>
+                </PressScale>
               </View>
 
               <View style={styles.emptySection}>
@@ -371,15 +392,18 @@ function CartScreen() {
                   showsHorizontalScrollIndicator={false}
                   contentContainerStyle={styles.emptyCatsRow}>
                   {emptyCategories.map((cat) => (
-                    <Pressable
+                    <PressScale
                       key={cat.id}
                       style={styles.emptyCat}
-                      onPress={() => router.push(chipRoute(cat))}>
+                      onPress={() => router.push(chipRoute(cat))}
+                      scaleTo={0.96}
+                      accessibilityRole="button"
+                      accessibilityLabel={cat.label}>
                       <AppImage source={cat.image} frameStyle={styles.emptyCatImg} />
                       <Text style={styles.emptyCatLabel} numberOfLines={1}>
                         {cat.label}
                       </Text>
-                    </Pressable>
+                    </PressScale>
                   ))}
                 </ScrollView>
               </View>
@@ -621,6 +645,21 @@ function createStyles(colors: AppColors) {
     left: 0,
     right: 0,
     zIndex: 0 },
+  navbarFloat: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    zIndex: 10,
+    paddingHorizontal: 20,
+    paddingTop: 8 },
+  navbarSpacer: {
+    minHeight: 42,
+    marginBottom: 16 },
+  navActions: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8 },
   scrollLayer: {
     flex: 1,
     zIndex: 1 },

@@ -69,7 +69,8 @@ function SearchScreen() {
   });
 
   const handleAnimStyle = useAnimatedStyle(() => ({
-    opacity: interpolate(scrollY.value, [0, 60], [1, 0.35], Extrapolation.CLAMP),
+    opacity: interpolate(scrollY.value, [0, 60], [1, 0.7], Extrapolation.CLAMP),
+    backgroundColor: colors.grabber,
     transform: [
       {
         scaleX: interpolate(scrollY.value, [0, 80], [1, 0.7], Extrapolation.CLAMP) },
@@ -420,10 +421,10 @@ function createStyles(colors: AppColors) {
       justifyContent: 'center',
       paddingVertical: 8 },
     sheetHandleBar: {
-      width: 44,
-      height: 4,
+      width: 48,
+      height: 5,
       borderRadius: 999,
-      backgroundColor: colors.border },
+      backgroundColor: colors.grabber },
     filtersScroll: {
       flexGrow: 0,
       flexShrink: 0,

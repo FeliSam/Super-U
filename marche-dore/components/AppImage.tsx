@@ -3,13 +3,32 @@ import { imagePlaceholder } from '@/constants/media';
 import { useColors } from '@/context/ThemeContext';
 import { Image, type ImageProps } from 'expo-image';
 import { memo, useMemo } from 'react';
-import { Platform, StyleSheet, View, type StyleProp, type ViewStyle } from 'react-native';
+import {
+  Image as RNImage,
+  Platform,
+  StyleSheet,
+  View,
+  type ImageResizeMode,
+  type StyleProp,
+  type ViewStyle,
+} from 'react-native';
 
 type Props = ImageProps & {
   frameStyle?: StyleProp<ViewStyle>;
 };
 
-/** Catalog image with blurhash + solid frame placeholder. Local `require()` sources paint instantly. */
+/** Metro web packs `require()` as `{ uri, width, height }`, not a numeric module id. */
+function isBundledSource(source: ImageProps['source']): boolean {
+  if (source == null) return false;
+  if (typeof source === 'number') return true;
+  if (typeof source === 'string') return !/^https?:\/\//i.test(source);
+  if (Array.isArray(source)) return source.length > 0 && source.every(isBundledSource);
+  const uri = (source as { uri?: string }).uri;
+  if (!uri) return true;
+  return !/^https?:\/\//i.test(uri);
+}
+
+/** Catalog image with blurhash + solid frame placeholder. Local sources paint from cache. */
 export const AppImage = memo(function AppImage({
   style,
   frameStyle,
@@ -23,9 +42,24 @@ export const AppImage = memo(function AppImage({
 }: Props) {
   const colors = useColors();
   const styles = useMemo(() => createStyles(colors), [colors]);
-  const localAsset = typeof source === 'number';
-  // Bundled assets: no fade / no remote fetch — native feel.
-  const resolvedTransition = transition ?? (localAsset || Platform.OS === 'web' ? 0 : 120);
+  const bundled = isBundledSource(source);
+  const resolvedTransition = transition ?? (bundled || Platform.OS === 'web' ? 0 : 80);
+
+  if (Platform.OS === 'web' && bundled) {
+    const resizeMode: ImageResizeMode =
+      contentFit === 'contain' ? 'contain' : contentFit === 'fill' ? 'stretch' : 'cover';
+    return (
+      <View style={[styles.frame, frameStyle]}>
+        <RNImage
+          source={source as number}
+          style={[styles.image, style]}
+          resizeMode={resizeMode}
+          accessibilityIgnoresInvertColors
+          {...({ loading: 'eager', fetchPriority: 'high' } as object)}
+        />
+      </View>
+    );
+  }
 
   return (
     <View style={[styles.frame, frameStyle]}>
@@ -33,11 +67,12 @@ export const AppImage = memo(function AppImage({
         {...rest}
         source={source}
         style={[styles.image, style]}
-        placeholder={localAsset ? undefined : placeholder}
+        placeholder={bundled ? undefined : placeholder}
         placeholderContentFit={placeholderContentFit}
         transition={resolvedTransition}
         cachePolicy={cachePolicy}
         contentFit={contentFit}
+        priority="high"
       />
     </View>
   );

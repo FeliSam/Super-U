@@ -1,4 +1,5 @@
 import { ImageSourcePropType } from 'react-native';
+import { aisleProducts } from './aisleProducts';
 
 export type ProductBadge = 'nouveau' | 'local' | 'rupture';
 
@@ -55,7 +56,7 @@ export const products: Product[] = [
     unit: '500 g',
     price: 1500,
     image: require('../assets/images/catalog/gingembre.png'),
-    categoryId: 'epicerie',
+    categoryId: 'epices',
     inStock: false,
     badge: 'rupture',
   },
@@ -634,6 +635,7 @@ export const products: Product[] = [
     rating: 4.9,
     reviews: 84,
   },
+  ...aisleProducts,
 ];
 
 export const popularIds = ['tomates', 'bananes', 'gingembre'];
@@ -702,6 +704,9 @@ export const chips = [
   { id: 'boissons', label: 'Boissons', emoji: '🥤', categoryId: 'boissons' },
   { id: 'cuisine', label: 'Cuisinés', emoji: '🍲', categoryId: 'cuisine' },
   { id: 'glaces', label: 'Glaces', emoji: '🍦', categoryId: 'glaces' },
+  { id: 'epices', label: 'Épices', emoji: '🌶️', categoryId: 'epices' },
+  { id: 'feculents', label: 'Riz & farines', emoji: '🍚', categoryId: 'feculents' },
+  { id: 'petit-dej', label: 'Petit-déj', emoji: '🥣', categoryId: 'petit-dej' },
 ] as const;
 
 export type HomeChip = (typeof chips)[number];
@@ -719,7 +724,7 @@ function filterProductsByLabel(list: Product[], filter?: string) {
     return list.filter((p) => /mangue|banane|pomme|papaye|ananas|plantain/i.test(p.name));
   }
   if (filter === 'Légumes') {
-    return list.filter((p) => /tomate|gombo|patate|carotte|gingembre/i.test(p.name));
+    return list.filter((p) => /tomate|gombo|patate|carotte|gingembre|légume|legume/i.test(p.name));
   }
   return list;
 }
@@ -742,6 +747,9 @@ const homeCategoryImages: Record<HomeChip['id'], ImageSourcePropType> = {
   boissons: require('../assets/images/catalog/promo-boissons.png'),
   cuisine: require('../assets/images/catalog/cuisine-poulet-roti.png'),
   glaces: require('../assets/images/catalog/cat-glaces.png'),
+  epices: require('../assets/images/catalog/circle-epices.png'),
+  feculents: require('../assets/images/catalog/cuisine-riz.png'),
+  'petit-dej': require('../assets/images/catalog/miel.png'),
 };
 
 /** Crop zoom inside circular chip thumbs (1 = none). Wider scenes need more. */
@@ -754,6 +762,9 @@ const homeCategoryZoom: Record<HomeChip['id'], number> = {
   boissons: 1.5,
   cuisine: 1.4,
   glaces: 1.35,
+  epices: 1.4,
+  feculents: 1.35,
+  'petit-dej': 1.4,
 };
 
 export const homeCategories = chips.map((chip) => ({
@@ -765,39 +776,57 @@ export const homeCategories = chips.map((chip) => ({
 export const exploreCategories: ExploreCategory[] = [
   { id: 'fruits-legumes', title: 'Fruits & Légumes', image: require('../assets/images/catalog/cat-fruits.png'), flex: 208, height: 140 },
   { id: 'viandes', title: 'Viandes & Volailles', image: require('../assets/images/catalog/cat-viandes.png'), flex: 138, height: 140 },
+  { id: 'charcuterie', title: 'Charcuterie', image: require('../assets/images/catalog/cat-viandes.png'), flex: 138, height: 120 },
   { id: 'poissons', title: 'Poissons & Fruits de mer', image: require('../assets/images/catalog/cat-poissons.png'), flex: 138, height: 120 },
+  { id: 'surgeles', title: 'Surgelés', image: require('../assets/images/catalog/glace-assortiment.png'), flex: 208, height: 120 },
   { id: 'laitiers', title: 'Produits laitiers', image: require('../assets/images/catalog/cat-laitiers.png'), flex: 208, height: 120 },
-  { id: 'boissons', title: 'Boissons', image: require('../assets/images/catalog/cat-boissons.png'), flex: 208, height: 130 },
+  { id: 'oeufs', title: 'Œufs', image: require('../assets/images/catalog/poulet.png'), flex: 138, height: 120 },
   { id: 'boulangerie', title: 'Boulangerie & Pâtisserie', image: require('../assets/images/catalog/cat-boulangerie.png'), flex: 138, height: 130 },
-  { id: 'epicerie', title: 'Épicerie', image: require('../assets/images/catalog/cat-epicerie.png'), flex: 138, height: 120 },
+  { id: 'petit-dej', title: 'Petit-déjeuner', image: require('../assets/images/catalog/miel.png'), flex: 208, height: 130 },
+  { id: 'cafe-the', title: 'Café & Thé', image: require('../assets/images/catalog/glace-cafe.png'), flex: 138, height: 130 },
+  { id: 'feculents', title: 'Riz, pâtes & farines', image: require('../assets/images/catalog/cuisine-riz.png'), flex: 208, height: 130 },
+  { id: 'huiles', title: 'Huiles, sauces & cubes', image: require('../assets/images/catalog/cat-epicerie.png'), flex: 138, height: 120 },
+  { id: 'epices', title: 'Épices', image: require('../assets/images/catalog/circle-epices.png'), flex: 138, height: 120 },
+  { id: 'conserves', title: 'Conserves', image: require('../assets/images/catalog/cat-poissons.png'), flex: 208, height: 120 },
+  { id: 'epicerie', title: 'Épicerie sucrée', image: require('../assets/images/catalog/cat-epicerie.png'), flex: 138, height: 120 },
+  { id: 'snacking', title: 'Snacking', image: require('../assets/images/catalog/plantains.png'), flex: 208, height: 130 },
+  { id: 'boissons', title: 'Boissons', image: require('../assets/images/catalog/cat-boissons.png'), flex: 208, height: 130 },
+  { id: 'alcools', title: 'Bières & vins', image: require('../assets/images/catalog/cat-boissons.png'), flex: 138, height: 130 },
+  { id: 'bio', title: 'Bio & diététique', image: require('../assets/images/catalog/cat-fruits.png'), flex: 208, height: 130 },
+  { id: 'cuisine', title: 'Produits déjà cuisinés', image: require('../assets/images/catalog/cat-cuisine.png'), flex: 208, height: 140 },
+  { id: 'glaces', title: 'Glaces & Sorbets', image: require('../assets/images/catalog/cat-glaces.png'), flex: 138, height: 140 },
   { id: 'hygiene', title: 'Hygiène & Beauté', image: require('../assets/images/catalog/cat-hygiene.png'), flex: 208, height: 120 },
   { id: 'maison', title: 'Maison & Entretien', image: require('../assets/images/catalog/cat-maison.png'), flex: 208, height: 130 },
   { id: 'bebe', title: 'Bébé & Enfant', image: require('../assets/images/catalog/cat-bebe.png'), flex: 138, height: 130 },
-  {
-    id: 'cuisine',
-    title: 'Produits déjà cuisinés',
-    image: require('../assets/images/catalog/cat-cuisine.png'),
-    flex: 208,
-    height: 140,
-  },
-  {
-    id: 'glaces',
-    title: 'Glaces & Sorbets',
-    image: require('../assets/images/catalog/cat-glaces.png'),
-    flex: 138,
-    height: 140,
-  },
+  { id: 'animalerie', title: 'Animalerie', image: require('../assets/images/catalog/cat-maison.png'), flex: 208, height: 130 },
 ];
 
 export const categoryFilters: Record<string, string[]> = {
   'fruits-legumes': ['Tous', 'Fruits', 'Légumes', 'Promo', 'Locaux', 'Bio'],
   viandes: ['Tous', 'Promo', 'Locaux', 'Nouveautés'],
+  charcuterie: ['Tous', 'Promo', 'Nouveautés'],
   poissons: ['Tous', 'Promo', 'Nouveautés'],
+  surgeles: ['Tous', 'Légumes', 'Plats', 'Promo'],
   laitiers: ['Tous', 'Promo', 'Nouveautés'],
-  boissons: ['Tous', 'Promo', 'Locaux', 'Nouveautés'],
+  oeufs: ['Tous', 'Promo', 'Locaux', 'Nouveautés'],
+  boulangerie: ['Tous', 'Pain', 'Viennoiserie', 'Promo', 'Nouveautés'],
+  'petit-dej': ['Tous', 'Promo', 'Nouveautés', 'Locaux'],
+  'cafe-the': ['Tous', 'Café', 'Thé', 'Promo', 'Locaux'],
+  feculents: ['Tous', 'Riz', 'Attiéké', 'Farines', 'Promo', 'Locaux'],
+  huiles: ['Tous', 'Huiles', 'Sauces', 'Promo', 'Locaux'],
+  epices: ['Tous', 'Promo', 'Locaux', 'Nouveautés'],
+  conserves: ['Tous', 'Poisson', 'Promo'],
   epicerie: ['Tous', 'Promo', 'Locaux', 'Nouveautés'],
+  snacking: ['Tous', 'Salé', 'Sucré', 'Promo', 'Locaux'],
+  boissons: ['Tous', 'Promo', 'Locaux', 'Nouveautés'],
+  alcools: ['Tous', 'Bière', 'Vin', 'Promo', 'Locaux'],
+  bio: ['Tous', 'Promo', 'Locaux', 'Nouveautés'],
   cuisine: ['Tous', 'Promo', 'Locaux', 'Nouveautés'],
   glaces: ['Tous', 'Promo', 'Nouveautés', 'Sorbets', 'Bâtonnets'],
+  hygiene: ['Tous', 'Corps', 'Oral', 'Promo'],
+  maison: ['Tous', 'Entretien', 'Promo'],
+  bebe: ['Tous', 'Couches', 'Repas', 'Promo', 'Nouveautés'],
+  animalerie: ['Tous', 'Chien', 'Chat', 'Promo'],
 };
 
 export const popularSuggestions = ['Bissap', 'Plantain', 'Manioc', 'Café', 'Avocat', 'Épices'];
@@ -863,7 +892,7 @@ export const searchCategories = [
   { id: 'fruits-legumes', label: 'Fruits', image: require('../assets/images/catalog/circle-fruits.png') },
   { id: 'fruits-legumes', label: 'Légumes', image: require('../assets/images/catalog/circle-legumes.png') },
   { id: 'poissons', label: 'Poissons', image: require('../assets/images/catalog/circle-poissons.png') },
-  { id: 'epicerie', label: 'Épices', image: require('../assets/images/catalog/circle-epices.png') },
+  { id: 'epices', label: 'Épices', image: require('../assets/images/catalog/circle-epices.png') },
 ] as const;
 
 export type SearchCategory = (typeof searchCategories)[number];
@@ -879,9 +908,6 @@ export function productsForSearchCategory(label: string) {
   const base = productsInCategory(cat.id);
   const pool = base.length ? base : products;
   const filtered = filterProductsByLabel(pool, cat.label === 'Épices' ? undefined : cat.label);
-  if (cat.label === 'Épices') {
-    return pool.filter((p) => p.categoryId === 'epicerie').slice(0, 8);
-  }
   return (filtered.length ? filtered : pool).slice(0, 8);
 }
 

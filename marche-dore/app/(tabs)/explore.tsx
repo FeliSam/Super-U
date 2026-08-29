@@ -1,5 +1,5 @@
 import { AppImage } from '@/components/AppImage';
-import { CategoryTile, IconCircle, ProductCard, PromoBanner, Screen, SearchField, Page } from '@/components/ui';
+import { CategoryTile, IconCircle, ProductCard, PromoBanner, Screen, SearchField, Page, SmartNavbar, TabHero } from '@/components/ui';
 import { MotionView, PressScale } from '@/components/motion';
 import { displayFont, heroChrome, tabBarClearance, type AppColors } from '@/constants/theme';
 import { useColors, useTheme } from '@/context/ThemeContext';
@@ -17,7 +17,6 @@ import {
   trendingSearches } from '@/data/catalog';
 import { openSearchScreen } from '@/lib/searchNav';
 import { Feather } from '@expo/vector-icons';
-import { LinearGradient } from 'expo-linear-gradient';
 import { router } from 'expo-router';
 import { memo, useEffect, useMemo, useState } from 'react';
 import {
@@ -39,6 +38,8 @@ const PROMO_WIDTH = Dimensions.get('window').width - 40;
 const explorePromo = homePromoBanners[1];
 const HERO_OVERLAP = 36;
 const TREND_LIMIT = 5;
+/** Same height on every rayon tile; bento is width (`flex`) only. */
+const RAYON_TILE_H = 140;
 
 function ExploreScreen() {
   const { scheme } = useTheme();
@@ -105,28 +106,47 @@ function ExploreScreen() {
         default: {} }) };
   });
 
-  const handleAnimStyle = useAnimatedStyle(() => ({
-    opacity: interpolate(scrollY.value, [0, 60], [1, 0.35], Extrapolation.CLAMP),
-    transform: [
-      {
-        scaleX: interpolate(scrollY.value, [0, 80], [1, 0.7], Extrapolation.CLAMP) },
-    ] }));
-
   return (
     <Screen>
       <Page style={styles.flex}>
         <View
           style={styles.heroBackdrop}
           onLayout={(e) => setHeroHeight(e.nativeEvent.layout.height)}
-          pointerEvents="box-none">
-          <LinearGradient colors={chrome.gradient} style={styles.hero}>
-            <View style={[styles.heroOrb, { backgroundColor: chrome.orb }]} />
-
-            <View style={styles.header}>
-              <View style={styles.headerText}>
-                <Text style={[styles.eyebrow, { color: chrome.muted }]}>Marché Doré</Text>
-                <Text style={[styles.hello, { color: chrome.ink }]}>Explorer</Text>
+          pointerEvents="none">
+          <TabHero
+            title="Explorer"
+            subtitle="Parcourez nos rayons et découvrez les produits du marché."
+            right={<View style={styles.navActionsSlot} />}>
+            <View
+              style={[
+                styles.heroStats,
+                { backgroundColor: chrome.surface, borderColor: chrome.surfaceBorder },
+              ]}>
+              <View style={styles.heroStat}>
+                <Feather name="grid" size={15} color={colors.gold} />
+                <Text style={[styles.heroStatText, { color: chrome.ink }]}>
+                  {exploreCategories.length} rayons
+                </Text>
               </View>
+              <View style={[styles.heroDivider, { backgroundColor: chrome.divider }]} />
+              <View style={styles.heroStat}>
+                <Feather name="shopping-bag" size={15} color={colors.terracotta} />
+                <Text style={[styles.heroStatText, { color: chrome.ink }]}>
+                  {products.length}+ produits
+                </Text>
+              </View>
+              <View style={[styles.heroDivider, { backgroundColor: chrome.divider }]} />
+              <View style={styles.heroStat}>
+                <Feather name="truck" size={15} color={colors.green} />
+                <Text style={[styles.heroStatText, { color: chrome.ink }]}>Livraison</Text>
+              </View>
+            </View>
+          </TabHero>
+        </View>
+
+        <View style={styles.navbarFloat} pointerEvents="box-none">
+          <SmartNavbar
+            right={
               <View style={styles.actions}>
                 <IconCircle
                   name="search"
@@ -141,49 +161,8 @@ function ExploreScreen() {
                   onPress={openPromos}
                 />
               </View>
-            </View>
-
-            <Text style={[styles.subtitle, { color: chrome.muted }]}>
-              Parcourez nos rayons et découvrez les produits du marché.
-            </Text>
-
-            <View
-              style={[
-                styles.heroStats,
-                { backgroundColor: chrome.surface, borderColor: chrome.surfaceBorder },
-              ]}>
-              <PressScale
-                style={styles.heroStat}
-                onPress={() => openSearch()}
-                scaleTo={0.96}
-                accessibilityLabel={`${exploreCategories.length} rayons`}>
-                <Feather name="grid" size={15} color={colors.gold} />
-                <Text style={[styles.heroStatText, { color: chrome.ink }]}>
-                  {exploreCategories.length} rayons
-                </Text>
-              </PressScale>
-              <View style={[styles.heroDivider, { backgroundColor: chrome.divider }]} />
-              <PressScale
-                style={styles.heroStat}
-                onPress={() => openSearch()}
-                scaleTo={0.96}
-                accessibilityLabel={`${products.length} produits`}>
-                <Feather name="shopping-bag" size={15} color={colors.terracotta} />
-                <Text style={[styles.heroStatText, { color: chrome.ink }]}>
-                  {products.length}+ produits
-                </Text>
-              </PressScale>
-              <View style={[styles.heroDivider, { backgroundColor: chrome.divider }]} />
-              <PressScale
-                style={styles.heroStat}
-                onPress={() => router.push('/tracking')}
-                scaleTo={0.96}
-                accessibilityLabel="Livraison rapide">
-                <Feather name="truck" size={15} color={colors.green} />
-                <Text style={[styles.heroStatText, { color: chrome.ink }]}>Livraison</Text>
-              </PressScale>
-            </View>
-          </LinearGradient>
+            }
+          />
         </View>
 
         <Animated.ScrollView
@@ -196,10 +175,6 @@ function ExploreScreen() {
           scrollEventThrottle={16}
           onScroll={onScroll}>
           <Animated.View style={[styles.bodySheet, sheetAnimStyle]}>
-            <View style={styles.sheetHandle}>
-              <Animated.View style={[styles.sheetHandleBar, handleAnimStyle]} />
-            </View>
-
             <MotionView delay={40} preset="up">
               <SearchField onPress={() => openSearch()} />
             </MotionView>
@@ -207,7 +182,9 @@ function ExploreScreen() {
             <MotionView delay={80} preset="up" style={styles.section}>
               <View style={styles.sectionHead}>
                 <Text style={styles.sectionTitle}>Accès rapide</Text>
-                <Text style={styles.sectionMeta}>Sélection</Text>
+                <Pressable onPress={() => openSearch()} accessibilityRole="button" accessibilityLabel="Voir la sélection">
+                  <Text style={styles.sectionLink}>Sélection</Text>
+                </Pressable>
               </View>
               <ScrollView
                 horizontal
@@ -216,16 +193,19 @@ function ExploreScreen() {
                 {searchCategories.map((cat) => {
                   const count = productsInCategory(cat.id).length;
                   return (
-                    <Pressable
+                    <PressScale
                       key={cat.label}
                       style={styles.quickCard}
-                      onPress={() => router.push(searchCategoryRoute(cat))}>
+                      onPress={() => router.push(searchCategoryRoute(cat))}
+                      scaleTo={0.96}
+                      accessibilityRole="button"
+                      accessibilityLabel={`${cat.label}, ${count} produits`}>
                       <View style={styles.quickImageWrap}>
                         <AppImage source={cat.image} frameStyle={styles.quickImage} />
                       </View>
                       <Text style={styles.quickLabel}>{cat.label}</Text>
                       <Text style={styles.quickCount}>{count || '12+'} produits</Text>
-                    </Pressable>
+                    </PressScale>
                   );
                 })}
               </ScrollView>
@@ -301,10 +281,15 @@ function ExploreScreen() {
               </View>
             </MotionView>
 
-            <MotionView delay={230} preset="up" style={styles.section}>
-              <View style={styles.sectionHead}>
-                <Text style={styles.sectionTitle}>Tous les rayons</Text>
-                <Text style={styles.sectionMeta}>{exploreCategories.length} catégories</Text>
+            <MotionView delay={230} preset="up" style={styles.rayonsSection}>
+              <View style={styles.rayonsHead}>
+                <View style={styles.rayonsHeadText}>
+                  <Text style={styles.sectionTitle}>Tous les rayons</Text>
+                  <Text style={styles.sectionMeta}>Parcourez le marché</Text>
+                </View>
+                <View style={[styles.rayonsCount, { backgroundColor: colors.cream }]}>
+                  <Text style={styles.rayonsCountText}>{exploreCategories.length}</Text>
+                </View>
               </View>
               <View style={styles.grid}>
                 {rows.map((row, idx) => (
@@ -316,7 +301,7 @@ function ExploreScreen() {
                           key={cat.id}
                           title={cat.title}
                           image={cat.image}
-                          height={Math.round((cat.height + 8) * 1.2)}
+                          height={RAYON_TILE_H}
                           flex={cat.flex}
                           count={count || undefined}
                           index={idx}
@@ -346,43 +331,29 @@ function createStyles(colors: AppColors) {
       left: 0,
       right: 0,
       zIndex: 0 },
+    navbarFloat: {
+      position: 'absolute',
+      top: 0,
+      left: 0,
+      right: 0,
+      zIndex: 10,
+      paddingHorizontal: 20,
+      paddingTop: 8 },
+    navActionsSlot: {
+      width: 92,
+      height: 42 },
     scrollLayer: {
       flex: 1,
       zIndex: 1 },
     scrollContent: { paddingBottom: tabBarClearance },
-    hero: {
-      paddingHorizontal: 20,
-      paddingTop: 8,
-      paddingBottom: 44,
-      overflow: 'hidden' },
-    heroOrb: {
-      position: 'absolute',
-      width: 180,
-      height: 180,
-      borderRadius: 90,
-      top: -50,
-      right: -40 },
-    header: {
-      flexDirection: 'row',
-      justifyContent: 'space-between',
-      alignItems: 'center',
-      gap: 12 },
-    headerText: { flex: 1, gap: 2 },
-    eyebrow: { fontSize: 11, fontWeight: '700', letterSpacing: 0.4 },
-    hello: { fontSize: 28, letterSpacing: -0.4, ...displayFont('800') },
     actions: { flexDirection: 'row', alignItems: 'center', gap: 8 },
-    subtitle: {
-      fontSize: 14,
-      lineHeight: 20,
-      maxWidth: '92%',
-      marginTop: 10 },
     heroStats: {
       flexDirection: 'row',
       alignItems: 'center',
       borderRadius: 16,
       paddingVertical: 12,
       paddingHorizontal: 14,
-      marginTop: 18 },
+      marginTop: 8 },
     heroStat: {
       flex: 1,
       flexDirection: 'row',
@@ -407,16 +378,25 @@ function createStyles(colors: AppColors) {
           shadowOpacity: 0.14 },
         android: { elevation: 8 },
         default: {} }) },
-    sheetHandle: {
+    section: { gap: 12 },
+    rayonsSection: { gap: 14 },
+    rayonsHead: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'space-between',
+      gap: 12 },
+    rayonsHeadText: { flex: 1, gap: 2 },
+    rayonsCount: {
+      minWidth: 36,
+      height: 36,
+      borderRadius: 12,
       alignItems: 'center',
       justifyContent: 'center',
-      paddingVertical: 8 },
-    sheetHandleBar: {
-      width: 44,
-      height: 4,
-      borderRadius: 999,
-      backgroundColor: colors.border },
-    section: { gap: 12 },
+      paddingHorizontal: 10 },
+    rayonsCountText: {
+      color: colors.gold,
+      fontSize: 14,
+      fontWeight: '800' },
     sectionHead: {
       flexDirection: 'row',
       alignItems: 'baseline',
@@ -468,6 +448,6 @@ function createStyles(colors: AppColors) {
       paddingHorizontal: 14,
       paddingVertical: 8 },
     tagText: { color: colors.text, fontSize: 13, fontWeight: '600' },
-    grid: { gap: 6 },
-    gridRow: { flexDirection: 'row', gap: 6, alignItems: 'stretch' } });
+    grid: { gap: 2 },
+    gridRow: { flexDirection: 'row', gap: 2, alignItems: 'stretch' } });
 }

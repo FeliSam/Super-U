@@ -19,13 +19,11 @@ import { LinearGradient } from 'expo-linear-gradient';
 import { Href, router } from 'expo-router';
 import { useMemo, memo, useState, type ComponentProps } from 'react';
 import { Platform, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
-import { Gesture, GestureDetector, GestureHandlerRootView } from 'react-native-gesture-handler';
+import { GestureDetector, GestureHandlerRootView } from 'react-native-gesture-handler';
 import Animated from 'react-native-reanimated';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 type InboxTab = 'messages' | 'orders';
-
-const ICON_BG = 'rgba(255,255,255,0.92)';
 
 function isActiveStatus(status: OrderStatus) {
   return status === 'confirmed' || status === 'preparing' || status === 'shipping';
@@ -170,17 +168,14 @@ function ChatInboxScreen() {
   const {
     sheetMax,
     sheetAnimStyle,
-    sheetHandleGesture,
-    sheetPullDownGesture,
+    sheetScrollGesture,
     sheetScrollRef,
+    listScrollEnabled,
     onSheetScroll,
     onSheetScrollBeginDrag,
     onSheetScrollEndDrag,
-  } = useExpandableSheet({ initiallyExpanded: true });
-  const sheetScrollGesture = useMemo(
-    () => Gesture.Simultaneous(sheetPullDownGesture, Gesture.Native()),
-    [sheetPullDownGesture],
-  );
+    onSheetWheel,
+  } = useExpandableSheet({ initiallyExpanded: true, lockExpanded: true });
 
   const support = useMemo(() => conversations.find((c) => c.kind === 'support'), [conversations]);
   const messageThreads = useMemo(
@@ -202,15 +197,31 @@ function ChatInboxScreen() {
         <GestureHandlerRootView style={styles.flex}>
           <View style={styles.hero} pointerEvents="box-none">
             <LinearGradient colors={chrome.gradient} style={StyleSheet.absoluteFill} />
-            <View style={[styles.heroOrb, { backgroundColor: chrome.orb }]} />
+            <View
+              style={[styles.heroGlowA, { backgroundColor: scheme === 'dark' ? 'rgba(232,166,58,0.22)' : 'rgba(226,147,29,0.28)' }]}
+              pointerEvents="none"
+            />
+            <View
+              style={[styles.heroGlowB, { backgroundColor: scheme === 'dark' ? 'rgba(224,106,82,0.18)' : 'rgba(200,75,49,0.2)' }]}
+              pointerEvents="none"
+            />
+            <View style={[styles.heroOrb, { backgroundColor: chrome.orb }]} pointerEvents="none" />
+            <View style={[styles.heroRing, { borderColor: chrome.surfaceBorder }]} pointerEvents="none" />
+            <View style={styles.heroWatermark} pointerEvents="none">
+              <Feather name="message-circle" size={168} color={chrome.ink} />
+            </View>
+            <View style={[styles.heroSpark, { backgroundColor: colors.gold }]} pointerEvents="none" />
 
             <View style={[styles.heroBar, { paddingTop: Math.max(10, insets.top + 6) }]}>
-              <Text style={[styles.heroTitle, { color: chrome.ink }]} numberOfLines={1}>
-                {tab === 'messages' ? 'Messages' : 'Suivi'}
-              </Text>
+              <View style={styles.heroTitleCol}>
+                <Text style={[styles.heroKicker, { color: chrome.muted }]}>Marché Doré</Text>
+                <Text style={[styles.heroTitle, { color: chrome.ink }]} numberOfLines={1}>
+                  {tab === 'messages' ? 'Messages' : 'Suivi'}
+                </Text>
+              </View>
               <IconCircle
                 name={tab === 'messages' ? 'edit-3' : 'package'}
-                bg={ICON_BG}
+                variant="hero"
                 accessibilityLabel={
                   tab === 'messages' ? 'Contacter l’assistance' : 'Voir mes commandes'
                 }
@@ -225,20 +236,10 @@ function ChatInboxScreen() {
           <Animated.View
             style={[
               styles.sheet,
-              { height: sheetMax },
+              { height: sheetMax - 10 },
               sheetAnimStyle,
               { paddingBottom: Math.max(8, insets.bottom) },
             ]}>
-            <GestureDetector gesture={sheetHandleGesture}>
-              <Animated.View
-                style={styles.sheetHandle}
-                accessibilityRole={Platform.OS === 'web' ? undefined : 'button'}
-                accessibilityLabel="Agrandir ou réduire la feuille"
-                accessibilityHint="Glisser pour redimensionner, toucher pour basculer">
-                <View style={styles.sheetHandleBar} />
-              </Animated.View>
-            </GestureDetector>
-
             <GestureDetector gesture={sheetScrollGesture}>
             <ScrollView
               ref={sheetScrollRef}
@@ -248,10 +249,12 @@ function ChatInboxScreen() {
               bounces
               overScrollMode="auto"
               keyboardShouldPersistTaps="handled"
-              scrollEventThrottle={16}
+              scrollEnabled={listScrollEnabled}
+              scrollEventThrottle={1}
               onScroll={onSheetScroll}
               onScrollBeginDrag={onSheetScrollBeginDrag}
-              onScrollEndDrag={onSheetScrollEndDrag}>
+              onScrollEndDrag={onSheetScrollEndDrag}
+              onWheel={onSheetWheel}>
               <View style={styles.menu}>
                 <Pressable
                   style={[styles.menuTab, tab === 'messages' && styles.menuTabOn]}
@@ -413,6 +416,50 @@ function createStyles(colors: AppColors) {
       borderRadius: 90,
       opacity: 0.55,
     },
+    heroGlowA: {
+      position: 'absolute',
+      top: -80,
+      left: -60,
+      width: 240,
+      height: 240,
+      borderRadius: 120,
+      opacity: 0.85,
+    },
+    heroGlowB: {
+      position: 'absolute',
+      top: 80,
+      right: -50,
+      width: 200,
+      height: 200,
+      borderRadius: 100,
+      opacity: 0.7,
+    },
+    heroRing: {
+      position: 'absolute',
+      top: 28,
+      right: 72,
+      width: 92,
+      height: 92,
+      borderRadius: 46,
+      borderWidth: 1.5,
+      opacity: 0.7,
+    },
+    heroWatermark: {
+      position: 'absolute',
+      right: -12,
+      top: 36,
+      opacity: 0.07,
+      transform: [{ rotate: '-12deg' }],
+    },
+    heroSpark: {
+      position: 'absolute',
+      top: 96,
+      left: 28,
+      width: 8,
+      height: 8,
+      borderRadius: 4,
+      opacity: 0.55,
+    },
     heroBar: {
       position: 'absolute',
       top: 0,
@@ -425,9 +472,15 @@ function createStyles(colors: AppColors) {
       paddingHorizontal: 16,
       gap: 12,
     },
+    heroTitleCol: { flex: 1, gap: 2, minWidth: 0 },
+    heroKicker: {
+      fontSize: 11,
+      fontWeight: '700',
+      letterSpacing: 0.8,
+      textTransform: 'uppercase',
+    },
     heroTitle: {
       ...displayFont('800'),
-      flex: 1,
       fontSize: 28,
       lineHeight: 34,
       letterSpacing: -0.4,
@@ -440,7 +493,7 @@ function createStyles(colors: AppColors) {
       backgroundColor: colors.bg,
       borderTopLeftRadius: 28,
       borderTopRightRadius: 28,
-      paddingTop: 8,
+      paddingTop: 10,
       zIndex: 5,
       overflow: 'hidden',
       flexDirection: 'column',
@@ -458,21 +511,6 @@ function createStyles(colors: AppColors) {
         } as object,
         default: {},
       }),
-    },
-    sheetHandle: {
-      alignItems: 'center',
-      justifyContent: 'center',
-      paddingVertical: 8,
-      zIndex: 8,
-      ...(Platform.OS === 'web'
-        ? ({ touchAction: 'none', userSelect: 'none', WebkitUserSelect: 'none', cursor: 'grab' } as object)
-        : {}),
-    },
-    sheetHandleBar: {
-      width: 44,
-      height: 4,
-      borderRadius: 999,
-      backgroundColor: colors.border,
     },
     sheetScroll: {
       flex: 1,

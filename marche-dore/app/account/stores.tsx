@@ -8,6 +8,7 @@ import { useStores } from '@/context/StoresContext';
 import { SUPER_U_BRAND, type SuperUStore } from '@/data/superU';
 import { findStoreNearPoint, formatDistanceKm, formatDurationMin } from '@/lib/deliveryRouting';
 import { superUStoresToMapMarkers } from '@/lib/api/superU';
+import { SHEET_SPRING } from '@/lib/expandableSheet';
 import { softShadow } from '@/lib/shadow';
 import { useDeliveryEstimate } from '@/lib/useDeliveryEstimate';
 import { Feather } from '@expo/vector-icons';
@@ -169,7 +170,7 @@ export default function StoresScreen() {
             projected > SHEET_MID || (sheetH.value > SHEET_MID && e.velocityY < -400)
               ? SHEET_MAX
               : SHEET_MIN;
-          sheetH.value = withSpring(target, { damping: 22, stiffness: 220, mass: 0.9 });
+          sheetH.value = withSpring(target, { ...SHEET_SPRING, velocity: -e.velocityY });
         }),
     [dragStartH, sheetH],
   );
@@ -253,7 +254,7 @@ export default function StoresScreen() {
               { paddingBottom: Math.max(14, insets.bottom + 8), backgroundColor: colors.bg },
             ]}>
             <View style={styles.sheetHandle}>
-              <View style={[styles.sheetHandleBar, { backgroundColor: colors.border }]} />
+              <View style={[styles.sheetHandleBar, { backgroundColor: colors.grabber }]} />
             </View>
             <Text style={[styles.sheetEyebrow, { color: colors.muted }]}>
               Préparation & départ livreur

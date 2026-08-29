@@ -23,6 +23,7 @@ import {
   formatDurationMin,
   pointAlongPolyline,
   routeBoundsCenter } from '@/lib/deliveryRouting';
+import { SHEET_OPEN, SHEET_SPRING } from '@/lib/expandableSheet';
 import { formatFcfa } from '@/lib/format';
 import { navigateTab, tabPaths } from '@/lib/navigation';
 import { softShadow } from '@/lib/shadow';
@@ -297,7 +298,7 @@ export default function TrackingScreen() {
 
   useEffect(() => {
     if (!delivered) return;
-    sheetH.value = withSpring(SHEET_MAX, { damping: 22, stiffness: 220, mass: 0.9 });
+    sheetH.value = withTiming(SHEET_MAX, SHEET_OPEN);
   }, [delivered, sheetH]);
 
   useEffect(() => {
@@ -335,7 +336,7 @@ export default function TrackingScreen() {
             projected > SHEET_MID || (sheetH.value > SHEET_MID && e.velocityY < -400)
               ? SHEET_MAX
               : SHEET_MIN;
-          sheetH.value = withSpring(target, { damping: 22, stiffness: 220, mass: 0.9 });
+          sheetH.value = withSpring(target, { ...SHEET_SPRING, velocity: -e.velocityY });
         }),
     [dragStartH, sheetH],
   );
@@ -574,12 +575,12 @@ export default function TrackingScreen() {
           <View
             style={[styles.topBar, { paddingTop: Math.max(10, insets.top + 4) }]}
             pointerEvents="box-none">
-            <IconCircle name="chevron-left" onPress={() => router.back()} bg="rgba(255,255,255,0.92)" />
+            <IconCircle name="chevron-left" onPress={() => router.back()} variant="hero" />
             <View style={styles.titlePill}>
               <Text style={styles.titlePillMain}>Suivi · {formatOrderId(order.id)}</Text>
               <Text style={styles.titlePillSub}>{mapBadgeText(order.status)}</Text>
             </View>
-            <IconCircle name="more-vertical" onPress={() => setMenuOpen(true)} bg="rgba(255,255,255,0.92)" />
+            <IconCircle name="more-vertical" onPress={() => setMenuOpen(true)} variant="hero" />
           </View>
 
           <View
@@ -648,7 +649,7 @@ export default function TrackingScreen() {
                   backgroundColor: colors.bg },
               ]}>
               <View style={styles.sheetHandle}>
-                <View style={[styles.sheetHandleBar, { backgroundColor: colors.border }]} />
+                <View style={[styles.sheetHandleBar, { backgroundColor: colors.grabber }]} />
               </View>
               <Text style={[styles.sheetEyebrow, { color: colors.muted }]}>
                 {delivered

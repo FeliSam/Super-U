@@ -1,18 +1,21 @@
 import {
   avatar,
-  getProducts,
+  exploreCategories,
   homeCategories,
   homePromoBanners,
-  popularIds,
+  mangoHero,
+  products,
   promoBanner,
+  searchCategories,
 } from '@/data/catalog';
 import { loadBrandFonts } from '@/lib/fonts';
 import { Feather, Ionicons } from '@expo/vector-icons';
 import { Asset } from 'expo-asset';
+import { Image as ExpoImage } from 'expo-image';
 import * as Font from 'expo-font';
 import * as SplashScreen from 'expo-splash-screen';
 import type { ImageSourcePropType } from 'react-native';
-import { Platform, StatusBar as RNStatusBar } from 'react-native';
+import { Image as RNImage, Platform, StatusBar as RNStatusBar } from 'react-native';
 import { StatusBar as ExpoStatusBar } from 'expo-status-bar';
 
 SplashScreen.preventAutoHideAsync().catch(() => undefined);
@@ -27,13 +30,19 @@ const iconFonts = {
   ...Ionicons.font,
 };
 
-/** Only what the first home viewport needs — keep startup light. */
-function criticalAssets(): ImageSourcePropType[] {
+const brandMark = require('../assets/images/brand-mark.png') as number;
+
+function allImageSources(): ImageSourcePropType[] {
   return [
-    ...getProducts(popularIds).map((p) => p.image),
-    ...homeCategories.slice(0, 6).map((c) => c.image),
-    homePromoBanners[0]?.image ?? promoBanner,
+    brandMark,
     avatar,
+    mangoHero,
+    promoBanner,
+    ...products.map((p) => p.image),
+    ...exploreCategories.map((c) => c.image),
+    ...searchCategories.map((c) => c.image),
+    ...homeCategories.map((c) => c.image),
+    ...homePromoBanners.map((b) => b.image),
   ];
 }
 
@@ -49,44 +58,71 @@ function uniqueModules(sources: ImageSourcePropType[]): number[] {
   return out;
 }
 
+function assetUri(mod: number): string | null {
+  const asset = Asset.fromModule(mod);
+  return asset.localUri ?? asset.uri ?? null;
+}
+
+async function decodeUris(uris: string[]) {
+  if (Platform.OS === 'web' && typeof globalThis.Image !== 'undefined') {
+    const pending = [...uris];
+    const worker = async () => {
+      while (pending.length) {
+        const uri = pending.shift();
+        if (!uri) return;
+        await new Promise<void>((resolve) => {
+          const img = new globalThis.Image();
+          img.decoding = 'async';
+          img.onload = () => resolve();
+          img.onerror = () => resolve();
+          img.src = uri;
+        });
+      }
+    };
+    await Promise.all(Array.from({ length: Math.min(10, uris.length || 1) }, worker));
+    return;
+  }
+
+  await Promise.all(uris.map((uri) => RNImage.prefetch(uri).catch(() => false)));
+}
+
+let imagesReady = false;
+
+/** Download + decode every catalog image so screens paint from cache. */
+export async function preloadCatalogImages(): Promise<void> {
+  if (imagesReady) return;
+  const modules = uniqueModules(allImageSources());
+  await Asset.loadAsync(modules);
+
+  const uris = modules.map(assetUri).filter((u): u is string => Boolean(u));
+      await Promise.all([
+        ExpoImage.prefetch(uris, 'memory-disk').catch(() => undefined),
+        decodeUris(uris),
+      ]);
+  imagesReady = true;
+}
+
 let readyPromise: Promise<void> | null = null;
 
 /**
- * Block first paint on icon + brand fonts.
- * Critical images preload in parallel but never block longer than a short budget.
+ * Block first paint until fonts and catalog images are in cache.
  */
 export function prepareApp(): Promise<void> {
   if (!readyPromise) {
     readyPromise = (async () => {
-      const fonts = Promise.all([Font.loadAsync(iconFonts), loadBrandFonts()]);
-      const images = Asset.loadAsync(uniqueModules(criticalAssets())).catch(() => undefined);
-
-      await fonts;
-
-      // Don't stall splash on slow image I/O — race with a short timeout.
+      await Promise.all([Font.loadAsync(iconFonts), loadBrandFonts()]);
       await Promise.race([
-        images,
-        new Promise<void>((resolve) => setTimeout(resolve, 280)),
+        preloadCatalogImages(),
+        new Promise<void>((resolve) => setTimeout(resolve, 12_000)),
       ]);
     })().catch(() => undefined);
   }
   return readyPromise;
 }
 
-/** Warm remaining catalog images after the UI is already visible. */
+/** Idempotent — safe after splash; images are already cached if prepareApp finished. */
 export function warmRemainingAssets(): void {
-  void import('@/data/catalog')
-    .then(({ products, exploreCategories, searchCategories, homePromoBanners: banners, mangoHero }) => {
-      const rest: ImageSourcePropType[] = [
-        ...products.map((p) => p.image),
-        ...exploreCategories.map((c) => c.image),
-        ...searchCategories.map((c) => c.image),
-        ...banners.map((b) => b.image),
-        mangoHero,
-      ];
-      return Asset.loadAsync(uniqueModules(rest));
-    })
-    .catch(() => undefined);
+  void preloadCatalogImages();
 }
 
 export function hideSplash(): Promise<void> {

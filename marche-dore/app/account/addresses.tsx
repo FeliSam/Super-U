@@ -9,6 +9,7 @@ import { useColors, useTheme } from '@/context/ThemeContext';
 import type { DeliveryAddress } from '@/data/account';
 import { SUPER_U_BRAND } from '@/data/superU';
 import { listSuperUStores, superUStoresToMapMarkers } from '@/lib/api/superU';
+import { SHEET_OPEN, SHEET_SPRING } from '@/lib/expandableSheet';
 import { getDeviceLocation } from '@/lib/geolocation';
 import { softShadow } from '@/lib/shadow';
 import { Feather } from '@expo/vector-icons';
@@ -30,7 +31,8 @@ import { Gesture, GestureDetector, GestureHandlerRootView } from 'react-native-g
 import Reanimated, {
   useAnimatedStyle,
   useSharedValue,
-  withSpring } from 'react-native-reanimated';
+  withSpring,
+  withTiming } from 'react-native-reanimated';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 const WINDOW_H = Dimensions.get('window').height;
@@ -329,7 +331,7 @@ export default function AddressesScreen() {
     setLabel(PLACE_LABELS.home);
     setLine(appLocation.defaultLine);
     setPhone(appLocation.phone);
-    sheetH.value = withSpring(SHEET_MAX, { damping: 22, stiffness: 220, mass: 0.9 });
+    sheetH.value = withTiming(SHEET_MAX, SHEET_OPEN);
     setMode('edit');
   };
 
@@ -349,14 +351,14 @@ export default function AddressesScreen() {
     setLabel(address.label);
     setLine(address.line);
     setPhone(address.phone);
-    sheetH.value = withSpring(SHEET_MAX, { damping: 22, stiffness: 220, mass: 0.9 });
+    sheetH.value = withTiming(SHEET_MAX, SHEET_OPEN);
     setMode('edit');
   };
 
   const closeEdit = () => {
     setMode('list');
     setEditingId(null);
-    sheetH.value = withSpring(SHEET_MIN, { damping: 22, stiffness: 220, mass: 0.9 });
+    sheetH.value = withTiming(SHEET_MIN, SHEET_OPEN);
     if (selectedAddress?.coordinate) {
       setMapCenter([...selectedAddress.coordinate]);
       setMapZoom(13.8);
@@ -413,7 +415,7 @@ export default function AddressesScreen() {
             projected > SHEET_MID || (sheetH.value > SHEET_MID && e.velocityY < -400)
               ? SHEET_MAX
               : SHEET_MIN;
-          sheetH.value = withSpring(target, { damping: 22, stiffness: 220, mass: 0.9 });
+          sheetH.value = withSpring(target, { ...SHEET_SPRING, velocity: -e.velocityY });
         }),
     [dragStartH, sheetH],
   );
@@ -439,7 +441,7 @@ export default function AddressesScreen() {
     setMapZoom(14.2);
     setMode('list');
     setEditingId(null);
-    sheetH.value = withSpring(SHEET_MIN, { damping: 22, stiffness: 220, mass: 0.9 });
+    sheetH.value = withTiming(SHEET_MIN, SHEET_OPEN);
   };
 
   const saveDefault = () => {
@@ -585,7 +587,7 @@ export default function AddressesScreen() {
               { paddingBottom: Math.max(14, insets.bottom + 8), backgroundColor: colors.bg },
             ]}>
             <View style={styles.sheetHandle}>
-              <View style={[styles.sheetHandleBar, { backgroundColor: colors.border }]} />
+              <View style={[styles.sheetHandleBar, { backgroundColor: colors.grabber }]} />
             </View>
 
             {editing ? (

@@ -1,6 +1,6 @@
 import { AppImage } from '@/components/AppImage';
 import { MotionView, PressScale, enterZoom } from '@/components/motion';
-import { heroChrome, type AppColors, displayFont, floatingAboveTabBar } from '@/constants/theme';
+import { heroChrome, inkOnSurface, type AppColors, displayFont, floatingAboveTabBar } from '@/constants/theme';
 import { useColors, useTheme } from '@/context/ThemeContext';
 import { Product, productReviewStats } from '@/data/catalog';
 import { useCart, useProductQty } from '@/context/CartContext';
@@ -12,7 +12,7 @@ import { softShadow } from '@/lib/shadow';
 import { Feather, Ionicons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
 import { router, useFocusEffect } from 'expo-router';
-import { memo, useCallback, useLayoutEffect, useMemo, useRef } from 'react';
+import { memo, useCallback, useMemo, useRef } from 'react';
 import {
   Animated,
   type ImageSourcePropType,
@@ -406,11 +406,8 @@ export function SearchField({
     node.focus();
   }, []);
 
-  useLayoutEffect(() => {
-    if (!autoFocus || !onChangeText) return;
-    focusNow();
-  }, [autoFocus, onChangeText, focusNow]);
-
+  // Only focus when THIS screen is focused. Mount-time autoFocus would open the
+  // keyboard on load because the hidden search tab is kept mounted (`lazy: false`).
   useFocusEffect(
     useCallback(() => {
       if (!autoFocus || !onChangeText) return;
@@ -436,7 +433,6 @@ export function SearchField({
           returnKeyType="search"
           placeholder={placeholder}
           placeholderTextColor={colors.placeholder}
-          autoFocus={autoFocus}
           showSoftInputOnFocus
           autoCorrect={false}
           autoCapitalize="none"
@@ -488,8 +484,8 @@ function CategoryTileOverlay() {
   }
   return (
     <LinearGradient
-      colors={['rgba(0,0,0,0)', 'rgba(0,0,0,0.45)', 'rgba(0,0,0,0.85)']}
-      locations={[0, 0.45, 1]}
+      colors={['rgba(0,0,0,0)', 'rgba(0,0,0,0.38)', 'rgba(0,0,0,0.78)']}
+      locations={[0.35, 0.7, 1]}
       style={[StyleSheet.absoluteFill, { pointerEvents: 'none' }]}
     />
   );
@@ -564,8 +560,8 @@ export function IconCircle({
   onPress?: () => void;
   bg?: string;
   color?: string;
-  /** Frosted control for warm tab heroes — adapts ink/surface to light/dark. */
-  variant?: 'default' | 'hero';
+  /** Frosted on gradients (`hero`) or solid chip on photos (`onPhoto`). */
+  variant?: 'default' | 'hero' | 'onPhoto';
   badge?: number;
   accessibilityLabel?: string;
 }) {
@@ -574,9 +570,14 @@ export function IconCircle({
   const styles = useMemo(() => createStyles(colors), [colors]);
   const chrome = useMemo(() => heroChrome(scheme), [scheme]);
   const isHero = variant === 'hero';
-  const resolvedBg = bg ?? (isHero ? chrome.iconBg : colors.white);
-  const resolvedColor = color ?? (isHero ? chrome.iconColor : colors.text);
-  const resolvedBorder = isHero ? chrome.iconBorder : colors.border;
+  const isOnPhoto = variant === 'onPhoto';
+  const resolvedBg = bg ?? (isOnPhoto ? '#ffffff' : isHero ? chrome.iconBg : colors.white);
+  const resolvedColor = color ?? (isOnPhoto ? '#1c1613' : inkOnSurface(resolvedBg));
+  const resolvedBorder = isOnPhoto
+    ? 'rgba(28,22,19,0.16)'
+    : isHero
+      ? chrome.iconBorder
+      : colors.border;
 
   return (
     <PressScale
@@ -586,6 +587,7 @@ export function IconCircle({
       accessibilityLabel={accessibilityLabel}
       style={[
         styles.iconCircle,
+        isOnPhoto && styles.iconCircleOnPhoto,
         { backgroundColor: resolvedBg, borderColor: resolvedBorder },
       ]}
       scaleTo={0.92}>
@@ -656,7 +658,7 @@ export const CartTotalFab = memo(function CartTotalFab({
     <Reanimated.View entering={enterZoom(80)} style={[styles.totalFab, { bottom: resolvedBottom }]}>
       <PressScale style={styles.totalFabInner} onPress={() => navigateTab(tabPaths.cart)} scaleTo={0.96}>
         <View style={styles.totalFabIcon}>
-          <Feather name="shopping-bag" size={15} color={colors.onAccent} />
+          <Feather name="shopping-bag" size={13} color={colors.onAccent} />
           {count > 0 ? (
             <View style={styles.totalFabBadge}>
               <Text style={styles.totalFabBadgeText}>{count > 99 ? '99+' : count}</Text>
@@ -667,7 +669,7 @@ export const CartTotalFab = memo(function CartTotalFab({
           <Text style={styles.totalFabText}>{formatFcfa(subtotal)}</Text>
           {showCompare ? <Text style={styles.totalFabOld}>{formatFcfa(listSubtotal)}</Text> : null}
         </View>
-        <Feather name="chevron-right" size={16} color="rgba(255,255,255,0.85)" />
+        <Feather name="chevron-right" size={14} color="rgba(255,255,255,0.85)" />
       </PressScale>
     </Reanimated.View>
   );
@@ -1034,12 +1036,12 @@ function createStyles(colors: AppColors) {
     tilePressed: { opacity: 0.92, transform: [{ scale: 0.98 }] },
     tile: {
       flex: 1,
-      borderRadius: 18,
+      borderRadius: 20,
       overflow: 'hidden',
       justifyContent: 'flex-end',
       backgroundColor: colors.border,
       borderWidth: 1,
-      borderColor: 'rgba(255,255,255,0.25)',
+      borderColor: 'rgba(255,255,255,0.18)',
       ...Platform.select({
         ios: {
           shadowColor: colors.text,
@@ -1054,14 +1056,14 @@ function createStyles(colors: AppColors) {
     tileFrame: {
       ...StyleSheet.absoluteFillObject,
       overflow: 'hidden',
-      borderRadius: 18,
+      borderRadius: 20,
     },
     tileImageZoom: {
       position: 'absolute',
-      width: '155%',
-      height: '155%',
-      top: '-27.5%',
-      left: '-27.5%',
+      width: '118%',
+      height: '118%',
+      top: '-9%',
+      left: '-9%',
     },
     tileImage: {
       width: '100%',
@@ -1069,7 +1071,7 @@ function createStyles(colors: AppColors) {
       ...(Platform.OS === 'web' ? { objectFit: 'cover' as const } : {}),
     },
     tileGradientWeb: {
-      backgroundImage: 'linear-gradient(to bottom, rgba(0,0,0,0) 20%, rgba(0,0,0,0.55) 70%, rgba(0,0,0,0.85) 100%)',
+      backgroundImage: 'linear-gradient(to bottom, rgba(0,0,0,0) 38%, rgba(0,0,0,0.42) 72%, rgba(0,0,0,0.78) 100%)',
     } as object,
     tileFooter: {
       flexDirection: 'row',
@@ -1077,16 +1079,17 @@ function createStyles(colors: AppColors) {
       justifyContent: 'space-between',
       gap: 8,
       padding: 12,
+      paddingRight: 10,
       zIndex: 1,
       width: '100%',
     },
-    tileTextBlock: { flex: 1, gap: 3 },
+    tileTextBlock: { flex: 1, gap: 2 },
     // Always light: tiles sit on dimmed photos (theme white flips dark).
     tileTitle: {
       color: '#ffffff',
-      fontWeight: '800',
-      fontSize: 15,
-      lineHeight: 19,
+      fontSize: 14,
+      lineHeight: 18,
+      ...displayFont('700'),
       textShadowColor: 'rgba(0,0,0,0.55)',
       textShadowOffset: { width: 0, height: 1 },
       textShadowRadius: 4,
@@ -1100,12 +1103,15 @@ function createStyles(colors: AppColors) {
       textShadowRadius: 3,
     },
     tileArrow: {
-      width: 28,
-      height: 28,
-      borderRadius: 14,
-      backgroundColor: 'rgba(255,255,255,0.28)',
+      width: 26,
+      height: 26,
+      borderRadius: 13,
+      backgroundColor: 'rgba(255,255,255,0.22)',
+      borderWidth: 1,
+      borderColor: 'rgba(255,255,255,0.28)',
       alignItems: 'center',
       justifyContent: 'center',
+      flexShrink: 0,
     },
     cta: {
       backgroundColor: colors.terracotta,
@@ -1124,7 +1130,18 @@ function createStyles(colors: AppColors) {
       alignItems: 'center',
       justifyContent: 'center',
       position: 'relative',
+      overflow: 'visible',
     },
+    iconCircleOnPhoto: Platform.select({
+      web: { boxShadow: '0 4px 14px rgba(28,22,19,0.22)' },
+      default: {
+        shadowColor: '#1c1613',
+        shadowOpacity: 0.22,
+        shadowRadius: 8,
+        shadowOffset: { width: 0, height: 3 },
+        elevation: 6,
+      },
+    }),
     iconCircleBadge: {
       position: 'absolute',
       top: -4,
@@ -1148,20 +1165,20 @@ function createStyles(colors: AppColors) {
     totalFabInner: {
       backgroundColor: colors.terracotta,
       borderRadius: 999,
-      paddingLeft: 12,
-      paddingRight: 14,
-      paddingVertical: 10,
-      minHeight: 52,
+      paddingLeft: 8,
+      paddingRight: 10,
+      paddingVertical: 6,
+      minHeight: 42,
       flexDirection: 'row',
       justifyContent: 'center',
       alignItems: 'center',
-      gap: 10,
+      gap: 8,
       ...softShadow({ y: 8, blur: 28, opacity: 0.2, elevation: 10 }),
     },
     totalFabIcon: {
-      width: 32,
-      height: 32,
-      borderRadius: 16,
+      width: 26,
+      height: 26,
+      borderRadius: 13,
       backgroundColor: 'rgba(255,255,255,0.18)',
       alignItems: 'center',
       justifyContent: 'center',
@@ -1193,7 +1210,7 @@ function createStyles(colors: AppColors) {
     totalFabText: {
       color: colors.onAccent,
       fontWeight: '800',
-      fontSize: 15,
+      fontSize: 13,
       letterSpacing: 0.2,
     },
     totalFabOld: {

@@ -8,10 +8,12 @@ import {
 } from 'react-native';
 import { Gesture } from 'react-native-gesture-handler';
 import {
+  Easing,
   runOnJS,
   useAnimatedStyle,
   useSharedValue,
   withSpring,
+  withTiming,
 } from 'react-native-reanimated';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
@@ -24,13 +26,36 @@ export const SHEET_MIN = Math.round(WINDOW_H * SHEET_MIN_RATIO);
 export const SHEET_MAX = Math.round(WINDOW_H - SHEET_TOP_GAP);
 export const SHEET_COLLAPSED_TY = Math.max(0, SHEET_MAX - SHEET_MIN);
 
-/** Soft spring — translateY stays on the compositor (no layout thrash). */
-export const SHEET_SPRING = { damping: 24, stiffness: 190, mass: 0.88 } as const;
+/** Drag snap — follows the finger, settles without bounce. */
+export const SHEET_SPRING = {
+  damping: 28,
+  stiffness: 340,
+  mass: 0.55,
+  overshootClamping: true,
+} as const;
+
+/** Programmatic snap when there is no finger velocity. */
+export const SHEET_OPEN = {
+  duration: 240,
+  easing: Easing.bezier(0.32, 0.72, 0, 1),
+} as const;
+
+/** Dismiss off-screen. */
+export const SHEET_DISMISS = {
+  duration: 140,
+  easing: Easing.bezier(0.4, 0, 1, 1),
+} as const;
 
 export type ExpandableSheetOptions = {
   minRatio?: number;
   /** Start fully open under the icon bar (e.g. Chat inbox). */
   initiallyExpanded?: boolean;
+  /** Keep the sheet fully open — no collapse / drag-down. */
+  lockExpanded?: boolean;
+  /** Slide up from below the screen on mount. */
+  animateEnter?: boolean;
+  /** Collapse only from the grabber — content scroll never steals the sheet. */
+  lockCollapseToHandle?: boolean;
 };
 
 /**
@@ -46,7 +71,10 @@ export function useExpandableSheet(
       ? { minRatio: minRatioOrOptions }
       : minRatioOrOptions;
   const minRatio = options.minRatio ?? SHEET_MIN_RATIO;
-  const initiallyExpanded = options.initiallyExpanded ?? false;
+  const lockExpanded = options.lockExpanded ?? false;
+  const animateEnter = options.animateEnter ?? false;
+  const lockCollapseToHandle = options.lockCollapseToHandle ?? false;
+  const initiallyExpanded = lockExpanded || (options.initiallyExpanded ?? false);
 
   const insets = useSafeAreaInsets();
   const { height } = useWindowDimensions();
@@ -56,21 +84,41 @@ export function useExpandableSheet(
   const sheetMax = Math.round(height - sheetTopGap);
   const collapsedOffset = Math.max(0, sheetMax - sheetMin);
 
-  const sheetTY = useSharedValue(initiallyExpanded ? 0 : SHEET_COLLAPSED_TY);
-  const dragStartTY = useSharedValue(initiallyExpanded ? 0 : SHEET_COLLAPSED_TY);
-  const maxTY = useSharedValue(SHEET_COLLAPSED_TY);
+  const sheetTY = useSharedValue(
+    animateEnter ? height : initiallyExpanded ? 0 : collapsedOffset,
+  );
+  const dragStartTY = useSharedValue(initiallyExpanded ? 0 : collapsedOffset);
+  const maxTY = useSharedValue(collapsedOffset);
   const expanded = useSharedValue(initiallyExpanded ? 1 : 0);
   const scrollY = useSharedValue(0);
   const scrollExpandedRef = useRef(initiallyExpanded);
   const animatingRef = useRef(false);
+  const enteringRef = useRef(animateEnter);
   const lastScrollYRef = useRef(0);
   const sheetScrollRef = useRef<ScrollView>(null);
+  /** Always on — disabling scroll on web made the sheet impossible to open. */
+  const listScrollEnabled = true;
 
   useEffect(() => {
     maxTY.value = collapsedOffset;
-    const target = expanded.value ? 0 : collapsedOffset;
-    sheetTY.value = withSpring(target, SHEET_SPRING);
-  }, [collapsedOffset, sheetTY, maxTY, expanded]);
+    if (lockExpanded) {
+      sheetTY.value = 0;
+      expanded.value = 1;
+      return;
+    }
+    if (enteringRef.current || animatingRef.current) return;
+    sheetTY.value = expanded.value ? 0 : collapsedOffset;
+  }, [collapsedOffset, sheetTY, maxTY, expanded, lockExpanded]);
+
+  const enterStartedRef = useRef(false);
+  useEffect(() => {
+    if (!animateEnter || enterStartedRef.current) return;
+    enterStartedRef.current = true;
+    const target = initiallyExpanded ? 0 : collapsedOffset;
+    sheetTY.value = withTiming(target, SHEET_OPEN);
+    enteringRef.current = false;
+    animatingRef.current = false;
+  }, [animateEnter, collapsedOffset, initiallyExpanded, sheetTY]);
 
   const markScrollExpanded = useCallback(() => {
     animatingRef.current = false;
@@ -86,32 +134,23 @@ export function useExpandableSheet(
   }, [scrollY]);
 
   const expandFromScroll = useCallback(() => {
-    if (scrollExpandedRef.current || animatingRef.current) return;
-    animatingRef.current = true;
+    if (scrollExpandedRef.current) return;
+    scrollExpandedRef.current = true;
+    animatingRef.current = false;
     expanded.value = 1;
-    sheetTY.value = withSpring(0, SHEET_SPRING, (finished) => {
-      if (finished) runOnJS(markScrollExpanded)();
-      else runOnJS(() => {
-        animatingRef.current = false;
-      })();
-    });
-  }, [expanded, sheetTY, markScrollExpanded]);
+    sheetTY.value = withSpring(0, SHEET_SPRING);
+  }, [expanded, sheetTY]);
 
   const collapseFromScroll = useCallback(() => {
-    if (!scrollExpandedRef.current || animatingRef.current) return;
-    animatingRef.current = true;
+    if (lockExpanded || lockCollapseToHandle) return;
+    if (!scrollExpandedRef.current) return;
     scrollExpandedRef.current = false;
     lastScrollYRef.current = 0;
     scrollY.value = 0;
     expanded.value = 0;
     sheetScrollRef.current?.scrollTo({ y: 0, animated: false });
-    sheetTY.value = withSpring(maxTY.value, SHEET_SPRING, (finished) => {
-      runOnJS(clearScrollExpanded)();
-      if (!finished) {
-        // still clear flags via clearScrollExpanded
-      }
-    });
-  }, [expanded, sheetTY, maxTY, scrollY, clearScrollExpanded]);
+    sheetTY.value = withSpring(maxTY.value, SHEET_SPRING);
+  }, [expanded, sheetTY, maxTY, scrollY, lockExpanded, lockCollapseToHandle]);
 
   const onSheetScroll = useCallback(
     (e: NativeSyntheticEvent<NativeScrollEvent>) => {
@@ -122,9 +161,12 @@ export function useExpandableSheet(
 
       if (animatingRef.current) return;
 
-      // Collapsed → scroll up opens the sheet.
+      // Collapsed → any upward content movement opens immediately.
       if (!scrollExpandedRef.current) {
-        if (y > 8) expandFromScroll();
+        if (y > 0) {
+          expandFromScroll();
+          sheetScrollRef.current?.scrollTo({ y: 0, animated: false });
+        }
         return;
       }
 
@@ -137,7 +179,6 @@ export function useExpandableSheet(
   );
 
   const onSheetScrollBeginDrag = useCallback(() => {
-    if (animatingRef.current) return;
     if (!scrollExpandedRef.current) expandFromScroll();
   }, [expandFromScroll]);
 
@@ -160,19 +201,33 @@ export function useExpandableSheet(
     [expandFromScroll],
   );
 
+  const onSheetWheel = useCallback(
+    (e: { nativeEvent?: { deltaY?: number }; deltaY?: number }) => {
+      if (scrollExpandedRef.current) return;
+      const dy = e.nativeEvent?.deltaY ?? e.deltaY ?? 0;
+      if (dy > 0) expandFromScroll();
+    },
+    [expandFromScroll],
+  );
+
   const finishHandle = useCallback(
     (toExpanded: boolean) => {
+      if (lockExpanded) {
+        markScrollExpanded();
+        return;
+      }
       if (toExpanded) markScrollExpanded();
       else clearScrollExpanded();
     },
-    [markScrollExpanded, clearScrollExpanded],
+    [markScrollExpanded, clearScrollExpanded, lockExpanded],
   );
 
   const sheetHandleGesture = useMemo(
     () =>
       Gesture.Pan()
+        .enabled(!lockExpanded)
         .maxPointers(1)
-        .activeOffsetY([-6, 6])
+        .activeOffsetY([-4, 4])
         .failOffsetX([-48, 48])
         .onStart(() => {
           'worklet';
@@ -191,9 +246,43 @@ export function useExpandableSheet(
           if (isTap) {
             toExpanded = sheetTY.value > mid * 0.35;
           } else {
-            const projected = sheetTY.value + e.velocityY * 0.14;
-            toExpanded = e.velocityY < -320 || (e.velocityY <= 320 && projected < mid);
+            const projected = sheetTY.value + e.velocityY * 0.12;
+            toExpanded = e.velocityY < -80 || (e.velocityY <= 180 && projected < mid);
           }
+          expanded.value = toExpanded ? 1 : 0;
+          sheetTY.value = withSpring(toExpanded ? 0 : maxTY.value, {
+            ...SHEET_SPRING,
+            velocity: e.velocityY,
+          });
+          runOnJS(finishHandle)(toExpanded);
+        }),
+    [dragStartTY, sheetTY, maxTY, expanded, finishHandle, lockExpanded],
+  );
+
+  /**
+   * Collapsed sheet: finger/trackpad up moves the sheet 1:1 (does not wait for ScrollView).
+   */
+  const sheetExpandGesture = useMemo(
+    () =>
+      Gesture.Pan()
+        .maxPointers(1)
+        .activeOffsetY(-2)
+        .failOffsetX([-56, 56])
+        .onStart(() => {
+          'worklet';
+          dragStartTY.value = sheetTY.value;
+        })
+        .onUpdate((e) => {
+          'worklet';
+          if (expanded.value === 1) return;
+          if (e.translationY > 0) return;
+          const next = dragStartTY.value + e.translationY;
+          sheetTY.value = Math.min(maxTY.value, Math.max(0, next));
+        })
+        .onEnd((e) => {
+          'worklet';
+          if (expanded.value === 1) return;
+          const toExpanded = e.velocityY < -40 || e.translationY < -6;
           expanded.value = toExpanded ? 1 : 0;
           sheetTY.value = withSpring(toExpanded ? 0 : maxTY.value, {
             ...SHEET_SPRING,
@@ -211,6 +300,7 @@ export function useExpandableSheet(
   const sheetPullDownGesture = useMemo(
     () =>
       Gesture.Pan()
+        .enabled(!lockExpanded && !lockCollapseToHandle)
         .maxPointers(1)
         .activeOffsetY(10)
         .failOffsetY([-12, -1])
@@ -229,9 +319,9 @@ export function useExpandableSheet(
           'worklet';
           if (expanded.value !== 1) return;
           if (scrollY.value > 4 && sheetTY.value < 1) return;
-          const mid = maxTY.value * 0.45;
-          const toExpanded =
-            e.velocityY < 280 && sheetTY.value + e.velocityY * 0.12 < mid;
+          const pulledFar = sheetTY.value > maxTY.value * 0.2 || e.translationY > 40;
+          const flickedDown = e.velocityY > 380;
+          const toExpanded = !pulledFar && !flickedDown;
           expanded.value = toExpanded ? 1 : 0;
           sheetTY.value = withSpring(toExpanded ? 0 : maxTY.value, {
             ...SHEET_SPRING,
@@ -239,12 +329,30 @@ export function useExpandableSheet(
           });
           runOnJS(finishHandle)(toExpanded);
         }),
-    [dragStartTY, sheetTY, maxTY, expanded, scrollY, finishHandle],
+    [dragStartTY, sheetTY, maxTY, expanded, scrollY, finishHandle, lockExpanded, lockCollapseToHandle],
+  );
+
+  const sheetScrollGesture = useMemo(
+    () =>
+      lockCollapseToHandle
+        ? Gesture.Simultaneous(sheetExpandGesture, Gesture.Native())
+        : Gesture.Simultaneous(sheetExpandGesture, sheetPullDownGesture, Gesture.Native()),
+    [sheetExpandGesture, sheetPullDownGesture, lockCollapseToHandle],
   );
 
   const sheetAnimStyle = useAnimatedStyle(() => ({
     transform: [{ translateY: sheetTY.value }],
   }));
+
+  const dismissSheet = useCallback(
+    (onDone?: () => void) => {
+      animatingRef.current = true;
+      sheetTY.value = withTiming(height, SHEET_DISMISS, (finished) => {
+        if (finished && onDone) runOnJS(onDone)();
+      });
+    },
+    [height, sheetTY],
+  );
 
   return {
     sheetMin,
@@ -252,12 +360,16 @@ export function useExpandableSheet(
     sheetAnimStyle,
     sheetHandleGesture,
     sheetPullDownGesture,
+    sheetScrollGesture,
     sheetScrollRef,
+    listScrollEnabled,
     expandFromScroll,
     collapseFromScroll,
+    dismissSheet,
     onSheetScroll,
     onSheetScrollBeginDrag,
     onSheetScrollEndDrag,
     onFiltersScroll,
+    onSheetWheel,
   };
 }

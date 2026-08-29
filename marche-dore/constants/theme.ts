@@ -18,6 +18,8 @@ export const lightColors = {
   /** Soft selected / unread wash. */
   selectSoft: '#fffdfb',
   overlay: 'rgba(28,22,19,0.45)',
+  /** Sheet drag handle — stays visible on bg in both modes. */
+  grabber: '#c4b8ae',
 } as const;
 
 export const darkColors = {
@@ -36,11 +38,46 @@ export const darkColors = {
   successSoft: 'rgba(106,173,116,0.18)',
   selectSoft: 'rgba(232,166,58,0.14)',
   overlay: 'rgba(0,0,0,0.55)',
+  grabber: '#7d736b',
 } as const;
 
 export type AppColors = { -readonly [K in keyof typeof lightColors]: string };
 
 export type ColorScheme = 'light' | 'dark';
+
+/** Pick dark or light ink so an icon stays readable on `bg` (including translucent frosts). */
+export function inkOnSurface(bg: string): string {
+  const hex = bg.trim().match(/^#([0-9a-f]{6})$/i);
+  const rgba = bg
+    .trim()
+    .match(/^rgba?\(\s*([\d.]+)\s*,\s*([\d.]+)\s*,\s*([\d.]+)(?:\s*,\s*([\d.]+))?\s*\)$/i);
+  let r: number;
+  let g: number;
+  let b: number;
+  let a = 1;
+  if (hex) {
+    const n = parseInt(hex[1], 16);
+    r = (n >> 16) & 255;
+    g = (n >> 8) & 255;
+    b = n & 255;
+  } else if (rgba) {
+    r = Number(rgba[1]);
+    g = Number(rgba[2]);
+    b = Number(rgba[3]);
+    a = rgba[4] != null ? Number(rgba[4]) : 1;
+  } else {
+    return lightColors.text;
+  }
+  // Composite translucent whites onto a dark photo/hero so 12% frost stays “dark”.
+  const br = 28;
+  const bgC = 22;
+  const bb = 19;
+  const cr = r * a + br * (1 - a);
+  const cg = g * a + bgC * (1 - a);
+  const cb = b * a + bb * (1 - a);
+  const lum = (0.2126 * cr + 0.7152 * cg + 0.0722 * cb) / 255;
+  return lum > 0.55 ? lightColors.text : darkColors.text;
+}
 
 /** Frosted chrome + ink for gold/warm tab heroes (Accueil, Explorer, etc.). */
 export function heroChrome(scheme: ColorScheme) {

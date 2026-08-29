@@ -19,7 +19,7 @@ import {
   type Product,
 } from '@/data/catalog';
 import { formatFcfa } from '@/lib/format';
-import { useExpandableSheet } from '@/lib/expandableSheet';
+import { useExpandableSheet, SHEET_MIN_RATIO } from '@/lib/expandableSheet';
 import { navigateTab, tabPaths } from '@/lib/navigation';
 import { Feather } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
@@ -39,7 +39,7 @@ import {
   useWindowDimensions,
   View,
 } from 'react-native';
-import { Gesture, GestureDetector, GestureHandlerRootView } from 'react-native-gesture-handler';
+import { GestureDetector, GestureHandlerRootView } from 'react-native-gesture-handler';
 import Animated, {
   useAnimatedStyle,
   useSharedValue,
@@ -48,8 +48,9 @@ import Animated, {
 } from 'react-native-reanimated';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
-const HERO_H = Math.round(432 * 1.08);
 const GRID_IMAGE_HEIGHT = 168;
+/** Sheet top radius — photo tucks under the rounded edge so there is no gap. */
+const SHEET_IMAGE_OVERLAP = 28;
 
 function NutriRow({ label, value }: { label: string; value: string }) {
   const colors = useColors();
@@ -68,23 +69,24 @@ export default function ProductScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
   const product = getProduct(id);
   const insets = useSafeAreaInsets();
-  const { width: windowWidth } = useWindowDimensions();
+  const { width: windowWidth, height: windowHeight } = useWindowDimensions();
   const {
     sheetMin,
     sheetMax,
     sheetAnimStyle,
     sheetHandleGesture,
-    sheetPullDownGesture,
+    sheetScrollGesture,
     sheetScrollRef,
+    listScrollEnabled,
     onSheetScroll,
     onSheetScrollBeginDrag,
     onSheetScrollEndDrag,
     onFiltersScroll,
-  } = useExpandableSheet();
-  const sheetScrollGesture = useMemo(
-    () => Gesture.Simultaneous(sheetPullDownGesture, Gesture.Native()),
-    [sheetPullDownGesture],
-  );
+    onSheetWheel,
+  } = useExpandableSheet({
+    minRatio: SHEET_MIN_RATIO * 0.7,
+    lockCollapseToHandle: true,
+  });
   const { add, setQty: setCartQty, lines, count: cartCount, subtotal: cartSubtotal, listSubtotal: cartListSubtotal } =
     useCart();
   const { isFavorite, toggle } = useFavorites();
@@ -110,6 +112,8 @@ export default function ProductScreen() {
   const ctaScale = useSharedValue(1);
   const ctaAnimStyle = useAnimatedStyle(() => ({ transform: [{ scale: ctaScale.value }] }));
   const [viewerOpen, setViewerOpen] = useState(false);
+  const heroHeight = Math.max(320, windowHeight - sheetMin + SHEET_IMAGE_OVERLAP);
+  const dotsBottom = SHEET_IMAGE_OVERLAP + 12;
 
   useEffect(() => {
     setDiscoverPages(1);
@@ -240,12 +244,12 @@ export default function ProductScreen() {
     <Screen>
       <Page style={styles.page} edgeToEdge>
         <GestureHandlerRootView style={styles.flex}>
-        <View style={[styles.heroBackdrop, { height: HERO_H }]} pointerEvents="box-none">
+        <View style={[styles.heroBackdrop, { height: heroHeight }]} pointerEvents="box-none">
           <ImagePager
             ref={heroPagerRef}
             images={gallery}
             width={heroWidth}
-            height={HERO_H}
+            height={heroHeight}
             recyclingKeyPrefix={`product-${product.id}`}
             onIndexChange={setHeroIndex}
             onPress={() => openViewer(heroIndex)}
@@ -255,7 +259,7 @@ export default function ProductScreen() {
               <Text style={styles.heroDiscountText}>{product.discount}</Text>
             </View>
           ) : null}
-          <View style={[styles.dots, { bottom: sheetMin + 16, pointerEvents: 'box-none' }]}>
+          <View style={[styles.dots, { bottom: dotsBottom, pointerEvents: 'box-none' }]}>
             {gallery.map((_, i) => (
               <Pressable key={i} onPress={() => goToSlide(i)} hitSlop={8}>
                 <View style={[styles.dot, i === heroIndex && styles.dotOn]} />
@@ -273,7 +277,7 @@ export default function ProductScreen() {
             left={
               <IconCircle
                 name="arrow-left"
-                variant="hero"
+                variant="onPhoto"
                 accessibilityLabel="Retour"
                 onPress={() => router.back()}
               />
@@ -282,19 +286,19 @@ export default function ProductScreen() {
               <View style={styles.navActionsRow}>
                 <IconCircle
                   name="maximize-2"
-                  variant="hero"
+                  variant="onPhoto"
                   accessibilityLabel="Voir les photos"
                   onPress={() => openViewer(heroIndex)}
                 />
                 <IconCircle
                   name="share-2"
-                  variant="hero"
+                  variant="onPhoto"
                   accessibilityLabel="Partager"
                   onPress={shareProduct}
                 />
                 <IconCircle
                   name="heart"
-                  variant="hero"
+                  variant="onPhoto"
                   color={liked ? colors.terracotta : undefined}
                   accessibilityLabel={liked ? 'Retirer des favoris' : 'Ajouter aux favoris'}
                   onPress={() => id && toggle(id)}
@@ -328,10 +332,12 @@ export default function ProductScreen() {
             overScrollMode="auto"
             keyboardShouldPersistTaps="handled"
             nestedScrollEnabled
-            scrollEventThrottle={16}
+            scrollEnabled={listScrollEnabled}
+            scrollEventThrottle={1}
             onScroll={onProductScroll}
             onScrollBeginDrag={onSheetScrollBeginDrag}
-            onScrollEndDrag={onSheetScrollEndDrag}>
+            onScrollEndDrag={onSheetScrollEndDrag}
+            onWheel={onSheetWheel}>
             {gallery.length > 0 ? (
               <ScrollView
                 horizontal
@@ -721,7 +727,7 @@ function createStyles(colors: AppColors) {
     backgroundColor: colors.bg,
     borderTopLeftRadius: 28,
     borderTopRightRadius: 28,
-    paddingTop: 8,
+    paddingTop: 4,
     ...Platform.select({
       web: {
         boxShadow: '0 -12px 40px rgba(0,0,0,0.28)',
@@ -744,10 +750,10 @@ function createStyles(colors: AppColors) {
       : {}),
   },
   sheetHandleBar: {
-    width: 44,
-    height: 4,
+    width: 48,
+    height: 5,
     borderRadius: 999,
-    backgroundColor: colors.border,
+    backgroundColor: colors.grabber,
   },
   sheetScroll: {
     flex: 1,
@@ -946,12 +952,11 @@ function createStyles(colors: AppColors) {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 12,
-    backgroundColor: colors.white,
-    borderTopWidth: 1,
-    borderTopColor: colors.border,
+    backgroundColor: 'transparent',
     paddingHorizontal: 16,
-    paddingTop: 12,
-    paddingBottom: 14 },
+    paddingTop: 8,
+    paddingBottom: 14,
+  },
   footerActions: {
     flex: 1,
     flexDirection: 'row',
