@@ -18,6 +18,12 @@ export type Product = {
   badge?: ProductBadge;
   rating?: number;
   reviews?: number;
+  nutrition?: {
+    energy: string;
+    protein: string;
+    fat: string;
+    carbs: string;
+  };
 };
 
 export type ExploreCategory = {
@@ -638,6 +644,16 @@ export const products: Product[] = [
   ...aisleProducts,
 ];
 
+/** Bundled `require()` snapshots — never replaced by API/SQLite payloads. */
+const bundledProductImages = new Map(products.map((p) => [p.id, p.image]));
+
+export function restoreBundledCatalogImages() {
+  for (const p of products) {
+    const img = bundledProductImages.get(p.id);
+    if (img != null) p.image = img;
+  }
+}
+
 export const popularIds = ['tomates', 'bananes', 'gingembre'];
 export const recommendedIds = [
   'poulet',
@@ -833,6 +849,35 @@ export const popularSuggestions = ['Bissap', 'Plantain', 'Manioc', 'Café', 'Avo
 
 export const recentSearchesDefault = ['Mangues', 'Lait frais', 'Poulet', 'Riz basmati'];
 
+export function isDemoRecentList(list: string[]) {
+  return (
+    list.length === recentSearchesDefault.length &&
+    list.every((term, i) => term === recentSearchesDefault[i])
+  );
+}
+
+/** Tags « Populaires » issus de l’historique du compte (pas du catalogue global). */
+export function popularTermsForAccount(input: {
+  recents: string[];
+  names: string[];
+  limit?: number;
+}): string[] {
+  const limit = input.limit ?? 8;
+  const skip = new Set(input.recents.map((r) => r.trim().toLowerCase()).filter(Boolean));
+  const out: string[] = [];
+  const seen = new Set<string>();
+  for (const raw of input.names) {
+    const term = raw.trim();
+    if (term.length < 2) continue;
+    const key = term.toLowerCase();
+    if (skip.has(key) || seen.has(key)) continue;
+    seen.add(key);
+    out.push(term);
+    if (out.length >= limit) break;
+  }
+  return out;
+}
+
 export type TrendingSearch = {
   term: string;
   rank: number;
@@ -927,6 +972,18 @@ export function productReviewStats(product: Pick<Product, 'id' | 'rating' | 'rev
   };
 }
 
+/** Catalogue + avis du compte connecté. */
+export function liveReviewStats(
+  product: Pick<Product, 'id' | 'rating' | 'reviews'>,
+  extra: { rating: number }[],
+) {
+  const base = productReviewStats(product);
+  if (!extra.length) return base;
+  const total = base.reviews + extra.length;
+  const sum = base.rating * base.reviews + extra.reduce((s, r) => s + r.rating, 0);
+  return { rating: Math.round((sum / total) * 10) / 10, reviews: total };
+}
+
 export function getProducts(ids: string[]) {
   return ids.map(getProduct).filter(Boolean) as Product[];
 }
@@ -989,12 +1046,12 @@ export function searchProducts(query: string, options: SearchOptions = {}) {
   return list;
 }
 
-export function searchSuggestions(query: string, recents: string[] = [], limit = 6) {
+export function searchSuggestions(query: string, recents: string[] = [], extra: string[] = [], limit = 6) {
   const q = query.trim().toLowerCase();
   if (!q) return [];
 
   const fromRecents = recents.filter((term) => term.toLowerCase().includes(q));
-  const fromPopular = popularSuggestions.filter((term) => term.toLowerCase().includes(q));
+  const fromExtra = extra.filter((term) => term.toLowerCase().includes(q));
   const fromProducts = products
     .filter(
       (p) =>
@@ -1004,7 +1061,7 @@ export function searchSuggestions(query: string, recents: string[] = [], limit =
     )
     .map((p) => p.name);
 
-  return [...new Set([...fromRecents, ...fromPopular, ...fromProducts])].slice(0, limit);
+  return [...new Set([...fromRecents, ...fromExtra, ...fromProducts])].slice(0, limit);
 }
 
 export const mangoHero = require('../assets/images/catalog/mango-hero.png');

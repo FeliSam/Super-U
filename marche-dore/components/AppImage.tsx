@@ -17,15 +17,31 @@ type Props = ImageProps & {
   frameStyle?: StyleProp<ViewStyle>;
 };
 
+/** Metro serves bundled assets over http://host:8081/assets/… — not the shop API. */
+function isBundledUri(uri: string) {
+  if (!uri) return false;
+  if (/^(file:|asset:|content:|data:)/i.test(uri)) return true;
+  if (uri.includes('/assets/')) return true;
+  if (/:(8081|8082|19000|19006|8085)\b/.test(uri)) return true;
+  return false;
+}
+
+function isRemoteApiUri(uri: string) {
+  if (/\/catalog\/media\//i.test(uri)) return true;
+  if (/^(blob:)/i.test(uri)) return true;
+  if (/^https?:/i.test(uri) && !isBundledUri(uri)) return true;
+  return false;
+}
+
 /** Metro web packs `require()` as `{ uri, width, height }`, not a numeric module id. */
 function isBundledSource(source: ImageProps['source']): boolean {
   if (source == null) return false;
   if (typeof source === 'number') return true;
-  if (typeof source === 'string') return !/^https?:\/\//i.test(source);
+  if (typeof source === 'string') return !isRemoteApiUri(source);
   if (Array.isArray(source)) return source.length > 0 && source.every(isBundledSource);
   const uri = (source as { uri?: string }).uri;
   if (!uri) return true;
-  return !/^https?:\/\//i.test(uri);
+  return !isRemoteApiUri(uri);
 }
 
 /** Catalog image with blurhash + solid frame placeholder. Local sources paint from cache. */
@@ -45,7 +61,7 @@ export const AppImage = memo(function AppImage({
   const bundled = isBundledSource(source);
   const resolvedTransition = transition ?? (bundled || Platform.OS === 'web' ? 0 : 80);
 
-  if (Platform.OS === 'web' && bundled) {
+  if (bundled) {
     const resizeMode: ImageResizeMode =
       contentFit === 'contain' ? 'contain' : contentFit === 'fill' ? 'stretch' : 'cover';
     return (
@@ -55,7 +71,7 @@ export const AppImage = memo(function AppImage({
           style={[styles.image, style]}
           resizeMode={resizeMode}
           accessibilityIgnoresInvertColors
-          {...({ loading: 'eager', fetchPriority: 'high' } as object)}
+          {...(Platform.OS === 'web' ? ({ loading: 'eager', fetchPriority: 'high' } as object) : null)}
         />
       </View>
     );
@@ -67,7 +83,7 @@ export const AppImage = memo(function AppImage({
         {...rest}
         source={source}
         style={[styles.image, style]}
-        placeholder={bundled ? undefined : placeholder}
+        placeholder={placeholder}
         placeholderContentFit={placeholderContentFit}
         transition={resolvedTransition}
         cachePolicy={cachePolicy}
