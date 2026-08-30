@@ -1,0 +1,51 @@
+{
+  "expo": {
+    "name": "CourseGo",
+    "slug": "coursego",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "icon": "./assets/images/icon.png",
+    "scheme": "coursego",
+    "userInterfaceStyle": "light",
+    "ios": {
+      "supportsTablet": true,
+      "infoPlist": {
+        "NSLocationWhenInUseUsageDescription": "CourseGo utilise votre position pendant les livraisons en route."
+      }
+    },
+    "android": {
+      "edgeToEdgeEnabled": true,
+      "adaptiveIcon": {
+        "backgroundColor": "#0d9488",
+        "foregroundImage": "./assets/images/icon.png"
+      },
+      "permissions": ["ACCESS_COARSE_LOCATION", "ACCESS_FINE_LOCATION"]
+    },
+    "web": {
+      "bundler": "metro",
+      "output": "single",
+      "favicon": "./assets/images/favicon.png"
+    },
+    "plugins": [
+      "expo-router",
+      [
+        "expo-splash-screen",
+        {
+          "backgroundColor": "#fafaf9"
+        }
+      ],
+      "expo-asset",
+      "expo-image",
+      [
+        "expo-location",
+        {
+          "locationWhenInUsePermission": "CourseGo utilise votre position pendant les livraisons en route."
+        }
+      ]
+    ],
+    "experiments": {
+      "typedRoutes": true,
+      "asyncRoutes": false
+    }
+  }
+}

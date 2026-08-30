@@ -1,0 +1,443 @@
+================================================================================
+PROMPT AGENT — APP COURSE MARCHÉ DORÉ
+Copie-colle CE FICHIER entier dans un nouvel agent Cursor.
+Ne pas réécrire l’app boutique. Ne pas inventer une 2e base.
+================================================================================
+
+TU ES un agent qui construit / termine la DEUXIÈME application du monorepo SuperU :
+l’app STAFF « course » (picking magasin + livraison moto).
+
+Dossier Expo (celui du monorepo) : CourseGO
+Slug Expo : coursego
+Scheme : coursego
+Nom affiché : CourseGo
+UI en français (Bénin, Cotonou / Ganhi).
+
+================================================================================
+0) CONTEXTE PRODUIT (lire avant de coder)
+================================================================================
+
+Deux apps, UNE vérité Postgres.
+
+1) marche-dore  = app CLIENT (courses alimentaires, panier, checkout, suivi).
+   Auth : public.users + public.sessions.
+   Démo client : demo@marchedore.bj / marche2024
+
+2) CourseGO = app STAFF (coursier qui rassemble ET livre).
+   Auth : ops.staff + ops.staff_sessions. JAMAIS le login client.
+   Démo staff (les DEUX sont coursiers complets, can_pick + can_deliver) :
+     picker@marchedore.bj  / marche2024   → Koffi Adjovi, magasin su-aeroport, moto
+     courier@marchedore.bj / marche2024   → Moussa Ndiaye, magasin su-aeroport, moto
+
+Le même ops.staff.id PEUT être picker_id ET courier_id d’une même commande
+(coursier solo). La vue ops.v_delivery_board expose same_handler = true dans ce cas.
+
+API unique : server/ (Hono + pg), port 8787.
+Postgres : docker-compose à la racine SuperU
+  user marche / mdp marche_local / db marche_dore / port 5432
+
+Schémas :
+  public  = boutique (users, orders JSON payload, order_lines, stores…)
+  ops     = picking, courses, livraisons, staff, GPS, events
+  comms   = threads, messages, calls, call_signals, devices
+
+Règle d’or : l’app course N’ÉCRIT PAS le JSON client comme source de vérité.
+Elle avance pick_jobs / deliveries. Le serveur mappe vers le statut boutique
+via public.map_ops_to_shop_status et met managed_by = 'ops' + courierName/Phone
+dans le payload pour que le client voie le vrai livreur.
+
+NE PAS :
+- recréer le catalogue JS dans l’app course (lire order_lines + /ops/orders/:id)
+- simuler Moussa en dur côté client
+- ouvrir tel: GSM pour le client (appels IN-APP)
+- inventer une timeline fake 25s/45s
+- committer sans demande
+- modifier le plan Cursor s’il y en a un
+- casser marche-dore
+
+Expo : LIRE https://docs.expo.dev/versions/v57.0.0/ avant d’écrire du code.
+Stack alignée sur marche-dore : Expo ~57, expo-router, RN 0.86, reanimated 4,
+gesture-handler, MapLibre, thème or/terracotta/crème (adapter le chrome
+« terrain / moto » sans copier le catalogue promo).
+
+================================================================================
+1) OBJECTIF DE CETTE APP (périmètre jusqu’aux appels)
+================================================================================
+
+Un coursier se connecte, voit les jobs de son magasin, rassemble le panier,
+prend la livraison, envoie sa position GPS, parle et appelle le client
+dans l’appli, livre (éventuellement encaisse COD), clôture.
+
+Parcours cible bout-en-bout :
+
+A. Login staff (email + mot de passe) → token Bearer ops.
+B. Tableau de bord : 2 files
+     - À rassembler (pick_jobs queued/assigned/picking)
+     - À livrer (deliveries unassigned ou à moi)
+C. Claim pick → start → cocher les lignes (picked_qty / unavailable / note) → pack.
+D. Claim delivery → ouvre/attache une ops.courses (tournée).
+E. Statuts livraison dans l’ordre :
+     assigned → at_store → picked_up → en_route → arrived → delivered
+     (ou failed + reason)
+F. POST /ops/location pendant en_route (lng/lat/heading/speedMps).
+G. Carte Cotonou (MapLibre) magasin → dropoff, overlay GPS coursier.
+H. Chat fil courier-{orderId} (comms) avec le client de la commande.
+I. Appel in-app (audio d’abord) : sonnerie, décrocher, muet, haut-parleur,
+   clavier DTMF, attente, caméra simulée puis vraie, réduire, raccrocher.
+   Persister l’appel dans comms.calls + bulle kind=call dans comms.messages.
+J. Si WebRTC pas encore branché : MÊME UX que marche-dore (simulation visuelle)
+   MAIS écrire quand même les lignes comms.* pour que le client les voie
+   dès que son chat sera branché sur l’API (ne plus rester 100 % local).
+
+================================================================================
+2) MACHINES D’ÉTAT (respecter STRICTEMENT)
+================================================================================
+
+Boutique public.orders.status (ce que voit le client) :
+  confirmed | preparing | shipping | delivered | cancelled
+
+Picking ops.pick_jobs.status :
+  queued → assigned → picking → packed
+  + cancelled
+
+Livraison ops.deliveries.status :
+  unassigned | offered | assigned | at_store | picked_up
+  | en_route | arrived | delivered | failed | cancelled
+
+Tournée ops.courses.status :
+  open | in_progress | completed | cancelled
+  Une course ouverte/in_progress par coursier ; claim delivery s’y accroche.
+  completed quand plus aucune delivery de la tournée n’est ouverte.
+
+Mapping serveur (déjà en SQL) public.map_ops_to_shop_status(pick, del) :
+  cancelled si pick ou del cancelled
+  delivered si del = delivered
+  shipping si del IN (en_route, arrived, picked_up)
+  preparing si pick IN (picking, assigned, packed) OU del IN (assigned, at_store)
+  sinon confirmed
+
+Donc : packer sans claim delivery ⇒ client encore « préparation ».
+Claim delivery + at_store ⇒ preparing.
+picked_up / en_route ⇒ shipping + GPS visible client via GET /me/orders/:id/live.
+
+Appels comms.calls.status :
+  initiated → ringing → accepted → ended
+  ou rejected | canceled | missed | failed
+
+Un seul appel live par thread (index unique statuses initiated|ringing|accepted).
+
+================================================================================
+3) API DÉJÀ EXISTANTE (server/src/ops.ts) — UTILISER TELLE QUELLE
+================================================================================
+
+Base : EXPO_PUBLIC_API_URL (défaut http://localhost:8787)
+Header : Authorization: Bearer <ops.staff_sessions.token>
+JSON { ok: true|false, error? }
+
+POST /ops/login
+  body { email, password }
+  → { token, staff: { id, email, phone, firstName, lastName, role, canPick, canDeliver, storeId, vehicle } }
+
+GET /ops/me
+  → { staff }
+
+GET /ops/pick-jobs
+  403 si !canPick
+  → { jobs: rows de ops.v_pick_board }  (queued/assigned/picking du store)
+
+POST /ops/pick-jobs/:id/claim     (id = pick-{orderId})
+  queued → assigned, picker_id = moi
+  409 si déjà pris
+
+POST /ops/pick-jobs/:id/start
+  assigned|picking → picking, started_at
+
+PATCH /ops/pick-jobs/:id/lines
+  body { lines: [{ productId, pickedQty?, unavailable?, note? }] }
+  maj public.order_lines
+
+POST /ops/pick-jobs/:id/pack
+  picking|assigned → packed, packed_at
+  event pick.packed
+
+GET /ops/deliveries
+  403 si !canDeliver
+  board : unassigned OU courier_id = moi, même magasin
+  colonnes v_delivery_board dont same_handler, cash_to_collect, coords, pick_status
+
+POST /ops/deliveries/:id/claim     (id = del-{orderId})
+  unassigned|offered → assigned
+  crée/réutilise ops.courses in_progress
+  trigger SQL : comms.ensure_courier_thread(order_id, courier_id)
+  sync payload shop : courierName, courierPhone, managedBy ops
+
+POST /ops/deliveries/:id/status
+  body { status, reason?, proofUrl? }
+  status ∈ at_store | picked_up | en_route | arrived | delivered | failed
+  si delivered : clôture la course s’il n’y a plus de livraisons ouvertes
+
+POST /ops/location
+  body { lng, lat, heading?, speedMps? }
+  upsert ops.courier_locations
+
+GET /ops/orders/:id
+  → { order: v_order_tracking, lines: order_lines, events }
+
+Santé : GET /health
+
+IDs :
+  pick job  = pick-<orderId>
+  delivery  = del-<orderId>
+  thread    = courier-<orderId sans #>
+  staff     = st-picker-* / st-courier-* (générés au seed)
+
+================================================================================
+4) API COMMS À AJOUTER AU SERVEUR (si absente — OBLIGATOIRE pour chat/appels)
+================================================================================
+
+Aujourd’hui comms.* existe en SQL + triggers, MAIS il n’y a PAS de routes HTTP.
+Tu dois les ajouter dans server/ (nouveau fichier server/src/comms.ts
+registerCommsRoutes) pour LES DEUX apps (token client OU token staff).
+
+Auth mixte : essayer staff_sessions puis sessions client.
+Marquer req.actor = { kind: 'customer'|'staff', userId?, staffId? }
+
+Membres : un acteur ne lit/écrit un thread que s’il est dans comms.thread_members
+(sauf dispatcher plus tard). Le trigger crée déjà customer + staff à l’assignation.
+
+Routes minimales :
+
+GET  /comms/inbox
+  → threads de l’acteur (joindre comms.v_inbox + unread via last_read_at)
+
+GET  /comms/threads/:id
+  → thread + members (prénoms)
+
+GET  /comms/threads/:id/messages?before=&limit=50
+  → messages ordre chrono
+
+POST /comms/threads/:id/messages
+  body { kind: 'text'|'image', body, payload? }
+  sender_kind / sender_*_id depuis le token
+
+POST /comms/threads/:id/read
+  last_read_at = now()
+
+--- Appels ---
+
+POST /comms/threads/:id/calls
+  body { media: 'audio'|'video' }
+  crée call status=initiated puis ringing
+  caller = moi, callee = l’autre membre du fil (customer↔staff)
+  409 si un appel live existe déjà sur le thread
+
+POST /comms/calls/:id/accept     → accepted + answered_at
+POST /comms/calls/:id/reject     → rejected
+POST /comms/calls/:id/cancel     → canceled (si caller, pas encore accepted)
+POST /comms/calls/:id/hangup     → ended | missed selon phase
+GET  /comms/calls/:id
+POST /comms/calls/:id/signals
+  body { signalType: 'offer'|'answer'|'ice'|'hangup'|'reject', payload: object }
+GET  /comms/calls/:id/signals?afterId=
+  pour poll ICE/SDP (LISTEN pg_notify comms_signal en plus si tu peux)
+
+POST /comms/devices
+  body { platform, pushToken?, voipToken? }
+  upsert appareil de l’acteur
+
+Temps réel : polling 1–2 s des messages + call status suffit en V1.
+Option : SSE ou WS plus tard. pg_notify canaux :
+  comms_message, comms_call, comms_signal, marche_ops, marche_shop
+
+Le trigger comms.notify_call INSERT déjà une bulle system kind=call
+id = callmsg-{callId}-{status} — ne pas dupliquer côté client.
+
+================================================================================
+5) STRUCTURE D’APP EXPO (CourseGO)
+================================================================================
+
+Dossier frère de marche-dore, PAS un fork du catalogue.
+
+app/
+  _layout.tsx              providers, overlay appel global
+  (auth)/login.tsx
+  (tabs)/
+    index.tsx              board : rassembler + livrer
+    job/[id].tsx           picking lignes
+    run/[id].tsx           course / carte / statuts
+    chat/index.tsx         inbox comms
+    chat/[id].tsx          fil + bouton appel
+    account.tsx            moi, magasin, véhicule, déconnexion
+  call overlay (composant global comme marche-dore/components/CallOverlay.tsx)
+
+context/
+  StaffAuthContext.tsx     token ops, /ops/me
+  BoardContext.tsx         poll pick-jobs + deliveries
+  LocationContext.tsx      watch GPS → POST /ops/location si en_route
+  ChatContext.tsx          inbox + threads comms (PAS le JSON local boutique)
+  CallContext.tsx          phase + contrôles + API comms.calls
+
+lib/api/http.ts            base URL comme marche-dore (host LAN pour device)
+lib/api/ops.ts
+lib/api/comms.ts
+
+Thème : réutiliser constantes or #e2931d, terracotta #c84b31, crème #fdf0d5,
+vert #498c53, texte #1c1613. Hero plus « course » (camion/moto) que promo fruits.
+
+Carte : mêmes constantes Cotonou que marche-dore/constants/map.ts et location.ts
+  Ganhi ≈ lat 6.3604 lng 2.4178
+  Magasin démo su-aeroport — coords viennent de l’order (store_lng/lat).
+
+Tabs : Board | Course active | Messages | Compte
+Badge messages = unread threads.
+
+================================================================================
+6) ÉCRANS — COMPORTEMENT DÉTAILLÉ
+================================================================================
+
+LOGIN
+- Email / mot de passe, CTA « Entrer en course »
+- Erreurs API en français
+- Persister token (AsyncStorage / sqlite kv)
+- Si canPick false : cacher file picking
+- Si canDeliver false : cacher file livraisons
+- Les comptes démo ont les deux à true
+
+BOARD
+- Section « Rassembler » : jobs queued (CTA Prendre) + mes assigned/picking
+- Section « Livrer » : unassigned (CTA Prendre la course) + mes livraisons
+- Carte job : n° commande, nb articles, créneau day_label/slot_label, total Fcfa,
+  adresse courte, pastille same_handler « Vous rassemblez et livrez »
+- COD : afficher cash_to_collect si > 0 (« Espèces à encaisser »)
+- Pull-to-refresh + poll 4s
+
+PICKING (job)
+- Liste order_lines : name, unit, qty, stepper picked_qty, toggle rupture,
+  note optionnelle
+- CTA Commencer (start) puis Terminer le rassemblement (pack)
+- Interdire pack si toutes les lignes unavailable sans note ? Non — autoriser
+  mais marquer unavailable. Le client verra plus tard les substitutions (hors V1).
+
+RUN (livraison)
+- Carte MapLibre : pickup magasin, dropoff client, polyline si route_geojson
+  existe sur l’order (payload routeCoordinates)
+- Boutons d’étape (un à la fois, dans l’ordre) :
+  Arrivé magasin → Colis récupéré → En route → Sur place → Livré
+  + Échec (motif)
+- Boutons Message et Appeler (in-app, pas tel:)
+- Pendant En route : GPS toutes les 8s
+- Livré : preuve photo optionnelle (proofUrl data/https) V1 peut skip
+- COD : rappeler le montant avant Livré
+
+CHAT
+- Un fil par commande assignée (id courier-{orderId})
+- Bulles moi = staff, eux = client
+- Bulles appel (kind=call) avec icône phone + libellé FR
+- Composer + envoi POST messages
+- Header : téléphone → POST /comms/threads/:id/calls puis overlay
+
+APPEL (UX à copier / améliorer depuis marche-dore)
+Phases : idle | outgoing | incoming | active
+Contrôles (visuels même en simu) :
+  - Muet (micro coupé)
+  - Haut-parleur
+  - Clavier DTMF 0-9 * #
+  - Attente (pause chrono)
+  - Caméra (badge, media=video sur le call)
+  - Réduire → bandeau flottant (revenir / raccrocher)
+  - Raccrocher / Annuler / Refuser / Décrocher
+Incoming : Refuser | Muet/Silence | Décrocher
+Outgoing ~2s ringing puis connected si l’autre accepte ;
+  si l’autre app n’est pas connectée : rester ringing jusqu’à cancel/missed (25s)
+Persister statuses comms.calls. Le trigger écrit les bulles.
+
+V1 WebRTC (si tu as le temps après l’UX) :
+  caller POST call → POST signal offer
+  callee poll signals → POST answer + ice
+  media audio getUserMedia
+Sinon : simulation visuelle + écriture DB, comme l’app boutique aujourd’hui.
+
+================================================================================
+7) RÈGLES MÉTIER / EDGE
+================================================================================
+
+- Claim 409 : toast « Déjà pris » + refresh board
+- Ne pas claim une delivery si pick pas packed SAUF si same person enchaîne :
+  autoriser claim delivery même pendant picking (coursier solo) — le SQL ne
+  bloque pas. UX : CTA « Enchaîner la livraison » dès assigned pick, mais
+  picked_up seulement si packed OU confirmation « colis pas encore packé ».
+  Recommandation produit : picked_up désactivé tant que pick_status !== packed.
+- GPS : permission native ; sur web geolocation navigateur ; silence si refus
+- Pas de multi-tournée parallèle : une course in_progress
+- Déconnexion : supprimer session locale (optionnel DELETE session serveur plus tard)
+- Commande cancelled : jobs cancelled via trigger payload — retirer du board
+- Fil comms créé SEULEMENT quand courier_id est set (claim delivery)
+  Donc le chat picking-only n’existe pas en V1 (pas de thread tant que pas livreur)
+
+================================================================================
+8) ALIGNEMENT AVEC L’APP CLIENT (marche-dore)
+================================================================================
+
+Le client lit GET /me/orders/:id/live (v_order_tracking) :
+  delivery_status, courier_first_name, courier_phone, courier_lng/lat,
+  pick_status, same_handler, packed_at
+
+Dès que tu claim + location, le suivi client devient vrai.
+Le chat client est encore en grande partie local (JSON account state) +
+conversation d’essai Koffi (courier-essai). Quand tu branches comms HTTP
+côté staff, branche AUSSI marche-dore lib/api/chat.ts sur les mêmes routes
+(token client) pour le fil réel courier-{orderId}. Hors scope si tu n’as
+le temps que de l’app course : au minimum écrire comms pour que ça arrive.
+
+Ne pas casser le fil d’essai client courier-essai (simulation locale).
+
+================================================================================
+9) ORDRE D’IMPLÉMENTATION
+================================================================================
+
+1. Scaffold Expo 57 CourseGO + http client + login + persist token
+2. Board pick + delivery (GET) + claim/start/pack/status
+3. Détail lignes picking
+4. Carte run + GPS
+5. server/src/comms.ts routes + register dans index.ts
+6. Inbox + thread staff
+7. CallContext + CallOverlay (contrôles complets) + POST calls
+8. Polling live call/messages
+9. (option) WebRTC signals
+10. Vérifier bout-en-bout : commande depuis marche-dore → visible course
+    → pack → claim → en_route GPS → live client → chat/appel
+
+================================================================================
+10) COMPTES / COMMANDES DE DEV
+================================================================================
+
+docker compose up -d          (racine SuperU)
+npm run dev:api               → http://localhost:8787
+npm run dev:shop              → boutique :8081
+npm run dev:course            → CourseGO :8082
+
+Créer une commande : login demo@marchedore.bj dans marche-dore, checkout.
+Puis login picker@marchedore.bj dans CourseGO, le pick-job apparaît.
+
+================================================================================
+11) FICHIERS SOURCE DE VÉRITÉ DANS CE REPO
+================================================================================
+
+server/src/schema-ops.sql
+server/src/schema-comms.sql
+server/schema/01-ops.sql
+server/schema/02-comms.sql
+server/src/ops.ts
+server/src/index.ts          (live client /me/orders/:id/live)
+marche-dore/context/CallContext.tsx
+marche-dore/components/CallOverlay.tsx
+marche-dore/lib/api/http.ts
+marche-dore/constants/theme.ts
+CourseGO/SCHEMA-PROMPT.txt     (schéma commenté, à coller si besoin)
+
+Lis ces fichiers. N’invente pas d’autres tables sans migration SQL dans
+server/src/schema-*.sql (appliqué au boot migrate()).
+
+================================================================================
+FIN DU PROMPT AGENT
+================================================================================
