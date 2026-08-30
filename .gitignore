@@ -1,0 +1,12 @@
+node_modules/
+.expo/
+dist/
+.env
+.env.local
+server/.env
+server/.tmp
+.DS_Store
+pgdata/
+*.log
+expo-env.d.ts
+.cursor/

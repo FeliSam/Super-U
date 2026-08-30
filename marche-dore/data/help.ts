@@ -30,9 +30,9 @@ export const faqItems: FaqItem[] = [
   {
     id: '4',
     category: 'Livraison',
-    question: 'La livraison est-elle gratuite ?',
+    question: 'Combien coûte la livraison ?',
     answer:
-      'La livraison est offerte dès 15 000 F d’achat. Sinon, des frais de 1 500 F s’appliquent. Les membres Or peuvent aussi l’échanger contre des points.',
+      'La livraison à Cotonou est facturée 1 500 F par commande (3 000 F en créneau urgent). Le suivi et le livreur viennent de l’app CourseGO, pas d’une simulation.',
   },
   {
     id: '5',
@@ -69,17 +69,17 @@ export const contactChannels = [
     id: 'phone',
     icon: 'phone' as const,
     title: 'Appeler',
-    subtitle: '+229 21 00 00 00',
+    subtitle: '+229 02 21 00 00 00',
     action: 'tel' as const,
-    value: 'tel:+229210000000',
+    value: 'tel:+2290221000000',
   },
   {
     id: 'whatsapp',
     icon: 'message-square' as const,
     title: 'WhatsApp',
-    subtitle: '+229 97 00 00 00',
+    subtitle: '+229 01 00 00 00 00',
     action: 'tel' as const,
-    value: 'tel:+229970000000',
+    value: 'tel:+2290100000000',
   },
   {
     id: 'email',

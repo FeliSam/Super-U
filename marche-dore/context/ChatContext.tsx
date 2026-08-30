@@ -1,10 +1,23 @@
 import {
-  buildAutoReply,
   buildOutboundMessage,
-  seedChatBundle,
+  formatChatClock,
+  supportConversation,
+  supportWelcomeThread,
 } from '@/lib/api/chat';
+import {
+  fetchInbox,
+  fetchMessages,
+  markThreadRead,
+  sendCommsMessage,
+  setThreadDisabled,
+  type CommsMessage,
+  type InboxThread,
+} from '@/lib/api/comms';
+import { getAuthToken } from '@/lib/api/http';
+import { staffPhotoSource } from '@/lib/staffPhoto';
 import type { ChatMessage, Conversation } from '@/data/messages';
-import AsyncStorage from '@react-native-async-storage/async-storage';
+import { useAuth } from '@/context/AuthContext';
+import { useProfile } from '@/context/ProfileContext';
 import React, {
   createContext,
   useCallback,
@@ -15,20 +28,6 @@ import React, {
   useState,
 } from 'react';
 
-const STORAGE_KEY = 'marche-dore.chat.v3';
-
-type ConversationMeta = {
-  unread: number;
-  preview: string;
-  time: string;
-  updatedAt: number;
-};
-
-type PersistedChat = {
-  threads: Record<string, ChatMessage[]>;
-  meta: Record<string, ConversationMeta>;
-};
-
 type ChatContextValue = {
   ready: boolean;
   conversations: Conversation[];
@@ -36,147 +35,169 @@ type ChatContextValue = {
   getMessages: (conversationId: string) => ChatMessage[];
   getConversationById: (conversationId: string) => Conversation | undefined;
   sendMessage: (conversationId: string, text: string) => void;
+  setConversationDisabled: (conversationId: string, disabled: boolean) => Promise<void>;
+  appendCallEvent: (conversationId: string, message: ChatMessage) => void;
   markRead: (conversationId: string) => void;
   clearActiveThread: () => void;
 };
 
 const ChatContext = createContext<ChatContextValue | null>(null);
 
-function sanitizeMessage(raw: unknown): ChatMessage | null {
-  if (!raw || typeof raw !== 'object') return null;
-  const m = raw as Partial<ChatMessage>;
-  if (typeof m.id !== 'string' || typeof m.text !== 'string') return null;
-  if (m.from !== 'me' && m.from !== 'them') return null;
+function clockFromIso(iso: string | null) {
+  if (!iso) return formatChatClock();
+  const d = new Date(iso);
+  return Number.isNaN(d.getTime()) ? formatChatClock() : formatChatClock(d);
+}
+
+function mapCommsMessage(row: CommsMessage): ChatMessage {
+  const callerKind = String(row.payload?.caller_kind ?? '');
+  const mine =
+    row.sender_kind === 'customer' || (row.kind === 'call' && callerKind === 'customer');
+  const from: ChatMessage['from'] = mine ? 'me' : 'them';
+  if (row.kind === 'call') {
+    const status = String(row.payload?.status ?? '');
+    const callStatus =
+      status === 'missed' || status === 'ended' || status === 'rejected' || status === 'canceled'
+        ? status
+        : 'ended';
+    return {
+      id: row.id,
+      from,
+      kind: 'call',
+      text: row.body || 'Appel',
+      time: clockFromIso(row.created_at),
+      call: {
+        direction: from === 'me' ? 'out' : 'in',
+        status: callStatus,
+      },
+    };
+  }
   return {
-    id: m.id,
-    from: m.from,
-    text: m.text.trim() || '…',
-    time: (typeof m.time === 'string' && m.time.trim()) || '',
+    id: row.id,
+    from,
+    kind: 'text',
+    text: row.body,
+    time: clockFromIso(row.created_at),
   };
 }
 
-function sanitizeMeta(raw: unknown): ConversationMeta | null {
-  if (!raw || typeof raw !== 'object') return null;
-  const m = raw as Partial<ConversationMeta>;
-  if (typeof m.preview !== 'string' || typeof m.time !== 'string') return null;
+function conversationFromInbox(row: InboxThread): Conversation {
+  if (row.kind === 'support' || row.id.startsWith('support-')) {
+    return {
+      id: 'support',
+      kind: 'support',
+      name: 'Assistance Marché Doré',
+      subtitle: 'Support client · 7j/7',
+      preview: row.last_body?.trim() || 'Bonjour ! Comment pouvons-nous vous aider aujourd’hui ?',
+      time: clockFromIso(row.last_at),
+      unread: Number(row.unread) > 0 ? 1 : 0,
+      online: true,
+      icon: 'headphones',
+    };
+  }
+  const name = [row.peer_first, row.peer_last].filter(Boolean).join(' ').trim();
+  const label = row.order_id ? `#${String(row.order_id).replace(/^#/, '')}` : '';
   return {
-    unread: typeof m.unread === 'number' && m.unread >= 0 ? Math.floor(m.unread) : 0,
-    preview: m.preview,
-    time: m.time,
-    updatedAt: typeof m.updatedAt === 'number' ? m.updatedAt : Date.now(),
+    id: row.id,
+    kind: row.kind === 'support' ? 'support' : 'courier',
+    name: name || (label ? `Coursier · ${label}` : 'Coursier'),
+    subtitle: label ? `Course · ${label}` : 'Coursier Marché Doré',
+    preview: row.last_body?.trim() || 'Conversation avec votre coursier',
+    time: clockFromIso(row.last_at),
+    unread: Number(row.unread) > 0 ? 1 : 0,
+    online: true,
+    phone: row.peer_phone || undefined,
+    orderId: row.order_id ?? undefined,
+    icon: 'truck',
+    disabled: Boolean(row.disabled_at || row.archived_at),
+    archived: Boolean(row.archived_at),
+    avatar: row.peer_staff_id ? staffPhotoSource(row.peer_staff_id) : undefined,
   };
-}
-
-function lastPreview(messages: ChatMessage[]): { preview: string; time: string } | null {
-  const last = messages[messages.length - 1];
-  if (!last) return null;
-  return { preview: last.text, time: last.time || 'Maintenant' };
 }
 
 export function ChatProvider({ children }: { children: React.ReactNode }) {
-  const [seed, setSeed] = useState<Conversation[]>([]);
-  const [threads, setThreads] = useState<Record<string, ChatMessage[]>>({});
-  const [meta, setMeta] = useState<Record<string, ConversationMeta>>({});
+  const { session, ready: authReady } = useAuth();
+  const { profile } = useProfile();
+  const firstName = profile.firstName || session?.firstName || '';
+  const [supportMsgs, setSupportMsgs] = useState<ChatMessage[]>([]);
+  const [supportMeta, setSupportMeta] = useState({ unread: 0, preview: '', time: 'Maintenant' });
+  const [courierConvs, setCourierConvs] = useState<Conversation[]>([]);
+  const [courierThreads, setCourierThreads] = useState<Record<string, ChatMessage[]>>({});
   const [ready, setReady] = useState(false);
-  const hydrated = useRef(false);
   const activeThreadRef = useRef<string | null>(null);
-  const replyTimers = useRef<Map<string, ReturnType<typeof setTimeout>>>(new Map());
+  const supportThreadIdRef = useRef<string | null>(null);
 
-  useEffect(() => {
-    let active = true;
-    (async () => {
-      try {
-        const bundle = await seedChatBundle();
-        if (!active) return;
-
-        let nextThreads = bundle.threads;
-        const nextMeta: Record<string, ConversationMeta> = {};
-
-        bundle.conversations.forEach((c, index) => {
-          const tip = lastPreview(bundle.threads[c.id] ?? []);
-          nextMeta[c.id] = {
-            unread: c.unread,
-            preview: tip?.preview ?? c.preview,
-            time: tip?.time ?? c.time,
-            updatedAt: Date.now() - index * 60_000,
-          };
+  const pullComms = useCallback(async () => {
+    if (!getAuthToken()) {
+      setCourierConvs([]);
+      setCourierThreads({});
+      return;
+    }
+    try {
+      const inbox = await fetchInbox();
+      const threads = inbox.threads ?? [];
+      const supportRow = threads.find((t) => t.kind === 'support' || t.id.startsWith('support-'));
+      if (supportRow) {
+        supportThreadIdRef.current = supportRow.id;
+        const mapped = conversationFromInbox(supportRow);
+        setSupportMeta({
+          unread: mapped.unread,
+          preview: mapped.preview,
+          time: mapped.time,
         });
-
-        const raw = await AsyncStorage.getItem(STORAGE_KEY);
-        if (raw) {
-          const parsed = JSON.parse(raw) as Partial<PersistedChat>;
-          if (parsed.threads && typeof parsed.threads === 'object') {
-            const merged: Record<string, ChatMessage[]> = { ...nextThreads };
-            for (const [id, list] of Object.entries(parsed.threads)) {
-              if (!Array.isArray(list)) continue;
-              const msgs = list.map(sanitizeMessage).filter((m): m is ChatMessage => Boolean(m));
-              if (msgs.length) merged[id] = msgs;
-            }
-            nextThreads = merged;
-          }
-          if (parsed.meta && typeof parsed.meta === 'object') {
-            for (const [id, value] of Object.entries(parsed.meta)) {
-              const clean = sanitizeMeta(value);
-              if (clean) nextMeta[id] = clean;
-            }
-          }
-          for (const [id, list] of Object.entries(nextThreads)) {
-            const tip = lastPreview(list);
-            if (!tip) continue;
-            const prev = nextMeta[id];
-            nextMeta[id] = {
-              unread: prev?.unread ?? 0,
-              preview: tip.preview,
-              time: tip.time,
-              updatedAt: prev?.updatedAt ?? Date.now(),
-            };
-          }
-        }
-
-        setSeed(bundle.conversations);
-        setThreads(nextThreads);
-        setMeta(nextMeta);
-      } catch {
-        // keep empty until next launch
-      } finally {
-        if (active) {
-          hydrated.current = true;
-          setReady(true);
+        try {
+          const res = await fetchMessages(supportRow.id);
+          setSupportMsgs((res.messages ?? []).map(mapCommsMessage));
+        } catch {
+          /* keep last */
         }
       }
-    })();
-    return () => {
-      active = false;
-      for (const t of replyTimers.current.values()) clearTimeout(t);
-      replyTimers.current.clear();
-    };
+      const courierRows = threads.filter((t) => t.kind !== 'support' && !t.id.startsWith('support-'));
+      const convs = courierRows.map(conversationFromInbox);
+      setCourierConvs(convs);
+      const next: Record<string, ChatMessage[]> = {};
+      await Promise.all(
+        convs.map(async (c) => {
+          try {
+            const res = await fetchMessages(c.id);
+            next[c.id] = (res.messages ?? []).map(mapCommsMessage);
+          } catch {
+            next[c.id] = [];
+          }
+        }),
+      );
+      setCourierThreads(next);
+    } catch {
+      /* API down — inbox vide */
+    }
   }, []);
 
   useEffect(() => {
-    if (!hydrated.current) return;
-    const payload: PersistedChat = { threads, meta };
-    AsyncStorage.setItem(STORAGE_KEY, JSON.stringify(payload)).catch(() => undefined);
-  }, [threads, meta]);
+    if (!authReady) return;
+    setSupportMsgs(supportWelcomeThread(firstName));
+    const welcome = supportWelcomeThread(firstName)[0];
+    setSupportMeta({
+      unread: 0,
+      preview: welcome?.text ?? '',
+      time: welcome?.time ?? 'Maintenant',
+    });
+    setReady(true);
+    void pullComms();
+    const t = setInterval(() => void pullComms(), 2000);
+    return () => {
+      clearInterval(t);
+    };
+  }, [authReady, session?.accountId, pullComms, firstName]);
 
   const conversations = useMemo(() => {
-    const merged = seed.map((c) => {
-      const m = meta[c.id];
-      if (!m) return c;
-      return {
-        ...c,
-        unread: m.unread,
-        preview: m.preview,
-        time: m.time,
-      };
-    });
-    return [...merged].sort((a, b) => {
-      if (a.unread > 0 && b.unread === 0) return -1;
-      if (b.unread > 0 && a.unread === 0) return 1;
-      const ua = meta[a.id]?.updatedAt ?? 0;
-      const ub = meta[b.id]?.updatedAt ?? 0;
-      return ub - ua;
-    });
-  }, [seed, meta]);
+    const support: Conversation = {
+      ...supportConversation(),
+      unread: supportMeta.unread,
+      preview: supportMeta.preview || supportConversation().preview,
+      time: supportMeta.time,
+    };
+    return [support, ...courierConvs];
+  }, [courierConvs, supportMeta]);
 
   const unreadTotal = useMemo(
     () => conversations.reduce((sum, c) => sum + (c.unread > 0 ? c.unread : 0), 0),
@@ -189,108 +210,79 @@ export function ChatProvider({ children }: { children: React.ReactNode }) {
   );
 
   const getMessages = useCallback(
-    (conversationId: string) => threads[conversationId] ?? [],
-    [threads],
-  );
-
-  const patchMeta = useCallback((conversationId: string, patch: Partial<ConversationMeta>) => {
-    setMeta((prev) => {
-      const cur = prev[conversationId] ?? {
-        unread: 0,
-        preview: '',
-        time: 'Maintenant',
-        updatedAt: Date.now(),
-      };
-      const next: ConversationMeta = {
-        ...cur,
-        ...patch,
-        updatedAt: patch.updatedAt ?? Date.now(),
-      };
-      if (
-        next.unread === cur.unread &&
-        next.preview === cur.preview &&
-        next.time === cur.time &&
-        (patch.updatedAt === undefined || next.updatedAt === cur.updatedAt)
-      ) {
-        return prev;
-      }
-      return { ...prev, [conversationId]: next };
-    });
-  }, []);
-
-  const markRead = useCallback(
     (conversationId: string) => {
-      activeThreadRef.current = conversationId;
-      setMeta((prev) => {
-        const cur = prev[conversationId];
-        if (!cur || cur.unread === 0) return prev;
-        return {
-          ...prev,
-          [conversationId]: { ...cur, unread: 0 },
-        };
-      });
+      if (conversationId === 'support') return supportMsgs;
+      return courierThreads[conversationId] ?? [];
     },
-    [],
+    [supportMsgs, courierThreads],
   );
+
+  const markRead = useCallback((conversationId: string) => {
+    activeThreadRef.current = conversationId;
+    if (conversationId === 'support') {
+      setSupportMeta((m) => (m.unread ? { ...m, unread: 0 } : m));
+      const sid = supportThreadIdRef.current;
+      if (sid) void markThreadRead(sid).catch(() => undefined);
+      return;
+    }
+    setCourierConvs((prev) => prev.map((c) => (c.id === conversationId ? { ...c, unread: 0 } : c)));
+    void markThreadRead(conversationId).catch(() => undefined);
+  }, []);
 
   const clearActiveThread = useCallback(() => {
     activeThreadRef.current = null;
   }, []);
 
-  const appendToThread = useCallback((conversationId: string, message: ChatMessage) => {
-    setThreads((prev) => {
-      const base = prev[conversationId] ?? [];
-      return { ...prev, [conversationId]: [...base, message] };
-    });
+  const appendCallEvent = useCallback((conversationId: string, message: ChatMessage) => {
+    if (conversationId === 'support') return;
+    setCourierThreads((prev) => ({
+      ...prev,
+      [conversationId]: [...(prev[conversationId] ?? []), message],
+    }));
   }, []);
+
+  const setConversationDisabled = useCallback(
+    async (conversationId: string, disabled: boolean) => {
+      if (conversationId === 'support') return;
+      await setThreadDisabled(conversationId, disabled);
+      await pullComms();
+    },
+    [pullComms],
+  );
 
   const sendMessage = useCallback(
     (conversationId: string, text: string) => {
       const trimmed = text.trim();
       if (!trimmed) return;
-      const conv = seed.find((c) => c.id === conversationId);
-      if (!conv) return;
+
+      if (conversationId === 'support') {
+        const mine = buildOutboundMessage(trimmed);
+        setSupportMsgs((prev) => [...prev, mine]);
+        setSupportMeta({ unread: 0, preview: mine.text, time: mine.time });
+        const sid = supportThreadIdRef.current;
+        if (sid) {
+          void sendCommsMessage(sid, trimmed)
+            .then(() => pullComms())
+            .catch(() => undefined);
+        }
+        return;
+      }
 
       const mine = buildOutboundMessage(trimmed);
-      appendToThread(conversationId, mine);
-      patchMeta(conversationId, {
-        preview: mine.text,
-        time: mine.time,
-        unread: 0,
-        updatedAt: Date.now(),
-      });
-
-      const existing = replyTimers.current.get(conversationId);
-      if (existing) clearTimeout(existing);
-
-      const timer = setTimeout(() => {
-        replyTimers.current.delete(conversationId);
-        const reply = buildAutoReply(conv.kind);
-        appendToThread(conversationId, reply);
-        const viewing = activeThreadRef.current === conversationId;
-        setMeta((prev) => {
-          const cur = prev[conversationId] ?? {
-            unread: 0,
-            preview: '',
-            time: 'Maintenant',
-            updatedAt: Date.now(),
-          };
-          return {
-            ...prev,
-            [conversationId]: {
-              ...cur,
-              preview: reply.text,
-              time: reply.time,
-              unread: viewing ? 0 : cur.unread + 1,
-              updatedAt: Date.now(),
-            },
-          };
-        });
-      }, 900 + Math.floor(Math.random() * 700));
-
-      replyTimers.current.set(conversationId, timer);
+      setCourierThreads((prev) => ({
+        ...prev,
+        [conversationId]: [...(prev[conversationId] ?? []), mine],
+      }));
+      setCourierConvs((prev) =>
+        prev.map((c) =>
+          c.id === conversationId ? { ...c, preview: mine.text, time: mine.time, unread: 0 } : c,
+        ),
+      );
+      void sendCommsMessage(conversationId, trimmed)
+        .then(() => pullComms())
+        .catch(() => undefined);
     },
-    [seed, appendToThread, patchMeta],
+    [pullComms],
   );
 
   const value = useMemo(
@@ -301,6 +293,8 @@ export function ChatProvider({ children }: { children: React.ReactNode }) {
       getMessages,
       getConversationById,
       sendMessage,
+      setConversationDisabled,
+      appendCallEvent,
       markRead,
       clearActiveThread,
     }),
@@ -311,6 +305,8 @@ export function ChatProvider({ children }: { children: React.ReactNode }) {
       getMessages,
       getConversationById,
       sendMessage,
+      setConversationDisabled,
+      appendCallEvent,
       markRead,
       clearActiveThread,
     ],

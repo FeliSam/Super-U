@@ -2,7 +2,7 @@ import { IconCircle, Screen, Page } from '@/components/ui';
 import { displayFont, type AppColors } from '@/constants/theme';
 import { useNotifications } from '@/context/NotificationsContext';
 import { useColors } from '@/context/ThemeContext';
-import { navigateTab } from '@/lib/navigation';
+import { goBack, navigateTab } from '@/lib/navigation';
 import { Feather } from '@expo/vector-icons';
 import { Href, router } from 'expo-router';
 import { useMemo } from 'react';
@@ -25,7 +25,7 @@ export default function NotificationsScreen() {
     <Screen>
       <Page style={styles.flex}>
         <View style={styles.header}>
-          <IconCircle name="chevron-left" onPress={() => router.back()} />
+          <IconCircle name="chevron-left" onPress={() => goBack()} />
           <View style={styles.headerCenter}>
             <Text style={styles.title}>Notifications</Text>
             {unreadCount > 0 ? (

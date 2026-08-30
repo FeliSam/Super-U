@@ -27,7 +27,7 @@ Deux apps, UNE vérité Postgres.
    Auth : ops.staff + ops.staff_sessions. JAMAIS le login client.
    Démo staff (les DEUX sont coursiers complets, can_pick + can_deliver) :
      picker@marchedore.bj  / marche2024   → Koffi Adjovi, magasin su-aeroport, moto
-     courier@marchedore.bj / marche2024   → Moussa Ndiaye, magasin su-aeroport, moto
+     courier@marchedore.bj / marche2024   → Bodouin Dognon, magasin su-aeroport, moto
 
 Le même ops.staff.id PEUT être picker_id ET courier_id d’une même commande
 (coursier solo). La vue ops.v_delivery_board expose same_handler = true dans ce cas.
@@ -48,7 +48,7 @@ dans le payload pour que le client voie le vrai livreur.
 
 NE PAS :
 - recréer le catalogue JS dans l’app course (lire order_lines + /ops/orders/:id)
-- simuler Moussa en dur côté client
+- simuler Bodouin en dur côté client
 - ouvrir tel: GSM pour le client (appels IN-APP)
 - inventer une timeline fake 25s/45s
 - committer sans demande

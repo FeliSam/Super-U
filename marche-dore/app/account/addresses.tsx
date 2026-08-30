@@ -1,10 +1,13 @@
 import { LibreMap, warmLibreMap } from '@/components/LibreMap';
+import { goBack } from '@/lib/navigation';
 import { PressScale } from '@/components/motion';
 import { CtaButton, IconCircle, Screen } from '@/components/ui';
 import { appLocation } from '@/constants/location';
+import { formatBeninPhoneInput } from '@/lib/beninPhone';
 import { cotonouMap, mapStyles, type LngLat, type MapMarker } from '@/constants/map';
 import { displayFont, type AppColors } from '@/constants/theme';
 import { useAddresses } from '@/context/AddressesContext';
+import { useProfile } from '@/context/ProfileContext';
 import { useColors, useTheme } from '@/context/ThemeContext';
 import type { DeliveryAddress } from '@/data/account';
 import { SUPER_U_BRAND } from '@/data/superU';
@@ -13,7 +16,7 @@ import { SHEET_OPEN, SHEET_SPRING } from '@/lib/expandableSheet';
 import { getDeviceLocation } from '@/lib/geolocation';
 import { softShadow } from '@/lib/shadow';
 import { Feather } from '@expo/vector-icons';
-import { router } from 'expo-router';
+import { router, useLocalSearchParams } from 'expo-router';
 import { useCallback, useEffect, useMemo, useRef, useState, type ComponentProps } from 'react';
 import {
   ActivityIndicator,
@@ -27,7 +30,8 @@ import {
   Text,
   TextInput,
   View } from 'react-native';
-import { Gesture, GestureDetector, GestureHandlerRootView } from 'react-native-gesture-handler';
+import { GestureRoot } from '@/components/GestureRoot';
+import { Gesture, GestureDetector } from 'react-native-gesture-handler';
 import Reanimated, {
   useAnimatedStyle,
   useSharedValue,
@@ -234,6 +238,9 @@ export default function AddressesScreen() {
   const insets = useSafeAreaInsets();
   const { addresses, selectedId, setSelectedId, setDefault, addAddress, updateAddress, removeAddress } =
     useAddresses();
+  const { profile } = useProfile();
+  const { setup } = useLocalSearchParams<{ setup?: string }>();
+  const setupMode = setup === '1';
 
   const selectedAddress = useMemo(
     () => addresses.find((a) => a.id === selectedId) ?? addresses[0],
@@ -257,8 +264,8 @@ export default function AddressesScreen() {
   const [pin, setPin] = useState<LngLat>([...cotonouMap.home]);
   const [placeKind, setPlaceKind] = useState<PlaceKind>('home');
   const [label, setLabel] = useState(PLACE_LABELS.home);
-  const [line, setLine] = useState(appLocation.defaultLine);
-  const [phone, setPhone] = useState(appLocation.phone);
+  const [line, setLine] = useState('');
+  const [phone, setPhone] = useState('');
   const [geoLoading, setGeoLoading] = useState(false);
   const [locateLoading, setLocateLoading] = useState(false);
   const [superUMarkers, setSuperUMarkers] = useState<MapMarker[]>([]);
@@ -329,11 +336,17 @@ export default function AddressesScreen() {
     setMapZoom(15.2);
     setPlaceKind('home');
     setLabel(PLACE_LABELS.home);
-    setLine(appLocation.defaultLine);
-    setPhone(appLocation.phone);
+    setLine('');
+    setPhone(formatBeninPhoneInput(profile.phone || ''));
     sheetH.value = withTiming(SHEET_MAX, SHEET_OPEN);
     setMode('edit');
   };
+
+  useEffect(() => {
+    if (!setupMode || addresses.length > 0) return;
+    openAdd();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [setupMode, addresses.length]);
 
   const openEdit = (address: DeliveryAddress) => {
     setEditingId(address.id);
@@ -350,12 +363,13 @@ export default function AddressesScreen() {
     setPlaceKind(kind);
     setLabel(address.label);
     setLine(address.line);
-    setPhone(address.phone);
+    setPhone(formatBeninPhoneInput(address.phone));
     sheetH.value = withTiming(SHEET_MAX, SHEET_OPEN);
     setMode('edit');
   };
 
   const closeEdit = () => {
+    if (setupMode && !addresses.length) return;
     setMode('list');
     setEditingId(null);
     sheetH.value = withTiming(SHEET_MIN, SHEET_OPEN);
@@ -401,6 +415,7 @@ export default function AddressesScreen() {
   const sheetPan = useMemo(
     () =>
       Gesture.Pan()
+        .maxPointers(1)
         .activeOffsetY([-8, 8])
         .onStart(() => {
           dragStartH.value = sheetH.value;
@@ -423,11 +438,16 @@ export default function AddressesScreen() {
   const sheetAnim = useAnimatedStyle(() => ({ height: sheetH.value }));
 
   const saveAddress = () => {
+    const street = line.trim();
+    if (!street) {
+      Alert.alert('Adresse', 'Placez le pin sur la carte ou saisissez votre rue.');
+      return;
+    }
     const payload = {
       label: label.trim() || PLACE_LABELS[placeKind],
-      line: line.trim() || appLocation.defaultLine,
+      line: street,
       city: `${appLocation.city}, ${appLocation.country}`,
-      phone: phone.trim() || appLocation.phone,
+      phone: phone.trim() || profile.phone,
       coordinate: [...pin] as LngLat,
       makeDefault: true };
     if (editingId) {
@@ -437,16 +457,24 @@ export default function AddressesScreen() {
       const created = addAddress(payload);
       setSelectedId(created.id);
     }
+    if (setupMode && !editingId) {
+      router.replace('/account/stores?setup=1');
+      return;
+    }
     setMapCenter([...pin]);
     setMapZoom(14.2);
     setMode('list');
     setEditingId(null);
-    sheetH.value = withTiming(SHEET_MIN, SHEET_OPEN);
+    sheetH.value = withTiming(SHEET_MAX, SHEET_OPEN);
   };
 
   const saveDefault = () => {
-    setDefault(selectedId);
-    router.back();
+    if (selectedId) setDefault(selectedId);
+    if (setup === '1') {
+      router.replace('/account/stores?setup=1');
+      return;
+    }
+    goBack();
   };
 
   const mapMarkers = useMemo(() => {
@@ -485,7 +513,7 @@ export default function AddressesScreen() {
 
   return (
     <Screen>
-      <GestureHandlerRootView style={styles.root}>
+      <GestureRoot style={styles.root}>
         <View style={styles.mapLayer}>
           <LibreMap
             style={StyleSheet.absoluteFill}
@@ -532,7 +560,15 @@ export default function AddressesScreen() {
         <View style={[styles.topBar, { paddingTop: Math.max(10, insets.top + 6) }]}>
           <IconCircle
             name={editing ? 'x' : 'chevron-left'}
-            onPress={editing ? closeEdit : () => router.back()}
+            onPress={
+              editing
+                ? closeEdit
+                : !addresses.length
+                  ? () => undefined
+                  : setupMode
+                    ? () => undefined
+                    : () => goBack()
+            }
           />
           <View style={styles.titlePill}>
             <Text style={styles.titlePillMain} numberOfLines={1}>
@@ -540,14 +576,18 @@ export default function AddressesScreen() {
                 ? editingId
                   ? label.trim() || 'Modifier l’adresse'
                   : label.trim() || 'Nouvelle adresse'
-                : 'Adresses de livraison'}
+                : setupMode && !addresses.length
+                  ? 'Choisir une adresse'
+                  : 'Adresses de livraison'}
             </Text>
             <Text style={styles.titlePillSub} numberOfLines={1}>
               {editing
                 ? geoLoading
                   ? 'Recherche de l’adresse…'
                   : 'Touchez la carte pour placer le pin'
-                : 'Touchez un pin ou glissez une carte'}
+                : setupMode && !addresses.length
+                  ? 'Indispensable pour la livraison'
+                  : 'Touchez un pin ou glissez une carte'}
             </Text>
           </View>
           {editing ? (
@@ -572,23 +612,28 @@ export default function AddressesScreen() {
             <View style={[styles.segment, styles.segmentOn]}>
               <Text style={[styles.segmentText, styles.segmentTextOn]}>Adresse</Text>
             </View>
-            <Pressable style={styles.segment} onPress={() => router.replace('/account/stores')}>
+            <Pressable
+              style={styles.segment}
+              onPress={() =>
+                router.replace(setupMode ? '/account/stores?setup=1' : '/account/stores')
+              }>
               <Text style={styles.segmentText}>Supermarché</Text>
             </Pressable>
           </View>
         ) : null}
 
-        <GestureDetector gesture={sheetPan}>
-          <Reanimated.View
-            style={[
-              styles.sheet,
-              sheetAnim,
-              softShadow({ y: -8, blur: 24, opacity: 0.12 }),
-              { paddingBottom: Math.max(14, insets.bottom + 8), backgroundColor: colors.bg },
-            ]}>
+        <Reanimated.View
+          style={[
+            styles.sheet,
+            sheetAnim,
+            softShadow({ y: -8, blur: 24, opacity: 0.12 }),
+            { paddingBottom: Math.max(14, insets.bottom + 8), backgroundColor: colors.bg },
+          ]}>
+          <GestureDetector gesture={sheetPan}>
             <View style={styles.sheetHandle}>
               <View style={[styles.sheetHandleBar, { backgroundColor: colors.grabber }]} />
             </View>
+          </GestureDetector>
 
             {editing ? (
               <>
@@ -596,10 +641,12 @@ export default function AddressesScreen() {
                   Détails de livraison
                 </Text>
                 <Text style={styles.sheetTitle}>
-                  {editingId ? 'Modifier l’adresse' : 'Nouvelle adresse'}
+                  {editingId ? 'Modifier l’adresse' : setupMode ? 'Où vous livrer ?' : 'Nouvelle adresse'}
                 </Text>
                 <Text style={styles.sheetSub}>
-                  Placez le pin sur la carte, puis validez — l’adresse sera sélectionnée.
+                  {setupMode && !editingId
+                    ? 'Placez le pin sur la carte, puis validez. Aucune adresse n’est préremplie.'
+                    : 'Placez le pin sur la carte, puis validez — l’adresse sera sélectionnée.'}
                 </Text>
 
                 <Reanimated.ScrollView
@@ -684,8 +731,8 @@ export default function AddressesScreen() {
                   <Text style={[styles.fieldLabel, { color: colors.muted }]}>Téléphone</Text>
                   <TextInput
                     value={phone}
-                    onChangeText={setPhone}
-                    placeholder={appLocation.phone}
+                    onChangeText={(t) => setPhone(formatBeninPhoneInput(t))}
+                    placeholder="+229 01 00 00 00 00"
                     placeholderTextColor={colors.placeholder}
                     keyboardType="phone-pad"
                     style={[styles.input, { backgroundColor: colors.white, color: colors.text }]}
@@ -694,7 +741,13 @@ export default function AddressesScreen() {
 
                 <View style={styles.footer}>
                   <CtaButton
-                    label={editingId ? 'Enregistrer et sélectionner' : 'Ajouter et sélectionner'}
+                    label={
+                      editingId
+                        ? 'Enregistrer et sélectionner'
+                        : setupMode
+                          ? 'Enregistrer mon adresse'
+                          : 'Ajouter et sélectionner'
+                    }
                     onPress={saveAddress}
                   />
                 </View>
@@ -741,13 +794,21 @@ export default function AddressesScreen() {
                       ? `${selectedAddress.label} · ${selectedAddress.line}`
                       : 'Aucune adresse'}
                   </Text>
-                  <CtaButton label="Enregistrer l'adresse par défaut" onPress={saveDefault} />
+                  <CtaButton
+                    label={
+                      selectedAddress
+                        ? setup === '1'
+                          ? 'Choisir mon Super U'
+                          : 'Continuer'
+                        : 'Ajouter une adresse'
+                    }
+                    onPress={selectedAddress ? saveDefault : openAdd}
+                  />
                 </View>
               </>
             )}
           </Reanimated.View>
-        </GestureDetector>
-      </GestureHandlerRootView>
+      </GestureRoot>
     </Screen>
   );
 }
@@ -833,7 +894,7 @@ function createStyles(colors: AppColors) {
       borderTopRightRadius: 22,
       overflow: 'hidden',
       zIndex: 6 },
-    sheetHandle: { alignItems: 'center', paddingTop: 10, paddingBottom: 4 },
+    sheetHandle: { alignItems: 'center', paddingTop: 10, paddingBottom: 12 },
     sheetHandleBar: { width: 40, height: 4, borderRadius: 999 },
     sheetEyebrow: {
       fontSize: 11,

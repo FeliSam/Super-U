@@ -21,12 +21,9 @@ export function bodyFont(weight: TextStyle['fontWeight'] = '400'): TextStyle {
   return { fontFamily: fontFamilies.body, fontWeight: 'normal' };
 }
 
+/** Headers: même famille que le corps, seulement le graisse. */
 export function displayFont(weight: TextStyle['fontWeight'] = '800'): TextStyle {
-  if (Platform.OS === 'web') return { fontFamily: fontFamilies.display, fontWeight: weight };
-  const w = String(weight);
-  if (w === '900' || w === 'black') return { fontFamily: fontFamilies.displayBlack, fontWeight: 'normal' };
-  if (w === '700' || w === 'bold') return { fontFamily: fontFamilies.displayBold, fontWeight: 'normal' };
-  return { fontFamily: fontFamilies.display, fontWeight: 'normal' };
+  return bodyFont(weight);
 }
 
 export const colors = {
@@ -36,8 +33,8 @@ export const colors = {
   muted: '#4b5563',
   placeholder: '#9ca3af',
   border: '#e5e7eb',
-  teal: '#0d9488',
-  tealSoft: 'rgba(13,148,136,0.1)',
+  teal: '#058d81',
+  tealSoft: 'rgba(5,141,129,0.1)',
   coral: '#ff6b6b',
   coralSoft: 'rgba(255,107,107,0.1)',
   green: '#00b86b',

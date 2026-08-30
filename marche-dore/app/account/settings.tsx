@@ -1,9 +1,11 @@
 import { IconCircle, Screen, Page } from '@/components/ui';
+import { goBack } from '@/lib/navigation';
 import { displayFont, type AppColors } from '@/constants/theme';
 import { useColors, useTheme, type ThemePreference } from '@/context/ThemeContext';
+import { useUiState } from '@/context/UiStateContext';
 import { Feather } from '@expo/vector-icons';
 import { router } from 'expo-router';
-import { useMemo, useState, type ComponentProps } from 'react';
+import { useMemo, type ComponentProps } from 'react';
 import { Pressable, ScrollView, StyleSheet, Switch, Text, View } from 'react-native';
 
 type FeatherIcon = ComponentProps<typeof Feather>['name'];
@@ -129,11 +131,16 @@ export default function SettingsScreen() {
   const colors = useColors();
   const { preference, setPreference, scheme } = useTheme();
   const styles = useMemo(() => createStyles(colors), [colors]);
-
-  const [pushEnabled, setPushEnabled] = useState(true);
-  const [smsEnabled, setSmsEnabled] = useState(false);
-  const [emailEnabled, setEmailEnabled] = useState(true);
-  const [promoEnabled, setPromoEnabled] = useState(true);
+  const {
+    pushEnabled,
+    setPushEnabled,
+    smsEnabled,
+    setSmsEnabled,
+    emailEnabled,
+    setEmailEnabled,
+    promoEnabled,
+    setPromoEnabled,
+  } = useUiState();
 
   const notificationToggles: ToggleRow[] = [
     {
@@ -166,7 +173,7 @@ export default function SettingsScreen() {
     <Screen>
       <Page style={styles.flex}>
         <View style={styles.header}>
-          <IconCircle name="chevron-left" onPress={() => router.back()} />
+          <IconCircle name="chevron-left" onPress={() => goBack()} />
           <Text style={styles.title}>Réglages</Text>
           <View style={styles.headerSpacer} />
         </View>

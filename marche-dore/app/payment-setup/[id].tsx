@@ -1,4 +1,5 @@
 import { CtaButton, IconCircle, Screen, Page } from '@/components/ui';
+import { goBack } from '@/lib/navigation';
 import { MotionView } from '@/components/motion';
 import { type AppColors } from '@/constants/theme';
 import { useColors } from '@/context/ThemeContext';
@@ -9,6 +10,7 @@ import {
   type PaymentId } from '@/context/CheckoutPaymentContext';
 import { usePayments } from '@/context/PaymentsContext';
 import { useProfile } from '@/context/ProfileContext';
+import { useAddresses } from '@/context/AddressesContext';
 import {
   formatBeninPhone,
   formatBeninPhoneInput,
@@ -61,7 +63,7 @@ function buildMethods(colors: AppColors): Record<
       soft: colors.cream,
       icon: 'credit-card',
       title: 'Carte Visa / Mastercard',
-      subtitle: 'Paiement sécurisé. Vos données ne sont pas stockées sur cet appareil (démo).' },
+      subtitle: 'Paiement sécurisé via FedaPay. La carte n’est pas stockée dans l’app.' },
     cod: {
       label: 'Paiement à la livraison',
       accent: colors.green,
@@ -123,6 +125,9 @@ export default function PaymentSetupScreen() {
   const { setup, setSetup } = useCheckoutPayment();
   const { saveMobileNumber, saveCard, methodById } = usePayments();
   const { profile } = useProfile();
+  const { defaultAddress } = useAddresses();
+  const displayName = `${profile.firstName} ${profile.lastName}`.trim() || 'votre compte';
+  const cardPlaceholder = displayName === 'votre compte' ? 'Nom et prénom' : displayName;
 
   const wallet = methodById(methodId);
   const [phone, setPhone] = useState(() => {
@@ -165,7 +170,7 @@ export default function PaymentSetupScreen() {
         label: meta.label,
         detail: 'Espèces au livreur',
         ready: true });
-      router.back();
+      goBack();
       return;
     }
 
@@ -182,7 +187,7 @@ export default function PaymentSetupScreen() {
         detail: maskPhone(formatted),
         phone: formatted,
         ready: true });
-      router.back();
+      goBack();
       return;
     }
 
@@ -196,14 +201,14 @@ export default function PaymentSetupScreen() {
       cardLast4: digits.slice(-4),
       cardBrand: brand,
       ready: true });
-    router.back();
+    goBack();
   };
 
   return (
     <Screen>
       <Page style={styles.flex}>
         <View style={[styles.header, { paddingTop: Math.max(8, insets.top ? 4 : 8) }]}>
-          <IconCircle name="chevron-left" onPress={() => router.back()} />
+          <IconCircle name="chevron-left" onPress={() => goBack()} />
           <Text style={styles.headerTitle}>Configurer le paiement</Text>
           <View style={styles.headerSpacer} />
         </View>
@@ -233,14 +238,14 @@ export default function PaymentSetupScreen() {
                     label="Numéro béninois (+229)"
                     value={phone}
                     onChangeText={(t) => setPhone(formatBeninPhoneInput(t))}
-                    placeholder="+229 97 12 34 56"
+                    placeholder="+229 01 00 00 00 00"
                     keyboardType="phone-pad"
                     maxLength={22}
                     autoComplete="tel"
                     colors={colors}
                     styles={styles}
                   />
-                  <Text style={styles.hint}>Format accepté : +229 suivi de 8 ou 10 chiffres.</Text>
+                  <Text style={styles.hint}>Format : +229 01 00 00 00 00</Text>
                   <View style={styles.infoBox}>
                     <Feather name="info" size={16} color={meta.accent} />
                     <Text style={styles.infoText}>
@@ -251,7 +256,7 @@ export default function PaymentSetupScreen() {
                   </View>
                   <View style={styles.savedRow}>
                     <Feather name="check-circle" size={16} color={colors.green} />
-                    <Text style={styles.savedText}>Compte lié au profil Amina Diallo</Text>
+                    <Text style={styles.savedText}>Compte lié au profil {displayName}</Text>
                   </View>
                 </>
               ) : null}
@@ -262,7 +267,7 @@ export default function PaymentSetupScreen() {
                     label="Nom sur la carte"
                     value={cardName}
                     onChangeText={setCardName}
-                    placeholder="Amina Diallo"
+                    placeholder={cardPlaceholder}
                     autoComplete="name"
                     colors={colors}
                     styles={styles}
@@ -321,7 +326,11 @@ export default function PaymentSetupScreen() {
                   <View style={styles.codCard}>
                     <View style={styles.codRow}>
                       <Feather name="map-pin" size={16} color={colors.gold} />
-                      <Text style={styles.codText}>Livraison à Rue 12, Ganhi</Text>
+                      <Text style={styles.codText}>
+                        {defaultAddress?.line
+                          ? `Livraison à ${defaultAddress.line}`
+                          : 'Ajoutez une adresse de livraison'}
+                      </Text>
                     </View>
                     <View style={styles.codRow}>
                       <Feather name="phone" size={16} color={colors.gold} />

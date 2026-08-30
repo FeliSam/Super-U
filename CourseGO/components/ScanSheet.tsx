@@ -3,7 +3,8 @@ import { ProductThumb } from '@/components/ProductThumb';
 import { bodyFont, colors, displayFont, radius, shadow } from '@/constants/theme';
 import type { OrderLine } from '@/lib/api/ops';
 import { productBarcode } from '@/lib/productMedia';
-import { useEffect, useState } from 'react';
+import { CameraView, useCameraPermissions } from 'expo-camera';
+import { useEffect, useRef, useState } from 'react';
 import { Modal, Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
 
 export function lineBarcode(line: OrderLine) {
@@ -24,31 +25,55 @@ export function ScanSheet({
   visible,
   onClose,
   onScanned,
+  onMissing,
 }: {
   line: OrderLine | null;
   visible: boolean;
   onClose: () => void;
   onScanned: (line: OrderLine) => void;
+  onMissing?: (line: OrderLine) => void;
 }) {
   const [code, setCode] = useState('');
   const [error, setError] = useState('');
+  const [mode, setMode] = useState<'camera' | 'type'>('type');
+  const [permission, requestPermission] = useCameraPermissions();
+  const lock = useRef(false);
 
   useEffect(() => {
     if (visible && line) {
       setCode(lineBarcode(line));
       setError('');
+      setMode('type');
+      lock.current = false;
     }
-  }, [visible, line?.product_id, line?.barcode]);
+  }, [visible, line?.product_id, line?.picked_qty]);
 
   if (!line) return null;
 
   const submit = (raw: string) => {
     const typed = raw.trim();
-    if (typed && !matchesScan(line, typed)) {
-      setError('Code ne correspond pas à ce produit.');
+    if (!typed) {
+      setError('Scannez ou saisissez le code.');
+      return;
+    }
+    if (!matchesScan(line, typed)) {
+      setError('Ce code ne correspond pas à ce produit.');
       return;
     }
     onScanned(line);
+  };
+
+  const onBar = ({ data }: { data: string }) => {
+    if (lock.current) return;
+    lock.current = true;
+    if (matchesScan(line, data)) {
+      onScanned(line);
+      return;
+    }
+    setError('Code / QR ne correspond pas.');
+    setCode(data);
+    setMode('type');
+    lock.current = false;
   };
 
   return (
@@ -58,32 +83,64 @@ export function ScanSheet({
           <View style={styles.handle} />
           <Text style={styles.kicker}>SCANNER</Text>
           <View style={styles.hero}>
-            <ProductThumb productId={line.product_id} name={line.name} size={88} />
+            <ProductThumb productId={line.product_id} name={line.name} size={72} />
             <View style={{ flex: 1 }}>
               <Text style={styles.title}>{line.name}</Text>
               <Text style={styles.qty}>
-                {line.qty} × {line.unit ?? 'u'}
+                Unité {Math.min((line.picked_qty ?? 0) + 1, line.qty)} / {line.qty} × {line.unit ?? 'u'}
               </Text>
             </View>
           </View>
-          <Text style={styles.hint}>Code-barres prérempli. Validez le scan ou corrigez-le.</Text>
-          <TextInput
-            autoFocus
-            selectTextOnFocus
-            style={styles.input}
-            placeholder="Code-barres / référence"
-            placeholderTextColor={colors.placeholder}
-            value={code}
-            onChangeText={(t) => {
-              setCode(t);
-              setError('');
-            }}
-            onSubmitEditing={() => submit(code)}
-            returnKeyType="done"
-            keyboardType="number-pad"
-          />
+          <View style={styles.tabs}>
+            <Pressable style={[styles.tab, mode === 'camera' && styles.tabOn]} onPress={() => setMode('camera')}>
+              <Text style={[styles.tabTxt, mode === 'camera' && styles.tabTxtOn]}>Caméra</Text>
+            </Pressable>
+            <Pressable style={[styles.tab, mode === 'type' && styles.tabOn]} onPress={() => setMode('type')}>
+              <Text style={[styles.tabTxt, mode === 'type' && styles.tabTxtOn]}>QR / saisie</Text>
+            </Pressable>
+          </View>
+          {mode === 'camera' ? (
+            <View style={styles.camWrap}>
+              {!permission?.granted ? (
+                <View style={styles.camFallback}>
+                  <Text style={styles.hint}>Autorisez la caméra pour scanner le code-barres ou le QR.</Text>
+                  <PillButton label="AUTORISER LA CAMÉRA" onPress={() => void requestPermission()} />
+                </View>
+              ) : (
+                <CameraView
+                  style={styles.cam}
+                  facing="back"
+                  barcodeScannerSettings={{ barcodeTypes: ['qr', 'ean13', 'ean8', 'upc_a', 'code128'] }}
+                  onBarcodeScanned={onBar}
+                />
+              )}
+            </View>
+          ) : (
+            <>
+              <Text style={styles.hint}>Saisissez le code-barres, la référence, ou le contenu du QR.</Text>
+              <TextInput
+                autoFocus
+                selectTextOnFocus
+                style={styles.input}
+                placeholder="Code-barres / QR / référence"
+                placeholderTextColor={colors.placeholder}
+                value={code}
+                onChangeText={(t) => {
+                  setCode(t);
+                  setError('');
+                }}
+                onSubmitEditing={() => submit(code)}
+                returnKeyType="done"
+              />
+            </>
+          )}
           {error ? <Text style={styles.error}>{error}</Text> : null}
-          <PillButton label="VALIDER LE SCAN" onPress={() => submit(code)} />
+          {mode === 'type' ? <PillButton label="VALIDER LE SCAN" onPress={() => submit(code)} /> : null}
+          {onMissing ? (
+            <Pressable onPress={() => onMissing(line)}>
+              <Text style={styles.missing}>Produit introuvable</Text>
+            </Pressable>
+          ) : null}
           <Pressable onPress={onClose}>
             <Text style={styles.cancel}>Annuler</Text>
           </Pressable>
@@ -118,6 +175,14 @@ const styles = StyleSheet.create({
   hero: { flexDirection: 'row', gap: 14, alignItems: 'center' },
   title: { ...displayFont('800'), fontSize: 20, color: colors.text },
   qty: { ...bodyFont('700'), fontSize: 15, color: colors.teal, marginTop: 4 },
+  tabs: { flexDirection: 'row', backgroundColor: colors.bg, borderRadius: 14, padding: 4, gap: 4 },
+  tab: { flex: 1, paddingVertical: 10, borderRadius: 12, alignItems: 'center' },
+  tabOn: { backgroundColor: colors.white },
+  tabTxt: { ...bodyFont('700'), fontSize: 13, color: colors.muted },
+  tabTxtOn: { color: colors.teal },
+  camWrap: { height: 220, borderRadius: 20, overflow: 'hidden', backgroundColor: '#111827' },
+  cam: { flex: 1 },
+  camFallback: { flex: 1, justifyContent: 'center', padding: 16, gap: 12, backgroundColor: colors.bg },
   hint: { ...bodyFont('400'), fontSize: 14, color: colors.muted },
   input: {
     ...bodyFont('600'),
@@ -128,8 +193,8 @@ const styles = StyleSheet.create({
     paddingHorizontal: 14,
     paddingVertical: 12,
     color: colors.text,
-    letterSpacing: 0.4,
   },
   error: { ...bodyFont('600'), color: colors.coral, fontSize: 13 },
+  missing: { ...displayFont('700'), textAlign: 'center', color: colors.coral, paddingVertical: 4 },
   cancel: { ...displayFont('700'), textAlign: 'center', color: colors.muted, paddingVertical: 8 },
 });

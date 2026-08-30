@@ -10,6 +10,7 @@ export type InboxThread = {
   unread: number;
   disabled_at?: string | null;
   disabled_by?: string | null;
+  archived_at?: string | null;
 };
 
 export type CommsMessage = {
@@ -39,13 +40,23 @@ export async function fetchInbox() {
 export async function fetchThread(id: string) {
   return apiFetch<{
     ok: true;
-    thread: { id: string; order_id: string | null; title: string | null; disabled_at?: string | null };
+    thread: {
+      id: string;
+      order_id: string | null;
+      title: string | null;
+      disabled_at?: string | null;
+      archived_at?: string | null;
+    };
     members: {
       actor_kind: string;
+      user_id?: string | null;
+      staff_id?: string | null;
       user_first?: string | null;
       user_last?: string | null;
       staff_first?: string | null;
       staff_last?: string | null;
+      user_has_photo?: boolean | string | number;
+      staff_has_photo?: boolean | string | number;
     }[];
   }>(`/comms/threads/${encodeURIComponent(id)}`);
 }
@@ -109,4 +120,24 @@ export async function cancelCall(id: string) {
 
 export async function hangupCall(id: string) {
   return apiFetch<{ ok: true }>(`/comms/calls/${encodeURIComponent(id)}/hangup`, { method: 'POST' });
+}
+
+export type CallSignal = {
+  id: number;
+  signal_type: string;
+  sender_kind?: string;
+  payload: Record<string, unknown> | string | null;
+};
+
+export async function postCallSignal(callId: string, signalType: string, payload: unknown) {
+  return apiFetch(`/comms/calls/${encodeURIComponent(callId)}/signals`, {
+    method: 'POST',
+    body: JSON.stringify({ signalType, payload }),
+  });
+}
+
+export async function fetchCallSignals(callId: string, afterId = 0) {
+  return apiFetch<{ ok: true; signals: CallSignal[] }>(
+    `/comms/calls/${encodeURIComponent(callId)}/signals?afterId=${encodeURIComponent(String(afterId))}`,
+  );
 }

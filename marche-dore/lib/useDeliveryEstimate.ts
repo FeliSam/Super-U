@@ -63,3 +63,11 @@ export function useDeliveryEstimate(from?: LngLat | null, to?: LngLat | null): D
 
   return state;
 }
+
+/** Plage d’ETA (min) à partir d’une durée routière, ±pad minutes. */
+export function etaWindowLabel(durationSeconds: number, padMin = 8): string {
+  const mid = Math.max(8, Math.round(durationSeconds / 60));
+  const lo = Math.max(5, mid - padMin);
+  const hi = mid + padMin;
+  return `${lo}–${hi} min`;
+}

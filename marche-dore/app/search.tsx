@@ -1,10 +1,13 @@
 import { AppImage } from '@/components/AppImage';
+import { goBack } from '@/lib/navigation';
 import { IconCircle, ProductCard, Screen, SearchField, Page, TabHero } from '@/components/ui';
 import { tabBarClearance, type AppColors } from '@/constants/theme';
 import { useColors } from '@/context/ThemeContext';
 import { useUiState } from '@/context/UiStateContext';
+import { useFavorites } from '@/context/FavoritesContext';
+import { useOrders } from '@/context/OrdersContext';
 import {
-  popularSuggestions,
+  popularTermsForAccount,
   products,
   searchCategories,
   searchCategoryRoute,
@@ -89,6 +92,8 @@ function SearchScreen() {
     setSearchInStockOnly,
     searchPromoOnly,
     setSearchPromoOnly } = useUiState();
+  const { products: favoriteProducts } = useFavorites();
+  const { orders } = useOrders();
 
   const trimmedQuery = searchQuery.trim();
   const hasQuery = trimmedQuery.length > 0;
@@ -109,9 +114,15 @@ function SearchScreen() {
     [searchQuery, sort, searchInStockOnly, searchPromoOnly],
   );
 
+  const accountPopulars = useMemo(() => {
+    const fromFavorites = favoriteProducts.map((p) => p.name);
+    const fromOrders = orders.flatMap((o) => o.lines.map((l) => l.name));
+    return popularTermsForAccount({ recents: searchRecents, names: [...fromFavorites, ...fromOrders] });
+  }, [favoriteProducts, orders, searchRecents]);
+
   const liveSuggestions = useMemo(
-    () => searchSuggestions(searchQuery, searchRecents),
-    [searchQuery, searchRecents],
+    () => searchSuggestions(searchQuery, searchRecents, accountPopulars),
+    [searchQuery, searchRecents, accountPopulars],
   );
 
   const filteredRecents = useMemo(() => {
@@ -121,10 +132,10 @@ function SearchScreen() {
   }, [hasQuery, searchRecents, trimmedQuery]);
 
   const filteredTags = useMemo(() => {
-    if (!hasQuery) return popularSuggestions;
+    if (!hasQuery) return accountPopulars;
     const q = trimmedQuery.toLowerCase();
-    return popularSuggestions.filter((term) => term.toLowerCase().includes(q));
-  }, [hasQuery, trimmedQuery]);
+    return accountPopulars.filter((term) => term.toLowerCase().includes(q));
+  }, [hasQuery, trimmedQuery, accountPopulars]);
 
   const applySearch = (term: string) => {
     setSearchQuery(term);
@@ -193,7 +204,7 @@ function SearchScreen() {
                 name="chevron-left"
                 variant="hero"
                 accessibilityLabel="Retour"
-                onPress={() => router.back()}
+                onPress={() => goBack()}
               />
             }
           />
@@ -303,6 +314,7 @@ function SearchScreen() {
                   </View>
                 ) : null}
 
+                {filteredTags.length > 0 ? (
                 <View style={styles.card}>
                   <View style={styles.sectionHeadLeft}>
                     <Feather name="trending-up" size={15} color={colors.terracotta} />
@@ -316,16 +328,15 @@ function SearchScreen() {
                     ))}
                   </View>
                 </View>
+                ) : null}
 
                 <View style={styles.section}>
                   <View style={styles.sectionHead}>
                     <Text style={styles.sectionTitle}>Par catégorie</Text>
                     <Text style={styles.sectionMeta}>Accès rapide</Text>
                   </View>
-                  <ScrollView
-                    horizontal
-                    showsHorizontalScrollIndicator={false}
-                    contentContainerStyle={styles.catRow}>
+                  <ScrollView horizontal showsHorizontalScrollIndicator={false}>
+                    <View style={styles.catRow}>
                     {searchCategories.map((c) => (
                       <Pressable
                         key={c.label}
@@ -337,6 +348,7 @@ function SearchScreen() {
                         <Text style={styles.catLabel}>{c.label}</Text>
                       </Pressable>
                     ))}
+                    </View>
                   </ScrollView>
                 </View>
               </>
@@ -358,7 +370,7 @@ function SearchScreen() {
               {results.length > 0 ? (
                 <View style={styles.grid}>
                   {results.map((p) => (
-                    <ProductCard key={p.id} product={p} width="47.5%" imageHeight={160} compact />
+                    <ProductCard key={p.id} product={p} width="49.6%" imageHeight={160} compact />
                   ))}
                 </View>
               ) : (
@@ -522,7 +534,7 @@ function createStyles(colors: AppColors) {
       paddingHorizontal: 14,
       paddingVertical: 8 },
     tagText: { color: colors.text, fontSize: 13, fontWeight: '600' },
-    catRow: { gap: 10, paddingRight: 4 },
+    catRow: { flexDirection: 'row', columnGap: 5, gap: 5, paddingRight: 4 },
     catCard: {
       width: 88,
       alignItems: 'center',
@@ -557,8 +569,10 @@ function createStyles(colors: AppColors) {
     grid: {
       flexDirection: 'row',
       flexWrap: 'wrap',
-      justifyContent: 'space-between',
-      gap: 10 },
+      justifyContent: 'flex-start',
+      columnGap: 3,
+      rowGap: 10,
+    },
     emptyCard: {
       alignItems: 'center',
       backgroundColor: colors.white,

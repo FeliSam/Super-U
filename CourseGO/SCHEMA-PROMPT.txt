@@ -100,7 +100,7 @@ ops.staff_sessions
 
 SEED (si table vide) server/src/ops.ts seedOpsStaff :
   picker@marchedore.bj  Koffi Adjovi   can_pick+can_deliver  moto  su-aeroport
-  courier@marchedore.bj Moussa Ndiaye  idem
+  courier@marchedore.bj Bodouin Dognon  idem
   mdp DEMO_PASSWORD ou marche2024
 
 ================================================================================

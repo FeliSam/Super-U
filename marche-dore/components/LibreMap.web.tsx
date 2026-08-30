@@ -1,6 +1,9 @@
 import type { LibreMapProps } from '@/components/LibreMap.types';
 import { cotonouMap, routeLineGeoJSON, mapStyles, type LngLat } from '@/constants/map';
 import { useColors } from '@/context/ThemeContext';
+import { haversineMeters } from '@/lib/deliveryRouting';
+import { shopCourierPinHtml } from '@/lib/mapPins';
+import { easeOutCubic, headingDeg } from '@/lib/vehicleMotion';
 import {
   GeoJSONSource,
   Map as MapLibreMap,
@@ -203,14 +206,16 @@ function markerHtml(marker: NonNullable<LibreMapProps['markers']>[number]) {
     `;
   }
 
+  if (marker.kind === 'courier') {
+    return shopCourierPinHtml(marker, marker.color ?? bg);
+  }
+
   const icon =
     marker.kind === 'store'
       ? '🛍️'
       : marker.kind === 'home'
         ? '🏠'
-        : marker.kind === 'courier'
-          ? '🛵'
-          : '📍';
+        : '📍';
   const label = marker.label
     ? `<span style="background:rgba(20,17,15,0.82);color:#fff;font:600 10px/1.2 system-ui,sans-serif;padding:4px 8px;border-radius:999px;white-space:nowrap;max-width:120px;overflow:hidden;text-overflow:ellipsis">${marker.label}</span>`
     : '';
@@ -236,12 +241,16 @@ export function LibreMap({
   onError,
   onPressMap,
   onPressMarker,
+  followCamera = false,
 }: LibreMapProps) {
   const colors = useColors();
   const hostRef = useRef<HTMLDivElement | null>(null);
   const mapRef = useRef<MapLibreMap | null>(null);
   const markersRef = useRef<Map<string, Marker>>(new Map());
   const markerMetaRef = useRef<Map<string, string>>(new Map());
+  const markerAnimRef = useRef<Map<string, number>>(new Map());
+  const markerPosRef = useRef<Map<string, LngLat>>(new Map());
+  const userMovedRef = useRef(false);
   const readySent = useRef(false);
   const onReadyRef = useRef(onReady);
   onReadyRef.current = onReady;
@@ -319,6 +328,15 @@ export function LibreMap({
         return;
       }
       mapRef.current = map;
+      userMovedRef.current = false;
+      const markUserMoved = () => {
+        userMovedRef.current = true;
+      };
+      map.on('dragstart', markUserMoved);
+      map.on('rotatestart', markUserMoved);
+      map.on('zoomstart', (e) => {
+        if (e.originalEvent) markUserMoved();
+      });
       if (showNavigation) {
         map.addControl(new NavigationControl({ showCompass: false, visualizePitch: false }), 'top-right');
         const top = navigationOffset?.top ?? 10;
@@ -404,6 +422,8 @@ export function LibreMap({
     return () => {
       cancelled = true;
       ro?.disconnect();
+      markerAnimRef.current.forEach((id) => cancelAnimationFrame(id));
+      markerAnimRef.current.clear();
       markersRef.current.forEach((m) => m.remove());
       markersRef.current.clear();
       markerMetaRef.current.clear();
@@ -415,7 +435,8 @@ export function LibreMap({
 
   useEffect(() => {
     const map = mapRef.current;
-    if (!map || !map.isStyleLoaded()) return;
+    if (!map || !map.isStyleLoaded() || !followCamera) return;
+    if (userMovedRef.current) return;
     const cur = map.getCenter();
     const z = map.getZoom();
     const moved =
@@ -430,7 +451,7 @@ export function LibreMap({
       map.easeTo({ center, zoom, duration: 280, essential: true });
     }
     map.resize();
-  }, [center[0], center[1], zoom]);
+  }, [center[0], center[1], zoom, followCamera]);
 
   useEffect(() => {
     const map = mapRef.current;
@@ -483,10 +504,41 @@ export function LibreMap({
     });
 
     markers.forEach((marker) => {
-      const meta = `${marker.kind ?? ''}|${marker.label ?? ''}|${marker.color ?? ''}`;
+      const meta = `${marker.kind ?? ''}|${marker.color ?? ''}|${marker.vehicle ?? ''}`;
       const existing = markersRef.current.get(marker.id);
       if (existing && markerMetaRef.current.get(marker.id) === meta) {
-        existing.setLngLat(marker.coordinate);
+        const labelNode = existing.getElement().querySelector('span');
+        if (labelNode && marker.label && labelNode.textContent !== marker.label) {
+          labelNode.textContent = marker.label;
+        }
+        const live = existing.getLngLat();
+        const prev: LngLat = [live.lng, live.lat];
+        const next = marker.coordinate;
+        const jump = haversineMeters(prev, next);
+        const prevAnim = markerAnimRef.current.get(marker.id);
+        if (prevAnim) cancelAnimationFrame(prevAnim);
+        if (jump < 0.6 || jump > 4000) {
+          existing.setLngLat(next);
+          markerPosRef.current.set(marker.id, next);
+          return;
+        }
+        const start = performance.now();
+        const dur = Math.min(280, Math.max(70, jump * 6));
+        const step = (now: number) => {
+          const t = easeOutCubic((now - start) / dur);
+          const at: LngLat = [prev[0] + (next[0] - prev[0]) * t, prev[1] + (next[1] - prev[1]) * t];
+          existing.setLngLat(at);
+          markerPosRef.current.set(marker.id, at);
+          const rot = headingDeg(prev, next);
+          const inner = existing.getElement().querySelector('span:last-of-type') as HTMLElement | null;
+          if (inner && marker.kind === 'courier') inner.style.transform = `rotate(${rot}deg)`;
+          if (t < 1) markerAnimRef.current.set(marker.id, requestAnimationFrame(step));
+          else {
+            markerPosRef.current.set(marker.id, next);
+            markerAnimRef.current.delete(marker.id);
+          }
+        };
+        markerAnimRef.current.set(marker.id, requestAnimationFrame(step));
         return;
       }
       existing?.remove();
@@ -506,6 +558,7 @@ export function LibreMap({
         .addTo(map);
       markersRef.current.set(marker.id, m);
       markerMetaRef.current.set(marker.id, meta);
+      markerPosRef.current.set(marker.id, marker.coordinate);
     });
   }, [markersKey, markers]);
 
@@ -513,11 +566,13 @@ export function LibreMap({
     <View style={[styles.wrap, style]}>
       <div
         ref={hostRef}
+        onPointerDown={(e) => e.stopPropagation()}
         style={{
           position: 'absolute',
           inset: 0,
           width: '100%',
           height: '100%',
+          touchAction: 'none',
         }}
       />
     </View>

@@ -13,7 +13,9 @@ import {
   type Order,
   type OrderStatus } from '@/context/OrdersContext';
 import { formatFcfa } from '@/lib/format';
-import { navigateTab, tabPaths } from '@/lib/navigation';
+import { opsPhaseLabel } from '@/lib/orderOps';
+import { slotKind, slotKindLabel } from '@/lib/slotKind';
+import { goBack, navigateTab, tabPaths } from '@/lib/navigation';
 import { softShadow } from '@/lib/shadow';
 import { statusTone } from '@/lib/statusTone';
 import { Feather } from '@expo/vector-icons';
@@ -61,6 +63,7 @@ function OrderCard({ order, index }: { order: Order; index: number }) {
   const first = order.lines[0];
   const product = first ? getProduct(first.productId) : undefined;
   const extra = Math.max(0, order.lines.length - 1);
+  const speed = slotKind(order.slotId, order.slotLabel);
 
   const translateX = useRef(new Animated.Value(0)).current;
   const offset = useRef(0);
@@ -189,10 +192,32 @@ function OrderCard({ order, index }: { order: Order; index: number }) {
                   <Text style={styles.total}>{formatFcfa(order.total)}</Text>
                 </View>
 
-                <View style={[styles.badge, { backgroundColor: tone.bg }]}>
-                  <View style={[styles.badgeDot, { backgroundColor: tone.text }]} />
-                  <Text style={[styles.badgeText, { color: tone.text }]}>{statusLabel(order.status)}</Text>
+                <View style={styles.tagRow}>
+                  <View style={[styles.badge, { backgroundColor: tone.bg }]}>
+                    <View style={[styles.badgeDot, { backgroundColor: tone.text }]} />
+                    <Text style={[styles.badgeText, { color: tone.text }]}>{statusLabel(order.status)}</Text>
+                  </View>
+                  <View
+                    style={[
+                      styles.speed,
+                      speed === 'urgent' && styles.speedUrgent,
+                      speed === 'express' && styles.speedExpress,
+                    ]}>
+                    <Text
+                      style={[
+                        styles.speedTxt,
+                        speed === 'urgent' && styles.speedTxtUrgent,
+                        speed === 'express' && styles.speedTxtExpress,
+                      ]}>
+                      {slotKindLabel(speed)}
+                    </Text>
+                  </View>
                 </View>
+                {isActiveStatus(order.status) ? (
+                  <Text style={styles.slot} numberOfLines={1}>
+                    {opsPhaseLabel(order)}
+                  </Text>
+                ) : null}
 
                 <Text style={styles.slot} numberOfLines={1}>
                   {order.dayLabel} · {order.slotLabel}
@@ -206,7 +231,7 @@ function OrderCard({ order, index }: { order: Order; index: number }) {
 
             <View style={styles.cardFooter}>
               <Text style={styles.footerHint}>
-                {active ? 'Suivre la livraison' : 'Voir le détail'} · glissez pour actions
+                {active ? 'Suivre la préparation' : 'Voir le détail'} · glissez pour actions
               </Text>
               <View style={[styles.footerBtn, active && styles.footerBtnActive]}>
                 <Feather
@@ -235,16 +260,22 @@ export default function OrdersScreen() {
   const doneCount = useMemo(() => orders.filter((o) => !isActiveStatus(o.status)).length, [orders]);
 
   const filtered = useMemo(() => {
-    if (filter === 'active') return orders.filter((o) => isActiveStatus(o.status));
-    if (filter === 'done') return orders.filter((o) => !isActiveStatus(o.status));
-    return orders;
+    const list =
+      filter === 'active'
+        ? orders.filter((o) => isActiveStatus(o.status))
+        : filter === 'done'
+          ? orders.filter((o) => !isActiveStatus(o.status))
+          : orders;
+    return [...list].sort(
+      (a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime(),
+    );
   }, [orders, filter]);
 
   return (
     <Screen>
       <Page style={styles.flex}>
         <View style={[styles.header, { paddingTop: Math.max(8, insets.top ? 4 : 8) }]}>
-          <IconCircle name="arrow-left" onPress={() => router.back()} />
+          <IconCircle name="arrow-left" onPress={() => goBack()} />
           <View style={styles.headerCenter}>
             <Text style={styles.title}>Mes commandes</Text>
             {orders.length > 0 ? (
@@ -259,11 +290,7 @@ export default function OrdersScreen() {
         </View>
 
         {orders.length > 0 ? (
-          <ScrollView
-            horizontal
-            showsHorizontalScrollIndicator={false}
-            contentContainerStyle={styles.filters}
-            style={styles.filtersScroll}>
+          <View style={styles.filters}>
             {FILTERS.map((f) => {
               const on = filter === f.id;
               const count =
@@ -272,15 +299,20 @@ export default function OrdersScreen() {
                 <Pressable
                   key={f.id}
                   onPress={() => setFilter(f.id)}
+                  accessibilityRole="button"
+                  accessibilityState={{ selected: on }}
+                  accessibilityLabel={`${f.label}, ${count}`}
                   style={[styles.chip, on && styles.chipOn]}>
-                  <Text style={[styles.chipText, on && styles.chipTextOn]}>{f.label}</Text>
+                  <Text style={[styles.chipText, on && styles.chipTextOn]} numberOfLines={1}>
+                    {f.label}
+                  </Text>
                   <View style={[styles.chipCount, on && styles.chipCountOn]}>
                     <Text style={[styles.chipCountText, on && styles.chipCountTextOn]}>{count}</Text>
                   </View>
                 </Pressable>
               );
             })}
-          </ScrollView>
+          </View>
         ) : null}
 
         <ScrollView
@@ -352,17 +384,29 @@ function createStyles(colors: AppColors) {
   headerSpacer: { width: 40 },
   title: { ...displayFont('700'), color: colors.text, fontSize: 18 },
   headerSub: { color: colors.muted, fontSize: 12, fontWeight: '600', marginTop: 2 },
-  filtersScroll: { flexGrow: 0, marginBottom: 4 },
-  filters: { paddingHorizontal: 20, gap: 8, paddingBottom: 8 },
-  chip: {
+  filters: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 8,
-    backgroundColor: colors.white,
-    borderRadius: 999,
+    marginHorizontal: 20,
+    marginBottom: 12,
+    padding: 4,
+    minHeight: 48,
+    backgroundColor: colors.cream,
+    borderRadius: 16,
+    gap: 4,
+  },
+  chip: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 6,
+    minHeight: 40,
+    borderRadius: 12,
     paddingVertical: 8,
-    paddingHorizontal: 14 },
-  chipOn: { backgroundColor: colors.text, borderColor: colors.text },
+    paddingHorizontal: 8,
+  },
+  chipOn: { backgroundColor: colors.text },
   chipText: { color: colors.muted, fontSize: 13, fontWeight: '700' },
   chipTextOn: { color: colors.onAccent },
   chipCount: {
@@ -370,9 +414,10 @@ function createStyles(colors: AppColors) {
     height: 22,
     borderRadius: 11,
     paddingHorizontal: 6,
-    backgroundColor: colors.bg,
+    backgroundColor: colors.white,
     alignItems: 'center',
-    justifyContent: 'center' },
+    justifyContent: 'center',
+  },
   chipCountOn: { backgroundColor: 'rgba(255,255,255,0.18)' },
   chipCountText: { color: colors.muted, fontSize: 11, fontWeight: '800' },
   chipCountTextOn: { color: colors.onAccent },
@@ -447,6 +492,18 @@ function createStyles(colors: AppColors) {
     paddingVertical: 5 },
   badgeDot: { width: 6, height: 6, borderRadius: 3 },
   badgeText: { fontSize: 11, fontWeight: '800' },
+  tagRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 6, alignItems: 'center' },
+  speed: {
+    alignSelf: 'flex-start',
+    borderRadius: 999,
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+    backgroundColor: colors.cream },
+  speedUrgent: { backgroundColor: 'rgba(200,75,49,0.14)' },
+  speedExpress: { backgroundColor: 'rgba(226,147,29,0.18)' },
+  speedTxt: { fontSize: 11, fontWeight: '800', color: colors.muted },
+  speedTxtUrgent: { color: colors.terracotta },
+  speedTxtExpress: { color: colors.gold },
   slot: { color: colors.text, fontSize: 13, fontWeight: '600' },
   meta: { color: colors.placeholder, fontSize: 12, fontWeight: '500' },
   cardFooter: {

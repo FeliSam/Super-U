@@ -28,6 +28,7 @@ function isBundledUri(uri: string) {
 
 function isRemoteApiUri(uri: string) {
   if (/\/catalog\/media\//i.test(uri)) return true;
+  if (/\/ops\/staff\/.+\/photo/i.test(uri)) return true;
   if (/^(blob:)/i.test(uri)) return true;
   if (/^https?:/i.test(uri) && !isBundledUri(uri)) return true;
   return false;

@@ -1,4 +1,7 @@
 import { AppImage } from '@/components/AppImage';
+import { DeliveryIssueCard } from '@/components/DeliveryIssueCard';
+import { HandoffCodeCard } from '@/components/HandoffCodeCard';
+import { goBack } from '@/lib/navigation';
 import { IconCircle, Screen, Page } from '@/components/ui';
 import { MotionView, PressScale } from '@/components/motion';
 import { displayFont, type AppColors } from '@/constants/theme';
@@ -12,7 +15,10 @@ import {
   canCancelOrder,
   type OrderStatus } from '@/context/OrdersContext';
 import { useReviews } from '@/context/ReviewsContext';
-import { formatFcfa } from '@/lib/format';
+import { formatFcfa, formatOrderAddress } from '@/lib/format';
+import { fulfillmentPhase, isCourierAssigned, isCourseStarted, opsPhaseLabel } from '@/lib/orderOps';
+import { slotKind, slotKindLabel } from '@/lib/slotKind';
+import { formatBeninPhone } from '@/lib/beninPhone';
 import { formatDistanceKm, formatDurationMin } from '@/lib/deliveryRouting';
 import { softShadow } from '@/lib/shadow';
 import { statusTone } from '@/lib/statusTone';
@@ -31,6 +37,24 @@ function Sum({ label, value, green, bold }: { label: string; value: string; gree
       <Text style={[styles.sumVal, green && { color: colors.green }, bold && styles.sumValBold]}>{value}</Text>
     </View>
   );
+}
+
+function paymentStatusLabel(order: {
+  paymentId: string;
+  paymentStatus?: string | null;
+  paymentDetail: string | null;
+  paymentRef?: string | null;
+  total: number;
+}) {
+  const lines: string[] = [];
+  if (order.paymentStatus === 'paid') lines.push('Payé');
+  else if (order.paymentId === 'cod' || order.paymentStatus === 'cod_pending') {
+    lines.push('À régler à la livraison');
+  }
+  if (order.paymentDetail) lines.push(order.paymentDetail);
+  lines.push(formatFcfa(order.total));
+  if (order.paymentRef) lines.push(`Réf. ${order.paymentRef}`);
+  return lines;
 }
 
 function formatOrderDate(iso: string) {
@@ -77,19 +101,19 @@ export default function OrderDetailsScreen() {
 
   const insets = useSafeAreaInsets();
   const { id } = useLocalSearchParams<{ id: string }>();
-  const { getOrder, activeOrder, orders, setStatus } = useOrders();
+  const { getOrder, activeOrder, setStatus } = useOrders();
   const { add } = useCart();
   const { courierReviewForOrder, hasUserReviewedProduct } = useReviews();
   const [menuOpen, setMenuOpen] = useState(false);
   const orderId = typeof id === 'string' ? id : Array.isArray(id) ? id[0] : undefined;
-  const order = (orderId ? getOrder(orderId) : null) ?? activeOrder ?? orders[0] ?? null;
+  const order = orderId ? getOrder(orderId) ?? null : activeOrder ?? null;
 
   if (!order) {
     return (
       <Screen>
         <Page style={styles.flex}>
           <View style={[styles.header, { paddingTop: Math.max(8, insets.top ? 4 : 8) }]}>
-            <IconCircle name="arrow-left" onPress={() => router.back()} />
+            <IconCircle name="arrow-left" onPress={() => goBack()} />
             <Text style={styles.title}>Détails de commande</Text>
             <View style={styles.headerSpacer} />
           </View>
@@ -108,13 +132,22 @@ export default function OrderDetailsScreen() {
     );
   }
 
-  const canTrack = order.status === 'confirmed' || order.status === 'preparing' || order.status === 'shipping';
-  const canReorder = order.status === 'delivered' || order.status === 'cancelled';
+  const canTrack =
+    order.status === 'confirmed' ||
+    order.status === 'preparing' ||
+    order.status === 'shipping' ||
+    fulfillmentPhase(order) === 'failed';
+  const canReorder =
+    order.status === 'delivered' || order.status === 'cancelled' || fulfillmentPhase(order) === 'failed';
+  const speed = slotKind(order.slotId, order.slotLabel);
   const delivered = order.status === 'delivered';
+  const failed = fulfillmentPhase(order) === 'failed';
   const cancellable = canCancelOrder(order.status);
   const tone = statusTone(order.status, colors);
   const placedAt = formatOrderDate(order.createdAt);
-  const addressLine = [order.addressLine, order.addressCity].filter(Boolean).join(', ');
+  const addressLine = formatOrderAddress(order.addressLine, order.addressCity);
+  const addressPhone = order.addressPhone ? formatBeninPhone(order.addressPhone) : '';
+  const courierPhone = order.courierPhone ? formatBeninPhone(order.courierPhone) : '';
   const courierReview = courierReviewForOrder(order.id);
 
   const closeMenu = () => setMenuOpen(false);
@@ -152,7 +185,7 @@ export default function OrderDetailsScreen() {
     <Screen>
       <Page style={styles.flex}>
         <View style={[styles.header, { paddingTop: Math.max(8, insets.top ? 4 : 8) }]}>
-          <IconCircle name="arrow-left" onPress={() => router.back()} />
+          <IconCircle name="arrow-left" onPress={() => goBack()} />
           <View style={styles.headerCenter}>
             <Text style={styles.title}>Détails de commande</Text>
             <Text style={styles.sub}>{formatOrderId(order.id)}</Text>
@@ -174,7 +207,9 @@ export default function OrderDetailsScreen() {
                   style={styles.menuItem}
                   onPress={() => runMenu(() => router.push(`/tracking?id=${order.id}` as Href))}>
                   <Feather name="navigation" size={16} color={colors.text} />
-                  <Text style={styles.menuItemText}>Suivre la livraison</Text>
+                  <Text style={styles.menuItemText}>
+                    {isCourseStarted(order) ? 'Suivre la course' : 'Suivre la commande'}
+                  </Text>
                 </Pressable>
               ) : null}
               <Pressable style={styles.menuItem} onPress={() => runMenu(() => router.push('/orders' as Href))}>
@@ -216,13 +251,31 @@ export default function OrderDetailsScreen() {
           <MotionView preset="down" delay={40}>
             <View style={[styles.statusCard, softShadow({ y: 6, blur: 16, opacity: 0.06 })]}>
               <View style={styles.statusTop}>
-                <View style={[styles.statusBadge, { backgroundColor: tone.bg }]}>
-                  <View style={[styles.statusDot, { backgroundColor: tone.dot }]} />
-                  <Text style={[styles.statusText, { color: tone.text }]}>{statusLabel(order.status)}</Text>
+                <View style={styles.statusTags}>
+                  <View style={[styles.statusBadge, { backgroundColor: tone.bg }]}>
+                    <View style={[styles.statusDot, { backgroundColor: tone.dot }]} />
+                    <Text style={[styles.statusText, { color: tone.text }]}>{statusLabel(order.status)}</Text>
+                  </View>
+                  <View
+                    style={[
+                      styles.speed,
+                      speed === 'urgent' && { backgroundColor: 'rgba(200,75,49,0.14)' },
+                      speed === 'express' && { backgroundColor: 'rgba(226,147,29,0.18)' },
+                    ]}>
+                    <Text
+                      style={[
+                        styles.speedTxt,
+                        speed === 'urgent' && { color: colors.terracotta },
+                        speed === 'express' && { color: colors.gold },
+                      ]}>
+                      {slotKindLabel(speed)}
+                    </Text>
+                  </View>
                 </View>
                 <Text style={styles.statusTotal}>{formatFcfa(order.total)}</Text>
               </View>
-              <Text style={styles.statusEta}>
+              <Text style={styles.statusEta}>{opsPhaseLabel(order)}</Text>
+              <Text style={styles.statusMeta}>
                 {order.dayLabel} · {order.slotLabel}
               </Text>
               <Text style={styles.statusMeta}>
@@ -235,11 +288,25 @@ export default function OrderDetailsScreen() {
                   onPress={() => router.push(`/tracking?id=${order.id}` as Href)}
                   scaleTo={0.98}>
                   <Feather name="navigation" size={14} color={colors.onAccent} />
-                  <Text style={styles.statusTrackText}>Suivre en direct</Text>
+                  <Text style={styles.statusTrackText}>
+                    {isCourseStarted(order) ? 'Suivre en direct' : 'Suivre la commande'}
+                  </Text>
                 </PressScale>
               ) : null}
             </View>
           </MotionView>
+
+          {failed ? (
+            <MotionView preset="down" delay={50}>
+              <DeliveryIssueCard order={order} />
+            </MotionView>
+          ) : null}
+
+          {order.handoffCode && !failed && !delivered ? (
+            <MotionView preset="down" delay={60}>
+              <HandoffCodeCard code={order.handoffCode} />
+            </MotionView>
+          ) : null}
 
           <MotionView preset="down" delay={80}>
             <View style={styles.section}>
@@ -254,7 +321,7 @@ export default function OrderDetailsScreen() {
                       {i > 0 ? <View style={styles.divider} /> : null}
                       <Pressable
                         style={styles.line}
-                        onPress={() => product && router.push(`/product/${product.id}`)}>
+                        onPress={() => product && router.push(`/product/${product.id}` as Href)}>
                         {product?.image ? (
                           <AppImage source={product.image} frameStyle={styles.thumb} />
                         ) : (
@@ -266,39 +333,39 @@ export default function OrderDetailsScreen() {
                           <Text style={styles.lineName} numberOfLines={2}>
                             {line.name}
                           </Text>
-                          <Text style={styles.lineUnit}>
-                            {line.unit} · {formatFcfa(line.unitPrice)}
-                          </Text>
+                          <Text style={styles.lineUnit}>{line.unit}</Text>
                           <Text style={styles.linePrice}>{formatFcfa(lineTotal)}</Text>
-                          {delivered ? (
-                            <Pressable
-                              style={[
-                                styles.lineReview,
-                                reviewed ? styles.lineReviewDone : styles.lineReviewCta,
-                              ]}
-                              onPress={() =>
-                                router.push(`/product/reviews/${line.productId}` as Href)
-                              }
-                              hitSlop={6}>
-                              <Feather
-                                name={reviewed ? 'check-circle' : 'edit-3'}
-                                size={14}
-                                color={reviewed ? colors.green : colors.onAccent}
-                              />
-                              <Text
-                                style={[
-                                  styles.lineReviewText,
-                                  { color: reviewed ? colors.green : colors.onAccent },
-                                ]}>
-                                {reviewed ? 'Avis publié' : 'Laisser un avis'}
-                              </Text>
-                            </Pressable>
-                          ) : null}
                         </View>
                         <View style={styles.qtyBadge}>
                           <Text style={styles.qtyText}>×{line.qty}</Text>
                         </View>
                       </Pressable>
+                      {delivered ? (
+                        <Pressable
+                          style={[
+                            styles.lineReview,
+                            reviewed ? styles.lineReviewDone : styles.lineReviewCta,
+                            { marginLeft: 14, marginBottom: 12 },
+                          ]}
+                          onPress={() =>
+                            router.push(
+                              `/product/reviews/${encodeURIComponent(line.productId)}?write=1` as Href,
+                            )
+                          }>
+                          <Feather
+                            name={reviewed ? 'check-circle' : 'edit-3'}
+                            size={14}
+                            color={reviewed ? colors.green : colors.onAccent}
+                          />
+                          <Text
+                            style={[
+                              styles.lineReviewText,
+                              { color: reviewed ? colors.green : colors.onAccent },
+                            ]}>
+                            {reviewed ? 'Avis publié' : 'Laisser un avis'}
+                          </Text>
+                        </Pressable>
+                      ) : null}
                     </View>
                   );
                 })}
@@ -306,7 +373,7 @@ export default function OrderDetailsScreen() {
             </View>
           </MotionView>
 
-          {delivered ? (
+          {delivered && order.courierName ? (
             <MotionView preset="down" delay={95}>
               <View style={styles.section}>
                 <Text style={styles.h}>Avis livraison</Text>
@@ -346,7 +413,7 @@ export default function OrderDetailsScreen() {
                       ]}>
                       {courierReview
                         ? 'Merci pour votre retour'
-                        : 'Évaluez la qualité de la livraison'}
+                        : 'Notez la course et laissez un pourboire si vous le souhaitez'}
                     </Text>
                   </View>
                   <Feather
@@ -366,19 +433,37 @@ export default function OrderDetailsScreen() {
                 <InfoRow
                   icon="map-pin"
                   title={order.addressLabel || 'Adresse'}
-                  lines={[addressLine, order.addressPhone]}
+                  lines={[addressLine, addressPhone].filter(Boolean)}
                 />
                 <View style={styles.dividerInset} />
                 <InfoRow icon="clock" title="Créneau" lines={[`${order.dayLabel} · ${order.slotLabel}`]} />
+                <View style={styles.dividerInset} />
+                <InfoRow
+                  icon="shopping-bag"
+                  title="Magasin"
+                  lines={[order.storeName || 'Super U']}
+                />
                 <View style={styles.dividerInset} />
                 <InfoRow
                   icon="navigation"
                   title="Trajet estimé"
                   lines={[
                     `${order.storeName || 'Super U'} → ${order.addressLabel || 'Adresse'}`,
-                    `${formatDistanceKm(order.routeDistanceMeters)} · ~${formatDurationMin(order.routeDurationSeconds)} (route)`,
+                    order.routeDistanceMeters
+                      ? `${formatDistanceKm(order.routeDistanceMeters)} · ~${formatDurationMin(order.routeDurationSeconds)} (route)`
+                      : '',
                   ]}
                 />
+                {isCourierAssigned(order) ? (
+                  <>
+                    <View style={styles.dividerInset} />
+                    <InfoRow
+                      icon="user"
+                      title="Livreur"
+                      lines={[order.courierName, courierPhone].filter(Boolean)}
+                    />
+                  </>
+                ) : null}
                 {order.comment ? (
                   <>
                     <View style={styles.dividerInset} />
@@ -396,7 +481,7 @@ export default function OrderDetailsScreen() {
                 <InfoRow
                   icon={order.paymentId === 'cod' ? 'package' : 'credit-card'}
                   title={order.paymentLabel || 'Paiement'}
-                  lines={[order.paymentDetail || (order.paymentId === 'cod' ? 'Espèces au livreur' : 'Paiement validé')]}
+                  lines={paymentStatusLabel(order)}
                 />
                 {order.promoCode ? (
                   <>
@@ -412,7 +497,7 @@ export default function OrderDetailsScreen() {
             <View style={[styles.summary, softShadow({ y: 4, blur: 14, opacity: 0.05 })]}>
               <Text style={styles.h}>Récapitulatif</Text>
               <Sum label="Sous-total" value={formatFcfa(order.subtotal)} />
-              <Sum label="Livraison" value={order.delivery === 0 ? 'Offerte' : formatFcfa(order.delivery)} />
+              <Sum label="Livraison" value={formatFcfa(order.delivery)} />
               {order.discount > 0 ? (
                 <Sum label="Réduction" value={`−${formatFcfa(order.discount)}`} green />
               ) : null}
@@ -471,6 +556,13 @@ function createStyles(colors: AppColors) {
     padding: 16,
     gap: 8 },
   statusTop: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 10 },
+  statusTags: { flexDirection: 'row', flexWrap: 'wrap', gap: 6, flex: 1 },
+  speed: {
+    borderRadius: 999,
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+    backgroundColor: colors.cream },
+  speedTxt: { fontSize: 12, fontWeight: '800', color: colors.muted },
   statusBadge: {
     flexDirection: 'row',
     alignItems: 'center',

@@ -1,18 +1,19 @@
 import { CtaButton, IconCircle, Page, Screen } from '@/components/ui';
+import { goBack } from '@/lib/navigation';
 import { StarRating } from '@/components/StarRating';
 import { type AppColors } from '@/constants/theme';
 import { useColors } from '@/context/ThemeContext';
 import { useOrders } from '@/context/OrdersContext';
 import { useProfile } from '@/context/ProfileContext';
 import { useReviews } from '@/context/ReviewsContext';
-import { getProduct } from '@/data/catalog';
+import { getProduct, liveReviewStats } from '@/data/catalog';
 import { buildRatingSummary, catalogReviewsForProduct, type Review } from '@/data/reviews';
 import { hasPurchasedProduct } from '@/lib/purchaseGate';
 import { MAX_REVIEW_IMAGES, pickReviewImages } from '@/lib/pickReviewImages';
 import { Feather, Ionicons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
 import { router, useLocalSearchParams } from 'expo-router';
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import {
   Image,
   ImageSourcePropType,
@@ -76,9 +77,10 @@ export default function ProductReviewsScreen() {
   const colors = useColors();
   const styles = useMemo(() => createStyles(colors), [colors]);
 
-  const { id: idParam } = useLocalSearchParams<{ id: string }>();
+  const { id: idParam, write: writeParam } = useLocalSearchParams<{ id: string; write?: string }>();
   const id = typeof idParam === 'string' ? idParam : Array.isArray(idParam) ? idParam[0] : undefined;
-  const product = getProduct(id);
+  const writeFlag = writeParam === '1' || writeParam === 'true';
+  const product = getProduct(id ?? '');
   const { orders } = useOrders();
   const { profile } = useProfile();
   const { reviewsForProduct, addReview, hasUserReviewedProduct } = useReviews();
@@ -87,24 +89,26 @@ export default function ProductReviewsScreen() {
   const [draftRating, setDraftRating] = useState(5);
   const [draftComment, setDraftComment] = useState('');
   const [draftImages, setDraftImages] = useState<string[]>([]);
-  const [formOpen, setFormOpen] = useState(false);
+  const [formOpen, setFormOpen] = useState(writeFlag);
   const [submitted, setSubmitted] = useState(false);
   const [pickingImages, setPickingImages] = useState(false);
 
-  const allReviews = useMemo(() => {
-    if (!id) return [];
-    const catalog = catalogReviewsForProduct(id);
-    const user = reviewsForProduct(id);
-    return [...user, ...catalog];
-  }, [id, reviewsForProduct]);
+  useEffect(() => {
+    if (writeFlag && canReview && !alreadyReviewed) setFormOpen(true);
+  }, [writeFlag, canReview, alreadyReviewed]);
+
+  const userReviews = useMemo(() => (id ? reviewsForProduct(id) : []), [id, reviewsForProduct]);
+  const catalogReviews = useMemo(() => (id ? catalogReviewsForProduct(id) : []), [id]);
+  const allReviews = useMemo(() => [...userReviews, ...catalogReviews], [userReviews, catalogReviews]);
 
   const summary = useMemo(
     () => buildRatingSummary(allReviews, product?.rating ?? 4.8),
     [allReviews, product?.rating],
   );
 
-  const displayTotal = summary.total || product?.reviews || 0;
-  const displayAverage = summary.total > 0 ? summary.average : (product?.rating ?? 4.8);
+  const live = product ? liveReviewStats(product, userReviews) : { rating: 0, reviews: 0 };
+  const displayTotal = live.reviews;
+  const displayAverage = live.rating;
 
   if (!product) {
     return (
@@ -112,7 +116,7 @@ export default function ProductReviewsScreen() {
         <Page style={styles.flex}>
           <View style={styles.missing}>
             <Text style={styles.missingTitle}>Produit introuvable</Text>
-            <Pressable onPress={() => router.back()}>
+            <Pressable onPress={() => goBack()}>
               <Text style={styles.missingLink}>Retour</Text>
             </Pressable>
           </View>
@@ -167,7 +171,7 @@ export default function ProductReviewsScreen() {
           behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
           <LinearGradient colors={['#f8e4c4', colors.cream, colors.bg]} style={styles.hero}>
             <View style={styles.header}>
-              <IconCircle name="chevron-left" onPress={() => router.back()} variant="hero" />
+              <IconCircle name="chevron-left" onPress={() => goBack()} variant="hero" />
               <View style={styles.headerCenter}>
                 <Text style={styles.title}>Avis clients</Text>
                 <Text style={styles.subtitle} numberOfLines={1}>
@@ -292,21 +296,40 @@ export default function ProductReviewsScreen() {
               ) : null}
 
               <View style={styles.listHead}>
-                <Text style={styles.listTitle}>Tous les avis</Text>
+                <Text style={styles.listTitle}>Votre avis</Text>
                 <View style={styles.listBadge}>
-                  <Text style={styles.listBadgeText}>{allReviews.length}</Text>
+                  <Text style={styles.listBadgeText}>{userReviews.length}</Text>
                 </View>
               </View>
-
-              {allReviews.length === 0 ? (
+              {userReviews.length === 0 ? (
                 <View style={styles.emptyCard}>
                   <Feather name="message-circle" size={28} color={colors.gold} />
-                  <Text style={styles.emptyTitle}>Aucun avis pour le moment</Text>
-                  <Text style={styles.emptyText}>Soyez le premier à partager votre expérience.</Text>
+                  <Text style={styles.emptyTitle}>Vous n’avez pas encore d’avis</Text>
+                  <Text style={styles.emptyText}>Partagez votre expérience après un achat.</Text>
                 </View>
               ) : (
                 <View style={styles.list}>
-                  {allReviews.map((review) => (
+                  {userReviews.map((review) => (
+                    <ReviewCard key={review.id} review={review} />
+                  ))}
+                </View>
+              )}
+
+              <View style={[styles.listHead, { marginTop: 8 }]}>
+                <Text style={styles.listTitle}>Avis clients</Text>
+                <View style={styles.listBadge}>
+                  <Text style={styles.listBadgeText}>{catalogReviews.length}</Text>
+                </View>
+              </View>
+              {catalogReviews.length === 0 ? (
+                <View style={styles.emptyCard}>
+                  <Feather name="message-circle" size={28} color={colors.gold} />
+                  <Text style={styles.emptyTitle}>Aucun avis communauté</Text>
+                  <Text style={styles.emptyText}>Les avis des autres clients apparaîtront ici.</Text>
+                </View>
+              ) : (
+                <View style={styles.list}>
+                  {catalogReviews.map((review) => (
                     <ReviewCard key={review.id} review={review} />
                   ))}
                 </View>

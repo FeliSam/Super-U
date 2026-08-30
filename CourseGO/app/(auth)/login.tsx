@@ -1,7 +1,9 @@
 import { colors, displayFont, bodyFont } from '@/constants/theme';
 import { useStaffAuth } from '@/context/StaffAuthContext';
+import { CourseLogo } from '@/components/CourseLogo';
 import { Field, PillButton, Screen } from '@/components/ui';
 import { getApiBaseUrl } from '@/lib/api/http';
+import { router } from 'expo-router';
 import { useState } from 'react';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 
@@ -35,7 +37,7 @@ export default function LoginScreen() {
     <Screen style={styles.wrap}>
       <View>
         <View style={styles.hero}>
-          <Text style={styles.brand}>CourseGo</Text>
+          <CourseLogo width={210} style={styles.logo} />
           <Text style={styles.title}>Connectez-vous à votre compte</Text>
           <Text style={styles.sub}>E-mail staff et mot de passe pour entrer en course.</Text>
         </View>
@@ -69,6 +71,9 @@ export default function LoginScreen() {
 
           <PillButton label={loading ? '…' : 'CONTINUER'} onPress={() => void submit()} disabled={loading} />
 
+          <Pressable onPress={() => router.push('/(auth)/register')}>
+            <Text style={styles.forgot}>Créer un compte livreur</Text>
+          </Pressable>
           <Pressable
             onPress={() => {
               setIdentifier(demoHint.email);
@@ -90,9 +95,9 @@ export default function LoginScreen() {
 
 const styles = StyleSheet.create({
   wrap: { justifyContent: 'space-between' },
-  hero: { gap: 8, paddingHorizontal: 24, paddingTop: 32, paddingBottom: 24 },
-  brand: { ...displayFont('900'), fontSize: 28, color: colors.teal },
-  title: { ...displayFont('800'), fontSize: 20, color: colors.text },
+  hero: { gap: 8, paddingHorizontal: 24, paddingTop: 28, paddingBottom: 24, alignItems: 'center' },
+  logo: { marginBottom: 8, alignSelf: 'center' },
+  title: { ...displayFont('800'), fontSize: 20, color: colors.text, textAlign: 'center' },
   sub: { ...bodyFont('400'), fontSize: 14, color: colors.muted },
   form: { paddingHorizontal: 24, gap: 20 },
   err: { ...bodyFont('600'), color: colors.danger },

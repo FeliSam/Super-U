@@ -18,6 +18,8 @@ export type Conversation = {
   icon?: ComponentProps<typeof Feather>['name'];
   phone?: string;
   orderId?: string;
+  disabled?: boolean;
+  archived?: boolean;
 };
 
 export type ChatMessage = {
@@ -25,7 +27,15 @@ export type ChatMessage = {
   from: 'me' | 'them';
   text: string;
   time: string;
+  kind?: 'text' | 'call';
+  call?: {
+    direction: 'in' | 'out';
+    status: 'missed' | 'ended' | 'rejected' | 'canceled';
+    durationSec?: number;
+  };
 };
+
+export const TRIAL_CHAT_ID = 'courier-essai';
 
 export const conversations: Conversation[] = [
   {
@@ -40,16 +50,16 @@ export const conversations: Conversation[] = [
     icon: 'headphones',
   },
   {
-    id: 'courier-moussa',
+    id: 'courier-bodouin',
     kind: 'courier',
-    name: 'Moussa Ndiaye',
+    name: 'Bodouin Dognon',
     subtitle: 'Livreur · #MD-2024-0847',
     preview: 'Préférez-vous que je sonne à l’interphone ?',
     time: '11:52',
     unread: 2,
     online: true,
     avatar,
-    phone: '+229971234567',
+    phone: '+229 01 97 12 34 56',
     orderId: 'MD-2024-0847',
   },
   {
@@ -62,7 +72,7 @@ export const conversations: Conversation[] = [
     unread: 1,
     online: true,
     avatar,
-    phone: '+229975551122',
+    phone: '+229 01 97 55 51 12',
     orderId: 'MD-2024-0845',
   },
   {
@@ -75,8 +85,20 @@ export const conversations: Conversation[] = [
     unread: 0,
     online: false,
     avatar,
-    phone: '+229976667788',
+    phone: '+229 01 97 66 67 78',
     orderId: 'MD-2024-0842',
+  },
+  {
+    id: 'courier-essai',
+    kind: 'courier',
+    name: 'Koffi Adjovi',
+    subtitle: 'Coursier · conversation d’essai',
+    preview: 'Appuyez sur le téléphone pour un appel dans l’appli.',
+    time: 'Maintenant',
+    unread: 1,
+    online: true,
+    avatar,
+    phone: '+229 01 40 00 00 01',
   },
 ];
 
@@ -85,7 +107,7 @@ export const conversationThreads: Record<string, ChatMessage[]> = {
     {
       id: 's1',
       from: 'them',
-      text: 'Bonjour Amina, bienvenue sur l’assistance Marché Doré. Que pouvons-nous faire pour vous ?',
+      text: 'Bonjour Merveille, bienvenue sur l’assistance Marché Doré. Que pouvons-nous faire pour vous ?',
       time: '09:10',
     },
     {
@@ -101,17 +123,17 @@ export const conversationThreads: Record<string, ChatMessage[]> = {
       time: '09:13',
     },
   ],
-  'courier-moussa': [
+  'courier-bodouin': [
     {
       id: '1',
       from: 'them',
-      text: 'Bonjour Amina ! Je suis Moussa, votre livreur Marché Doré. Votre commande #MD-2024-0847 est en préparation.',
+      text: 'Bonjour Merveille ! Je suis Bodouin, votre livreur Marché Doré. Votre commande #MD-2024-0847 est en préparation.',
       time: '11:48',
     },
     {
       id: '2',
       from: 'me',
-      text: 'Bonjour Moussa, merci. Vous serez bien entre 14h et 16h ?',
+      text: 'Bonjour Bodouin, merci. Vous serez bien entre 14h et 16h ?',
       time: '11:50',
     },
     {
@@ -159,6 +181,26 @@ export const conversationThreads: Record<string, ChatMessage[]> = {
       from: 'me',
       text: 'Merci beaucoup !',
       time: '2 j',
+    },
+  ],
+  'courier-essai': [
+    {
+      id: 'e1',
+      from: 'them',
+      text: 'Bonjour ! Koffi, coursier Marché Doré. Ceci est une conversation d’essai pour tester le chat et l’appel dans l’appli.',
+      time: '19:20',
+    },
+    {
+      id: 'e2',
+      from: 'me',
+      text: 'Parfait, je vois vos messages.',
+      time: '19:21',
+    },
+    {
+      id: 'e3',
+      from: 'them',
+      text: 'Appuyez sur le téléphone en haut pour m’appeler. Je peux aussi vous appeler dans quelques secondes.',
+      time: '19:21',
     },
   ],
 };

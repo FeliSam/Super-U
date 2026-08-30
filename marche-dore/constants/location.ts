@@ -13,8 +13,8 @@ export const appLocation = {
   /** Approx. Ganhi — used by MapLibre delivery map */
   latitude: 6.3604,
   longitude: 2.4178,
-  phone: '+229 97 12 34 56',
-  phoneDigits: '+229971234567',
-  supportLandline: '+229 21 00 00 00',
-  supportMobile: '+229 97 00 00 00',
+  phone: '+229 01 00 00 00 00',
+  phoneDigits: '+2290100000000',
+  supportLandline: '+229 02 21 00 00 00',
+  supportMobile: '+229 01 00 00 00 00',
 } as const;

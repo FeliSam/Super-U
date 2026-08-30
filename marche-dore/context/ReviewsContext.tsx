@@ -1,5 +1,9 @@
 import { Review } from '@/data/reviews';
-import AsyncStorage from '@react-native-async-storage/async-storage';
+import { apiGetAccountState, apiPatchAccountState, loadAccountJson, saveAccountJson } from '@/lib/accountSync';
+import { apiRateCourier } from '@/lib/api/orders';
+import { getAuthToken } from '@/lib/api/http';
+import { useAuth } from '@/context/AuthContext';
+import { useUiState } from '@/context/UiStateContext';
 import React, { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
 
 const STORAGE_KEY = 'marche-dore.reviews.v1';
@@ -10,6 +14,7 @@ export type CourierReview = {
   courierName: string;
   rating: number;
   comment: string;
+  tipAmount?: number;
   date: string;
 };
 
@@ -26,6 +31,7 @@ type ReviewsContextValue = {
     courierName: string;
     rating: number;
     comment: string;
+    tipAmount?: number;
   }) => void;
 };
 
@@ -40,45 +46,60 @@ function normalizeOrderId(id: string) {
 }
 
 export function ReviewsProvider({ children }: { children: React.ReactNode }) {
+  const { session, ready: authReady } = useAuth();
+  const { addLoyaltyBonus } = useUiState();
+  const accountId = session?.accountId ?? null;
   const [userReviews, setUserReviews] = useState<Review[]>([]);
   const [courierReviews, setCourierReviews] = useState<CourierReview[]>([]);
   const [ready, setReady] = useState(false);
   const hydrated = useRef(false);
+  const skipSave = useRef(true);
 
   useEffect(() => {
+    if (!authReady) return;
     let active = true;
+    skipSave.current = true;
+    hydrated.current = false;
     (async () => {
-      try {
-        const raw = await AsyncStorage.getItem(STORAGE_KEY);
-        if (raw && active) {
-          const parsed = JSON.parse(raw) as {
-            userReviews?: Review[];
-            courierReviews?: CourierReview[];
-          };
-          if (Array.isArray(parsed.userReviews)) setUserReviews(parsed.userReviews);
-          if (Array.isArray(parsed.courierReviews)) setCourierReviews(parsed.courierReviews);
-        }
-      } catch {
-        // ignore
-      } finally {
-        if (active) {
-          hydrated.current = true;
-          setReady(true);
+      if (!accountId) {
+        setUserReviews([]);
+        setCourierReviews([]);
+        hydrated.current = true;
+        setReady(true);
+        return;
+      }
+      const local = await loadAccountJson<{
+        userReviews?: Review[];
+        courierReviews?: CourierReview[];
+      }>(STORAGE_KEY, accountId);
+      let user = Array.isArray(local?.userReviews) ? local.userReviews : [];
+      let courier = Array.isArray(local?.courierReviews) ? local.courierReviews : [];
+      if (getAuthToken()) {
+        const state = await apiGetAccountState();
+        if (state?.reviews) {
+          if (Array.isArray(state.reviews.userReviews)) user = state.reviews.userReviews as Review[];
+          if (Array.isArray(state.reviews.courierReviews)) {
+            courier = state.reviews.courierReviews as CourierReview[];
+          }
         }
       }
+      if (!active) return;
+      setUserReviews(user);
+      setCourierReviews(courier);
+      hydrated.current = true;
+      setReady(true);
+      skipSave.current = false;
     })();
     return () => {
       active = false;
     };
-  }, []);
+  }, [authReady, accountId]);
 
   useEffect(() => {
-    if (!hydrated.current) return;
-    AsyncStorage.setItem(
-      STORAGE_KEY,
-      JSON.stringify({ userReviews, courierReviews }),
-    ).catch(() => undefined);
-  }, [userReviews, courierReviews]);
+    if (!hydrated.current || skipSave.current || !accountId) return;
+    void saveAccountJson(STORAGE_KEY, accountId, { userReviews, courierReviews });
+    apiPatchAccountState({ reviews: { userReviews, courierReviews } });
+  }, [userReviews, courierReviews, accountId]);
 
   const reviewsForProduct = useCallback(
     (productId: string) => userReviews.filter((r) => r.productId === productId),
@@ -99,8 +120,11 @@ export function ReviewsProvider({ children }: { children: React.ReactNode }) {
         verified: true,
       };
       setUserReviews((prev) => [review, ...prev.filter((r) => r.productId !== review.productId || !r.id.startsWith('user-'))]);
+      if (Array.isArray(input.images) && input.images.length > 0) {
+        addLoyaltyBonus(50);
+      }
     },
-    [],
+    [addLoyaltyBonus],
   );
 
   const courierReviewForOrder = useCallback(
@@ -112,20 +136,23 @@ export function ReviewsProvider({ children }: { children: React.ReactNode }) {
   );
 
   const addCourierReview = useCallback(
-    (input: { orderId: string; courierName: string; rating: number; comment: string }) => {
+    (input: { orderId: string; courierName: string; rating: number; comment: string; tipAmount?: number }) => {
       const orderId = normalizeOrderId(input.orderId);
+      const tipAmount = Math.max(0, Math.round(Number(input.tipAmount ?? 0)));
       const review: CourierReview = {
         id: `courier-${orderId}-${Date.now()}`,
         orderId,
         courierName: input.courierName,
         rating: input.rating,
         comment: input.comment.trim(),
+        tipAmount,
         date: formatReviewDate(),
       };
       setCourierReviews((prev) => [
         review,
         ...prev.filter((r) => normalizeOrderId(r.orderId) !== orderId),
       ]);
+      void apiRateCourier(orderId, input.rating, input.comment, tipAmount).catch(() => undefined);
     },
     [],
   );

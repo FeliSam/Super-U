@@ -1,19 +1,19 @@
 import { AccountScreen, InfoRow } from '@/components/AccountScreen';
-import { bodyFont, colors } from '@/constants/theme';
 import { useStaffAuth } from '@/context/StaffAuthContext';
-import { Text } from 'react-native';
+import { vehicleLabel } from '@/lib/staffLabels';
 
 export default function VehicleScreen() {
   const { staff } = useStaffAuth();
+  const p = staff?.profile;
   return (
     <AccountScreen title="Mon véhicule">
-      <InfoRow icon="truck" label="Type" value={staff?.vehicle?.trim() || 'Moto'} />
-      <InfoRow icon="map-pin" label="Magasin rattaché" value={staff?.storeId || '—'} />
-      <InfoRow icon="user" label="Rôle" value={staff?.role || '—'} />
-      <Text style={{ ...bodyFont('400'), color: colors.muted, lineHeight: 20 }}>
-        Les infos véhicule viennent du compte ops.staff. La modification se fait côté SuperU, pas dans
-        CourseGo.
-      </Text>
+      <InfoRow icon="truck" label="Type" value={vehicleLabel(staff?.vehicle)} />
+      <InfoRow icon="hash" label="Immatriculation" value={p?.vehiclePlate?.trim() || '—'} />
+      <InfoRow
+        icon="package"
+        label="Propriété"
+        value={p?.ownsVehicle ? 'Véhicule personnel' : p?.needsKit ? 'Matériel Super U (casque, etc.)' : '—'}
+      />
     </AccountScreen>
   );
 }

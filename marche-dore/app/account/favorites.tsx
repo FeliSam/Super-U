@@ -7,7 +7,7 @@ import { useCart } from '@/context/CartContext';
 import { useFavorites } from '@/context/FavoritesContext';
 import { promoProducts, type Product } from '@/data/catalog';
 import { formatFcfa } from '@/lib/format';
-import { navigateTab, tabPaths } from '@/lib/navigation';
+import { goBack, navigateTab, tabPaths } from '@/lib/navigation';
 import { Feather } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
 import { router } from 'expo-router';
@@ -173,7 +173,7 @@ export default function FavoritesScreen() {
           }>
           <LinearGradient colors={[colors.blush, colors.cream, colors.bg]} style={[styles.hero, { paddingTop: insets.top + 8 }]}>
             <View style={styles.heroBar}>
-              <IconCircle name="chevron-left" onPress={() => router.back()} variant="hero" />
+              <IconCircle name="chevron-left" onPress={() => goBack()} variant="hero" />
               <Text style={styles.heroTitle}>Mes favoris</Text>
               <Pressable
                 style={styles.refreshBtn}

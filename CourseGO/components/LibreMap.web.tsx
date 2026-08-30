@@ -1,6 +1,8 @@
 import type { LibreMapProps } from '@/components/LibreMap.types';
-import { cotonouMap, mapStyles, routeLineGeoJSON, type LngLat } from '@/constants/map';
+import { cotonouMap, haversineMeters, mapStyles, routeLineGeoJSON, type LngLat } from '@/constants/map';
 import { colors } from '@/constants/theme';
+import { mapPinHtml } from '@/lib/mapPins';
+import { easeOutCubic, headingDeg } from '@/lib/vehicleMotion';
 import {
   GeoJSONSource,
   LngLatBounds,
@@ -24,12 +26,42 @@ const styleCache = new Map<string, StyleSpecification>();
 let warmPromise: Promise<void> | null = null;
 
 function ensureMapLibreCss() {
-  if (typeof document === 'undefined' || document.getElementById('maplibre-gl-css')) return;
-  const link = document.createElement('link');
-  link.id = 'maplibre-gl-css';
-  link.rel = 'stylesheet';
-  link.href = '/maplibre/maplibre-gl.css';
-  document.head.appendChild(link);
+  if (typeof document === 'undefined') return;
+  if (!document.getElementById('maplibre-gl-css')) {
+    const link = document.createElement('link');
+    link.id = 'maplibre-gl-css';
+    link.rel = 'stylesheet';
+    link.href = '/maplibre/maplibre-gl.css';
+    document.head.appendChild(link);
+  }
+  if (document.getElementById('maplibre-cg-nav')) return;
+  const style = document.createElement('style');
+  style.id = 'maplibre-cg-nav';
+  style.textContent = `
+    .maplibregl-ctrl-top-right {
+      top: 112px !important;
+      right: 12px !important;
+    }
+    .maplibregl-ctrl-group {
+      border: 0 !important;
+      border-radius: 16px !important;
+      overflow: hidden;
+      box-shadow: 0 10px 24px rgba(15, 23, 42, 0.18);
+      background: #fff !important;
+    }
+    .maplibregl-ctrl-group button {
+      width: 42px !important;
+      height: 42px !important;
+      background: #fff !important;
+    }
+    .maplibregl-ctrl-group button + button {
+      border-top: 1px solid #e5e7eb !important;
+    }
+    .maplibregl-ctrl-group button:hover {
+      background: #f0faf8 !important;
+    }
+  `;
+  document.head.appendChild(style);
 }
 
 function ensurePreconnect() {
@@ -115,17 +147,7 @@ function paddingForMap(
 }
 
 function pinHtml(marker: NonNullable<LibreMapProps['markers']>[number]) {
-  const bg =
-    marker.kind === 'home' ? colors.coral : marker.kind === 'courier' ? colors.text : colors.teal;
-  const glyph = marker.kind === 'store' ? 'M' : marker.kind === 'home' ? 'C' : marker.kind === 'courier' ? '•' : '';
-  const label = marker.label
-    ? `<span style="background:rgba(17,24,39,0.88);color:#fff;font:600 10px/1.2 system-ui,sans-serif;padding:4px 8px;border-radius:999px;white-space:nowrap">${marker.label}</span>`
-    : '';
-  return `<div style="display:flex;flex-direction:column;align-items:center;gap:4px;transform:translateY(-4px)">
-    ${label}
-    <span style="width:34px;height:34px;border-radius:12px;background:${bg};border:2px solid #fff;display:flex;align-items:center;justify-content:center;box-shadow:0 8px 18px rgba(15,23,42,0.28);color:#fff;font:800 13px/1 system-ui,sans-serif">${glyph}</span>
-    <span style="width:0;height:0;border-left:6px solid transparent;border-right:6px solid transparent;border-top:8px solid ${bg};margin-top:-6px"></span>
-  </div>`;
+  return mapPinHtml(marker, { coral: colors.coral, teal: colors.teal, text: colors.text });
 }
 
 export function LibreMap({
@@ -138,18 +160,36 @@ export function LibreMap({
   fitToMarkers = false,
   fitIncludeCourier = false,
   fitPadding,
+  fitMaxZoom = 14.5,
+  followCamera = false,
+  navigationMode = false,
+  bearing = 0,
+  followResumeTick = 0,
+  onFollowBreak,
   interactive = true,
   showNavigation = true,
+  onMarkerPress,
 }: LibreMapProps) {
   const hostRef = useRef<HTMLDivElement | null>(null);
   const mapRef = useRef<MapLibreMap | null>(null);
   const markersRef = useRef<Map<string, Marker>>(new Map());
   const markerMetaRef = useRef<Map<string, string>>(new Map());
+  const markerAnimRef = useRef<Map<string, number>>(new Map());
+  const markerPosRef = useRef<Map<string, LngLat>>(new Map());
+  const userMovedRef = useRef(false);
+  const fittedRef = useRef(false);
+  const fitSigRef = useRef('');
+  const onMarkerPressRef = useRef(onMarkerPress);
+  onMarkerPressRef.current = onMarkerPress;
   const [tick, setTick] = useState(0);
   const centerRef = useRef(center);
   centerRef.current = center;
   const zoomRef = useRef(zoom);
   zoomRef.current = zoom;
+  const onFollowBreakRef = useRef(onFollowBreak);
+  onFollowBreakRef.current = onFollowBreak;
+  const navigationModeRef = useRef(navigationMode);
+  navigationModeRef.current = navigationMode;
 
   const routeKey = useMemo(() => (route ? JSON.stringify(route) : ''), [route]);
   const markersKey = useMemo(() => JSON.stringify(markers), [markers]);
@@ -183,7 +223,8 @@ export function LibreMap({
           zoom: zoomRef.current,
           attributionControl: { compact: true },
           interactive,
-          pitchWithRotate: false,
+          dragRotate: false,
+          pitchWithRotate: true,
           fadeDuration: 0,
           trackResize: true,
           renderWorldCopies: false,
@@ -193,8 +234,19 @@ export function LibreMap({
         return;
       }
       mapRef.current = map;
+      userMovedRef.current = false;
+      fittedRef.current = false;
+      const markUserMoved = () => {
+        userMovedRef.current = true;
+        if (navigationModeRef.current) onFollowBreakRef.current?.();
+      };
+      map.on('dragstart', markUserMoved);
+      map.on('rotatestart', markUserMoved);
+      map.on('zoomstart', (e) => {
+        if (e.originalEvent) markUserMoved();
+      });
       if (showNavigation && interactive) {
-        map.addControl(new NavigationControl({ showCompass: false, visualizePitch: false }), 'top-right');
+        map.addControl(new NavigationControl({ showCompass: true, visualizePitch: true }), 'top-right');
       }
       const bump = () => map?.resize();
       map.once('load', () => {
@@ -213,6 +265,8 @@ export function LibreMap({
     return () => {
       cancelled = true;
       ro?.disconnect();
+      markerAnimRef.current.forEach((id) => cancelAnimationFrame(id));
+      markerAnimRef.current.clear();
       markersRef.current.forEach((m) => m.remove());
       markersRef.current.clear();
       markerMetaRef.current.clear();
@@ -222,17 +276,56 @@ export function LibreMap({
   }, [mapStyle, interactive, showNavigation]);
 
   useEffect(() => {
+    userMovedRef.current = false;
+  }, [followResumeTick, navigationMode]);
+
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map) return;
+    if (navigationMode) {
+      map.dragRotate.enable();
+      try {
+        map.touchPitch.enable();
+      } catch {
+        /* older maplibre */
+      }
+    } else {
+      map.dragRotate.disable();
+      map.easeTo({ pitch: 0, bearing: 0, duration: 380, essential: true });
+    }
+  }, [navigationMode, tick]);
+
+  useEffect(() => {
     const map = mapRef.current;
     if (!map || !map.isStyleLoaded() || fitToMarkers) return;
+    if (!followCamera && !navigationMode) return;
+    if (userMovedRef.current) return;
     const cur = map.getCenter();
     const z = map.getZoom();
+    const targetZoom = navigationMode ? Math.max(zoom, 16.6) : zoom;
+    const targetPitch = navigationMode ? 56 : 0;
+    const targetBearing = navigationMode ? bearing : 0;
     const moved =
-      Math.abs(cur.lng - center[0]) > 0.00008 ||
-      Math.abs(cur.lat - center[1]) > 0.00008 ||
-      Math.abs(z - zoom) > 0.05;
-    if (!moved) return;
-    map.easeTo({ center, zoom, duration: 280, essential: true });
-  }, [center[0], center[1], zoom, fitToMarkers, tick]);
+      Math.abs(cur.lng - center[0]) > 0.00005 ||
+      Math.abs(cur.lat - center[1]) > 0.00005 ||
+      Math.abs(z - targetZoom) > 0.08 ||
+      (navigationMode && Math.abs((map.getBearing() - targetBearing + 540) % 360 - 180) > 4) ||
+      Math.abs(map.getPitch() - targetPitch) > 2;
+    if (!moved && !navigationMode) return;
+    if (navigationMode) {
+      map.easeTo({
+        center,
+        zoom: targetZoom,
+        pitch: targetPitch,
+        bearing: targetBearing,
+        duration: 480,
+        essential: true,
+        padding: { top: 72, bottom: 300, left: 48, right: 48 },
+      });
+      return;
+    }
+    map.easeTo({ center, zoom: targetZoom, duration: 280, essential: true });
+  }, [center[0], center[1], zoom, fitToMarkers, followCamera, navigationMode, bearing, followResumeTick, tick]);
 
   useEffect(() => {
     const map = mapRef.current;
@@ -276,10 +369,42 @@ export function LibreMap({
       }
     });
     placed.forEach((marker) => {
-      const meta = `${marker.kind ?? ''}|${marker.label ?? ''}`;
+      const meta = `${marker.kind ?? ''}|${marker.vehicle ?? ''}|${marker.badge ?? 0}|${marker.highlight ? 1 : 0}`;
       const existing = markersRef.current.get(marker.id);
       if (existing && markerMetaRef.current.get(marker.id) === meta) {
-        existing.setLngLat(marker.coordinate);
+        const labelNode = existing.getElement().querySelector('span');
+        if (labelNode && marker.label && labelNode.textContent !== marker.label) {
+          labelNode.textContent = marker.label;
+        }
+        const live = existing.getLngLat();
+        const prev: LngLat = [live.lng, live.lat];
+        const next = marker.coordinate;
+        const jump = haversineMeters(prev, next);
+        const prevAnim = markerAnimRef.current.get(marker.id);
+        if (prevAnim) cancelAnimationFrame(prevAnim);
+        if (jump < 0.6 || jump > 4000) {
+          existing.setLngLat(next);
+          markerPosRef.current.set(marker.id, next);
+          return;
+        }
+        const start = performance.now();
+        const dur = Math.min(280, Math.max(70, jump * 6));
+        const step = (now: number) => {
+          const t = easeOutCubic((now - start) / dur);
+          const at: LngLat = [prev[0] + (next[0] - prev[0]) * t, prev[1] + (next[1] - prev[1]) * t];
+          existing.setLngLat(at);
+          markerPosRef.current.set(marker.id, at);
+          const rot = headingDeg(prev, next);
+          const inner = existing.getElement().querySelector('[data-kind="courier"] span') as HTMLElement | null
+            ?? existing.getElement().querySelector('span:last-of-type') as HTMLElement | null;
+          if (inner && marker.kind === 'courier') inner.style.transform = `rotate(${rot}deg)`;
+          if (t < 1) markerAnimRef.current.set(marker.id, requestAnimationFrame(step));
+          else {
+            markerPosRef.current.set(marker.id, next);
+            markerAnimRef.current.delete(marker.id);
+          }
+        };
+        markerAnimRef.current.set(marker.id, requestAnimationFrame(step));
         return;
       }
       existing?.remove();
@@ -287,11 +412,26 @@ export function LibreMap({
       node.innerHTML = pinHtml(marker);
       const el = (node.firstElementChild as HTMLElement) ?? node;
       const m = new Marker({ element: el, anchor: 'bottom' }).setLngLat(marker.coordinate).addTo(map);
+      el.addEventListener('click', (ev) => {
+        ev.stopPropagation();
+        onMarkerPressRef.current?.(marker.id);
+      });
       markersRef.current.set(marker.id, m);
       markerMetaRef.current.set(marker.id, meta);
+      markerPosRef.current.set(marker.id, marker.coordinate);
     });
 
     if (!fitToMarkers) return;
+    const sig = placed
+      .filter((m) => m.kind !== 'courier')
+      .map((m) => m.id)
+      .sort()
+      .join('|');
+    if (sig !== fitSigRef.current) {
+      fitSigRef.current = sig;
+      if (!userMovedRef.current) fittedRef.current = false;
+    }
+    if (userMovedRef.current || fittedRef.current) return;
     const fitPts: LngLat[] = [
       ...placed.filter((m) => fitIncludeCourier || m.kind !== 'courier').map((m) => m.coordinate),
       ...(route ? route.filter(validLngLat) : []),
@@ -302,9 +442,10 @@ export function LibreMap({
     pts.forEach((p) => b.extend(p));
     const apply = () => {
       try {
+        fittedRef.current = true;
         map.fitBounds(b, {
           padding: paddingForMap(map, fitPadding),
-          maxZoom: 14.5,
+          maxZoom: fitMaxZoom,
           duration: 400,
         });
       } catch {
@@ -317,14 +458,14 @@ export function LibreMap({
     };
     if (map.isStyleLoaded()) apply();
     else map.once('load', apply);
-  }, [markersKey, markers, fitToMarkers, fitIncludeCourier, routeKey, route, tick, fitPadding]);
+  }, [markersKey, markers, fitToMarkers, fitIncludeCourier, routeKey, route, tick, fitPadding, fitMaxZoom]);
 
   return (
     <View style={[styles.wrap, style]}>
       <div
         ref={hostRef}
         onPointerDown={(e) => e.stopPropagation()}
-        style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', touchAction: 'pan-x pan-y' }}
+        style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', touchAction: 'none' }}
       />
     </View>
   );

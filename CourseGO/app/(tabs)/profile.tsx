@@ -3,7 +3,9 @@ import { bodyFont, colors, displayFont, radius, shadow } from '@/constants/theme
 import { useStaffAuth } from '@/context/StaffAuthContext';
 import { useTabContentPadding } from '@/hooks/useTabContentPadding';
 import { patchStaffPhoto } from '@/lib/api/ops';
+import { staffJobLabel } from '@/lib/staffLabels';
 import { pickStaffPhoto, staffPhotoSource } from '@/lib/staffPhoto';
+import { toastApiError } from '@/components/ToastHost';
 import { Feather } from '@expo/vector-icons';
 import type { ComponentProps } from 'react';
 import { useState } from 'react';
@@ -11,6 +13,8 @@ import { router } from 'expo-router';
 import { Image, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 
 const MENU: { icon: ComponentProps<typeof Feather>['name']; label: string; href: string }[] = [
+  { icon: 'user', label: 'Infos personnelles', href: '/account/personal' },
+  { icon: 'map-pin', label: 'Magasins affiliés', href: '/account/personal' },
   { icon: 'truck', label: 'Mon véhicule', href: '/account/vehicle' },
   { icon: 'file-text', label: 'Mes documents', href: '/account/documents' },
   { icon: 'bell', label: 'Notifications', href: '/notifications' },
@@ -33,10 +37,11 @@ export default function ProfileScreen() {
       const res = await patchStaffPhoto(dataUrl);
       applyStaff(res.staff);
       setPhotoBust(Date.now());
-    } catch {
-      /* ignore */
+    } catch (e) {
+      toastApiError(e);
     }
   };
+
   return (
     <Screen>
       <ScrollView contentContainerStyle={[styles.content, { paddingBottom: pad }]}>
@@ -46,19 +51,27 @@ export default function ProfileScreen() {
             <Text style={styles.photoHint}>Changer la photo</Text>
           </Pressable>
           <Text style={styles.name}>{name || 'Coursier'}</Text>
+          <View style={styles.jobPill}>
+            <Text style={styles.jobTxt}>{staffJobLabel(staff)}</Text>
+          </View>
           <View style={styles.meta}>
             <View style={styles.star}>
-              <Feather name="star" size={14} color={colors.teal} />
-              <Text style={styles.starTxt}>4.8</Text>
+              <Feather name="star" size={14} color={colors.amber} />
+              <Text style={styles.starTxt}>
+                {(staff?.ratingCount ?? 0) > 0 ? (staff?.ratingAvg ?? 0).toFixed(1) : '—'}
+              </Text>
             </View>
+            <Text style={styles.starMeta}>
+              {(staff?.ratingCount ?? 0) > 0
+                ? `${staff?.ratingCount} avis client${(staff?.ratingCount ?? 0) > 1 ? 's' : ''}`
+                : 'Pas encore d’avis'}
+            </Text>
             <View style={styles.verif}>
-              <Text style={styles.verifTxt}>VÉRIFIÉ</Text>
+              <Text style={styles.verifTxt}>Vérifié</Text>
             </View>
           </View>
-          <Text style={styles.sub}>
-            {staff?.email} · {staff?.vehicle ?? 'moto'} · {staff?.storeId ?? 'magasin'}
-          </Text>
         </View>
+
         <View style={styles.menu}>
           {MENU.map((item) => (
             <Pressable key={item.label} style={styles.item} onPress={() => router.push(item.href as never)}>
@@ -92,7 +105,15 @@ const styles = StyleSheet.create({
   avatar: { width: 80, height: 80, borderRadius: 40 },
   photoHint: { ...bodyFont('600'), fontSize: 12, color: colors.teal, textAlign: 'center', marginTop: 8 },
   name: { ...displayFont('800'), fontSize: 20 },
-  meta: { flexDirection: 'row', gap: 12 },
+  jobPill: {
+    backgroundColor: colors.tealSoft,
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 999,
+  },
+  jobTxt: { ...displayFont('800'), fontSize: 12, color: colors.teal },
+  meta: { flexDirection: 'row', gap: 10, alignItems: 'center', flexWrap: 'wrap', justifyContent: 'center' },
+  starMeta: { ...bodyFont('500'), fontSize: 13, color: colors.muted },
   star: {
     flexDirection: 'row',
     gap: 4,
@@ -106,7 +127,6 @@ const styles = StyleSheet.create({
   starTxt: { ...bodyFont('700'), fontSize: 12 },
   verif: { backgroundColor: colors.tealSoft, paddingHorizontal: 10, paddingVertical: 4, borderRadius: 20 },
   verifTxt: { ...bodyFont('700'), fontSize: 12, color: colors.teal },
-  sub: { ...bodyFont('400'), fontSize: 13, color: colors.muted, textAlign: 'center' },
   menu: {
     marginHorizontal: 24,
     borderRadius: 20,

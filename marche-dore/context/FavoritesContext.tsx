@@ -1,5 +1,7 @@
 import { getProduct, getProducts, type Product } from '@/data/catalog';
-import AsyncStorage from '@react-native-async-storage/async-storage';
+import { apiGetAccountState, apiPatchAccountState, loadAccountJson, saveAccountJson } from '@/lib/accountSync';
+import { getAuthToken } from '@/lib/api/http';
+import { useAuth } from '@/context/AuthContext';
 import React, { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
 
 type FavoritesContextValue = {
@@ -32,47 +34,51 @@ function sanitizeIds(raw: unknown): string[] {
 }
 
 export function FavoritesProvider({ children }: { children: React.ReactNode }) {
+  const { session, ready: authReady } = useAuth();
+  const accountId = session?.accountId ?? null;
   const [ids, setIds] = useState<string[]>([]);
   const [ready, setReady] = useState(false);
   const hydrated = useRef(false);
+  const skipSave = useRef(true);
 
-  const load = useCallback(async () => {
-    try {
-      const raw = await AsyncStorage.getItem(STORAGE_KEY);
-      if (raw) {
-        const parsed = JSON.parse(raw) as { ids?: unknown } | unknown;
-        const list = Array.isArray(parsed)
-          ? parsed
-          : parsed && typeof parsed === 'object' && 'ids' in parsed
-            ? (parsed as { ids: unknown }).ids
-            : [];
-        setIds(sanitizeIds(list));
-      } else {
-        setIds([]);
-      }
-    } catch {
+  const load = useCallback(async (uid: string | null) => {
+    if (!uid) {
       setIds([]);
+      return;
     }
+    const local = await loadAccountJson<{ ids?: unknown } | unknown>(STORAGE_KEY, uid);
+    let list: unknown = [];
+    if (Array.isArray(local)) list = local;
+    else if (local && typeof local === 'object' && 'ids' in local) list = (local as { ids: unknown }).ids;
+    if (getAuthToken()) {
+      const state = await apiGetAccountState();
+      if (state?.favorites) list = state.favorites;
+    }
+    setIds(sanitizeIds(list));
   }, []);
 
   useEffect(() => {
+    if (!authReady) return;
     let active = true;
+    skipSave.current = true;
+    hydrated.current = false;
     (async () => {
-      await load();
-      if (active) {
-        hydrated.current = true;
-        setReady(true);
-      }
+      await load(accountId);
+      if (!active) return;
+      hydrated.current = true;
+      setReady(true);
+      skipSave.current = false;
     })();
     return () => {
       active = false;
     };
-  }, [load]);
+  }, [authReady, accountId, load]);
 
   useEffect(() => {
-    if (!hydrated.current) return;
-    AsyncStorage.setItem(STORAGE_KEY, JSON.stringify({ ids })).catch(() => undefined);
-  }, [ids]);
+    if (!hydrated.current || skipSave.current || !accountId) return;
+    void saveAccountJson(STORAGE_KEY, accountId, { ids });
+    apiPatchAccountState({ favorites: ids });
+  }, [ids, accountId]);
 
   const isFavorite = useCallback((productId: string) => ids.includes(productId), [ids]);
 
@@ -95,8 +101,8 @@ export function FavoritesProvider({ children }: { children: React.ReactNode }) {
   }, []);
 
   const refresh = useCallback(async () => {
-    await load();
-  }, [load]);
+    await load(accountId);
+  }, [load, accountId]);
 
   const products = useMemo(() => getProducts(ids), [ids]);
 

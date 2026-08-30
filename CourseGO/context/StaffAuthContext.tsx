@@ -1,5 +1,6 @@
-import { loadAuthToken, persistAuthToken, setAuthToken, errorMessage } from '@/lib/api/http';
+import { loadAuthToken, persistAuthToken, setAuthToken, errorMessage, STAFF_CACHE_KEY, ApiError } from '@/lib/api/http';
 import { opsLogin, opsMe, type Staff } from '@/lib/api/ops';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import React, { createContext, useCallback, useContext, useEffect, useMemo, useState } from 'react';
 
 type AuthValue = {
@@ -13,20 +14,34 @@ type AuthValue = {
 
 const Ctx = createContext<AuthValue | null>(null);
 
-function withDeadline<T>(promise: Promise<T>, ms: number) {
-  return new Promise<T>((resolve, reject) => {
-    const t = setTimeout(() => reject(new Error('timeout')), ms);
-    promise.then(
-      (v) => {
-        clearTimeout(t);
-        resolve(v);
-      },
-      (e) => {
-        clearTimeout(t);
-        reject(e);
-      },
-    );
-  });
+function cacheStaff(staff: Staff | null) {
+  try {
+    if (typeof localStorage !== 'undefined') {
+      if (staff) localStorage.setItem(STAFF_CACHE_KEY, JSON.stringify(staff));
+      else localStorage.removeItem(STAFF_CACHE_KEY);
+    }
+  } catch {
+    /* ignore */
+  }
+  if (staff) void AsyncStorage.setItem(STAFF_CACHE_KEY, JSON.stringify(staff)).catch(() => undefined);
+  else void AsyncStorage.removeItem(STAFF_CACHE_KEY).catch(() => undefined);
+}
+
+async function readCachedStaff(): Promise<Staff | null> {
+  try {
+    if (typeof localStorage !== 'undefined') {
+      const raw = localStorage.getItem(STAFF_CACHE_KEY);
+      if (raw) return JSON.parse(raw) as Staff;
+    }
+  } catch {
+    /* ignore */
+  }
+  try {
+    const raw = await AsyncStorage.getItem(STAFF_CACHE_KEY);
+    return raw ? (JSON.parse(raw) as Staff) : null;
+  } catch {
+    return null;
+  }
 }
 
 export function StaffAuthProvider({ children }: { children: React.ReactNode }) {
@@ -36,14 +51,23 @@ export function StaffAuthProvider({ children }: { children: React.ReactNode }) {
   useEffect(() => {
     void (async () => {
       try {
-        const token = await withDeadline(loadAuthToken(), 1500).catch(() => null);
-        if (token) {
-          setAuthToken(token);
-          try {
-            const me = await withDeadline(opsMe(), 2500);
-            setStaff(me.staff);
-          } catch {
+        const token = await loadAuthToken();
+        if (!token) {
+          setStaff(null);
+          return;
+        }
+        setAuthToken(token);
+        const cached = await readCachedStaff();
+        if (cached) setStaff(cached);
+        try {
+          const me = await opsMe();
+          setStaff(me.staff);
+          cacheStaff(me.staff);
+        } catch (e) {
+          if (e instanceof ApiError && e.status === 401) {
             await persistAuthToken(null);
+            cacheStaff(null);
+            setStaff(null);
           }
         }
       } finally {
@@ -56,13 +80,12 @@ export function StaffAuthProvider({ children }: { children: React.ReactNode }) {
     try {
       const digits = identifier.replace(/\D/g, '').replace(/^229/, '');
       const mapped =
-        digits === '0140000001' || digits === '140000001'
-          ? 'picker@marchedore.bj'
-          : digits === '0140000002' || digits === '140000002'
-            ? 'courier@marchedore.bj'
-            : identifier.trim();
+        digits === '0140000002' || digits === '140000002'
+          ? 'courier@marchedore.bj'
+          : identifier.trim();
       const res = await opsLogin(mapped.includes('@') ? mapped.toLowerCase() : identifier.trim(), password);
       await persistAuthToken(res.token);
+      cacheStaff(res.staff);
       setStaff(res.staff);
       return { ok: true as const };
     } catch (e) {
@@ -72,7 +95,13 @@ export function StaffAuthProvider({ children }: { children: React.ReactNode }) {
 
   const signOut = useCallback(async () => {
     await persistAuthToken(null);
+    cacheStaff(null);
     setStaff(null);
+  }, []);
+
+  const applyStaff = useCallback((next: Staff) => {
+    setStaff(next);
+    cacheStaff(next);
   }, []);
 
   const value = useMemo(
@@ -81,10 +110,10 @@ export function StaffAuthProvider({ children }: { children: React.ReactNode }) {
       staff,
       signIn,
       signOut,
-      applyStaff: setStaff,
-      demoHint: { email: 'picker@marchedore.bj', phone: '01 40 00 00 01', password: 'marche2024' },
+      applyStaff,
+      demoHint: { email: 'courier@marchedore.bj', phone: '01 40 00 00 02', password: 'marche2024' },
     }),
-    [ready, staff, signIn, signOut],
+    [ready, staff, signIn, signOut, applyStaff],
   );
 
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>;

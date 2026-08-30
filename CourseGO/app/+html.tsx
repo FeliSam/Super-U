@@ -16,9 +16,10 @@ export default function Root({ children }: { children: ReactNode }) {
         <style
           dangerouslySetInnerHTML={{
             __html: `
+@import url('https://fonts.googleapis.com/css2?family=Archivo:wght@600;700;800;900&family=Manrope:wght@400;500;600;700;800&display=swap');
 html, body, #root { height: 100%; }
 html { background: #0f172a; }
-body { margin: 0; background: #0f172a; overflow: hidden; }
+body { margin: 0; background: #0f172a; overflow: hidden; font-family: Manrope, system-ui, sans-serif; -webkit-font-smoothing: antialiased; text-rendering: optimizeLegibility; }
 #root { display: flex; flex-direction: column; min-height: 100%; min-height: 100dvh; }
 @media (max-width: 430px) {
   html, body { background: #fafaf9; }

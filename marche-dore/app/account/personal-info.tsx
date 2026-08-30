@@ -1,8 +1,12 @@
+import { BirthDateField } from '@/components/BirthDateField';
+import { goBack } from '@/lib/navigation';
+import { PressScale } from '@/components/motion';
 import { CtaButton, IconCircle, Screen, Page } from '@/components/ui';
 import { displayFont, type AppColors } from '@/constants/theme';
 import { useProfile } from '@/context/ProfileContext';
 import { useColors } from '@/context/ThemeContext';
-import { avatar } from '@/data/catalog';
+import { formatBeninPhoneInput } from '@/lib/beninPhone';
+import { pickProfilePhoto, profilePhotoSource } from '@/lib/profilePhoto';
 import { Feather } from '@expo/vector-icons';
 import { router } from 'expo-router';
 import { useEffect, useMemo, useState } from 'react';
@@ -41,7 +45,7 @@ function Field({
 export default function PersonalInfoScreen() {
   const colors = useColors();
   const styles = useMemo(() => createStyles(colors), [colors]);
-  const { profile, setProfile } = useProfile();
+  const { profile, setProfile, updateProfile } = useProfile();
   const [form, setForm] = useState(profile);
 
   useEffect(() => {
@@ -54,25 +58,38 @@ export default function PersonalInfoScreen() {
 
   const save = () => {
     setProfile(form);
-    router.back();
+    goBack();
+  };
+
+  const changePhoto = async () => {
+    const uri = await pickProfilePhoto();
+    if (!uri) return;
+    setForm((prev) => ({ ...prev, photoUri: uri }));
+    updateProfile({ photoUri: uri });
   };
 
   return (
     <Screen>
       <Page style={styles.flex}>
         <View style={styles.header}>
-          <IconCircle name="chevron-left" onPress={() => router.back()} />
+          <IconCircle name="chevron-left" onPress={() => goBack()} />
           <Text style={styles.title}>Informations personnelles</Text>
           <View style={styles.headerSpacer} />
         </View>
 
         <ScrollView contentContainerStyle={styles.content} showsVerticalScrollIndicator={false} keyboardShouldPersistTaps="handled">
           <View style={styles.avatarSection}>
-            <Image source={avatar} style={styles.avatar} />
-            <View style={styles.changePhoto}>
-              <Feather name="camera" size={14} color={colors.gold} />
-              <Text style={styles.changePhotoText}>Changer la photo</Text>
-            </View>
+            <Image source={profilePhotoSource(form.photoUri)} style={styles.avatar} />
+            <PressScale
+              onPress={() => void changePhoto()}
+              scaleTo={0.97}
+              accessibilityRole="button"
+              accessibilityLabel="Changer la photo de profil">
+              <View style={styles.changePhoto}>
+                <Feather name="camera" size={14} color={colors.gold} />
+                <Text style={styles.changePhotoText}>Changer la photo</Text>
+              </View>
+            </PressScale>
           </View>
 
           <View style={styles.card}>
@@ -85,8 +102,13 @@ export default function PersonalInfoScreen() {
               keyboardType="email-address"
               autoCapitalize="none"
             />
-            <Field label="Téléphone" value={form.phone} onChangeText={update('phone')} keyboardType="phone-pad" />
-            <Field label="Date de naissance" value={form.birthDate} onChangeText={update('birthDate')} />
+            <Field
+              label="Téléphone"
+              value={form.phone}
+              onChangeText={(t) => update('phone')(formatBeninPhoneInput(t))}
+              keyboardType="phone-pad"
+            />
+            <BirthDateField label="Date de naissance" value={form.birthDate} onChange={update('birthDate')} />
           </View>
 
           <View style={styles.note}>

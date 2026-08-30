@@ -31,6 +31,8 @@ export function CallOverlay() {
     toggleHold,
     toggleVideo,
     toggleKeypad,
+    expand,
+    minimize,
   } = useCall();
   const [digits, setDigits] = useState('');
   const initials = useMemo(() => {
@@ -40,18 +42,27 @@ export function CallOverlay() {
 
   if (phase === 'idle' || !call) return null;
 
-  const docked = phase === 'active';
-  if (docked) {
+  if (phase === 'active' && controls.minimized) {
     return (
       <View style={styles.mini} pointerEvents="box-none">
-        <View style={styles.miniBar}>
+        <Pressable
+          style={styles.miniBar}
+          onPress={expand}
+          accessibilityRole="button"
+          accessibilityLabel="Ouvrir le menu d’appel">
           <Text style={styles.miniText}>
             {call.peerName} · {formatElapsed(elapsedSec)}
           </Text>
-          <Pressable onPress={hangup} style={styles.miniHang} accessibilityLabel="Raccrocher">
+          <Pressable
+            onPress={(e) => {
+              e.stopPropagation();
+              void hangup();
+            }}
+            style={styles.miniHang}
+            accessibilityLabel="Raccrocher">
             <Feather name="phone-off" size={16} color="#fff" />
           </Pressable>
-        </View>
+        </Pressable>
       </View>
     );
   }
@@ -70,6 +81,12 @@ export function CallOverlay() {
         <Text style={styles.name}>{call.peerName}</Text>
         <Text style={styles.status}>{statusLabel}</Text>
         {phase === 'active' ? <Text style={styles.timer}>{formatElapsed(elapsedSec)}</Text> : null}
+        {phase === 'active' ? (
+          <Pressable onPress={minimize} style={styles.minimizeBtn} accessibilityLabel="Réduire l’appel">
+            <Feather name="chevron-down" size={18} color={colors.placeholder} />
+            <Text style={styles.minimizeLbl}>Réduire</Text>
+          </Pressable>
+        ) : null}
       </View>
 
       {controls.keypadOpen ? (
@@ -174,6 +191,8 @@ const styles = StyleSheet.create({
   name: { ...displayFont('800'), fontSize: 24, color: colors.onAccent },
   status: { ...bodyFont('700'), fontSize: 14, color: colors.teal },
   timer: { ...bodyFont('500'), fontSize: 16, color: colors.placeholder },
+  minimizeBtn: { flexDirection: 'row', alignItems: 'center', gap: 4, marginTop: 8, padding: 6 },
+  minimizeLbl: { ...bodyFont('600'), fontSize: 12, color: colors.placeholder },
   row: { flexDirection: 'row', gap: 36, justifyContent: 'center' },
   ctrl: { alignItems: 'center', gap: 8, width: 80 },
   circ: {

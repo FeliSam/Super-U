@@ -1,4 +1,5 @@
 import { IconCircle, Screen, Page } from '@/components/ui';
+import { goBack } from '@/lib/navigation';
 import { MotionView, PressScale } from '@/components/motion';
 import { SwipeToConfirm } from '@/components/SwipeToConfirm';
 import { displayFont, type AppColors } from '@/constants/theme';
@@ -10,6 +11,7 @@ import { useOrders } from '@/context/OrdersContext';
 import { usePayments } from '@/context/PaymentsContext';
 import { useStores } from '@/context/StoresContext';
 import { useProfile } from '@/context/ProfileContext';
+import { formatBeninPhone } from '@/lib/beninPhone';
 import { SUPER_U_BRAND } from '@/data/superU';
 import { formatDistanceKm, formatDurationMin } from '@/lib/deliveryRouting';
 import { formatFcfa } from '@/lib/format';
@@ -19,6 +21,7 @@ import { Feather } from '@expo/vector-icons';
 import { Href, router } from 'expo-router';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import {
+  ActivityIndicator,
   Alert,
   Platform,
   Pressable,
@@ -45,6 +48,14 @@ type TimeSlot = {
 
 function formatArrivalClock(date: Date) {
   return date.toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' });
+}
+
+function alertUser(title: string, message: string) {
+  if (Platform.OS === 'web' && typeof window !== 'undefined') {
+    window.alert(`${title}\n\n${message}`);
+    return;
+  }
+  Alert.alert(title, message);
 }
 
 function arrivalWindowLabel(fromMin: number, toMin: number) {
@@ -179,7 +190,7 @@ export default function CheckoutScreen() {
   const { profile } = useProfile();
   const routeEstimate = useDeliveryEstimate(
     selectedStore.coordinate,
-    defaultAddress.coordinate,
+    defaultAddress?.coordinate ?? null,
   );
   const days = useMemo(() => buildDays(), []);
   const [dayId, setDayId] = useState<DayId>('today');
@@ -206,7 +217,11 @@ export default function CheckoutScreen() {
     (setup?.methodId ?? (defaultMethod?.id as PaymentIdLocal) ?? 'om') as PaymentIdLocal,
   );
   const [comment, setComment] = useState('');
+  const [phase, setPhase] = useState<'review' | 'payment'>('review');
+  const [payError, setPayError] = useState<string | null>(null);
+  const [payBusy, setPayBusy] = useState(false);
   const placingRef = useRef(false);
+  const leavingRef = useRef(false);
 
   const allSlots = useMemo(() => {
     if (dayId === 'today') return [...expressSlots, ...hourSlots];
@@ -239,18 +254,16 @@ export default function CheckoutScreen() {
     router.push(`/payment-setup/${id}` as Href);
   };
 
-  const confirmOrder = async () => {
-    if (!lines.length || !selectedSlot || placingRef.current) return;
-    if (!defaultAddress?.line?.trim()) {
-      Alert.alert('Adresse requise', 'Choisissez une adresse de livraison avant de confirmer.');
-      return;
+  const commitOrder = async (paymentStatus: 'paid' | 'cod_pending', paymentRef: string | null) => {
+    if (!defaultAddress) {
+      leavingRef.current = false;
+      return false;
     }
-    if (!payReady) {
-      Alert.alert('Paiement incomplet', `Configurez ${selectedPay.label} pour continuer.`);
-      openPaymentSetup(pay);
-      return;
+    leavingRef.current = true;
+    if (!selectedSlot) {
+      leavingRef.current = false;
+      return false;
     }
-    placingRef.current = true;
     const order = await placeOrder({
       lines,
       subtotal,
@@ -265,43 +278,133 @@ export default function CheckoutScreen() {
       paymentId: selectedPay.id,
       paymentLabel: selectedPay.label,
       paymentDetail: payDetail,
+      paymentStatus,
+      paymentRef,
       comment,
       addressLabel: defaultAddress.label,
       addressLine: defaultAddress.line,
       addressCity: defaultAddress.city,
-      addressPhone: defaultAddress.phone,
+      addressPhone: formatBeninPhone(defaultAddress.phone || profile.phone),
       addressCoordinate: defaultAddress.coordinate,
-      storeId: selectedStore.id });
+      storeId: selectedStore.id,
+    });
     if (!order) {
-      placingRef.current = false;
-      return;
+      leavingRef.current = false;
+      alertUser(
+        'Commande non envoyée',
+        'Connectez-vous et vérifiez que l’API SuperU tourne (port 8787). Sur téléphone, ouvrez l’app via l’IP du PC (pas localhost) et laissez l’API allumée.',
+      );
+      return false;
     }
     clear();
     clearSetup();
     router.replace(`/order-success?id=${order.id}` as Href);
+    return true;
+  };
+
+  /** Valider le récap : commande tout de suite, sans FedaPay ni page de vérification. */
+  const confirmReview = async () => {
+    if (!lines.length || !selectedSlot || placingRef.current || leavingRef.current) return;
+    if (!defaultAddress?.line?.trim()) {
+      alertUser('Adresse requise', 'Choisissez une adresse de livraison avant de confirmer.');
+      return;
+    }
+    placingRef.current = true;
+    try {
+      if (pay === 'cod') {
+        await commitOrder('cod_pending', null);
+      } else {
+        await commitOrder('paid', `skip-${Date.now()}`);
+      }
+    } finally {
+      placingRef.current = false;
+    }
+  };
+
+  /** Ancienne étape paiement : même chemin, toujours sans appel API. */
+  const confirmPayment = async () => {
+    if (placingRef.current || leavingRef.current || payBusy) return;
+    placingRef.current = true;
+    setPayBusy(true);
+    setPayError(null);
+    try {
+      if (pay === 'cod') {
+        await commitOrder('cod_pending', null);
+      } else {
+        await commitOrder('paid', `skip-${Date.now()}`);
+      }
+    } finally {
+      placingRef.current = false;
+      setPayBusy(false);
+    }
   };
 
   useEffect(() => {
-    if (placingRef.current) return;
+    if (leavingRef.current || placingRef.current || phase === 'payment') return;
     if (cartReady && count === 0) {
       router.replace('/(tabs)/cart');
     }
-  }, [cartReady, count]);
+  }, [cartReady, count, phase]);
 
   return (
     <Screen>
       <Page style={styles.flex}>
         <View style={[styles.header, { paddingTop: Math.max(8, insets.top ? 4 : 8) }]}>
-          <IconCircle name="arrow-left" onPress={() => router.back()} />
+          <IconCircle
+            name="arrow-left"
+            onPress={() => (phase === 'payment' ? setPhase('review') : goBack('/(tabs)/cart'))}
+          />
           <View style={styles.headerCenter}>
-            <Text style={styles.title}>Finaliser la commande</Text>
+            <Text style={styles.title}>{phase === 'payment' ? 'Paiement' : 'Finaliser la commande'}</Text>
             <Text style={styles.headerSub}>
-              {count} article{count > 1 ? 's' : ''} · {formatFcfa(checkoutTotal)}
+              {phase === 'payment'
+                ? `Étape 2/3 · ${selectedPay.label}`
+                : `${count} article${count > 1 ? 's' : ''} · ${formatFcfa(checkoutTotal)}`}
             </Text>
           </View>
           <View style={styles.headerSpacer} />
         </View>
 
+        {phase === 'payment' ? (
+          <>
+            <ScrollView contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
+              <View style={styles.steps}>
+                <Text style={[styles.step, styles.stepDone]}>1. Commande</Text>
+                <Text style={styles.stepSep}>→</Text>
+                <Text style={[styles.step, styles.stepOn]}>2. Paiement</Text>
+                <Text style={styles.stepSep}>→</Text>
+                <Text style={styles.step}>3. Confirmation</Text>
+              </View>
+              <View style={styles.payHero}>
+                <View style={[styles.payHeroIcon, { backgroundColor: selectedPay.soft }]}>
+                  <Feather name={selectedPay.icon} size={28} color={selectedPay.accent} />
+                </View>
+                <Text style={styles.payHeroAmount}>{formatFcfa(checkoutTotal)}</Text>
+                <Text style={styles.payHeroMethod}>
+                  {selectedPay.label}
+                  {payDetail ? ` · ${payDetail}` : ''}
+                </Text>
+                <Text style={styles.payHeroHint}>
+                  {payBusy
+                    ? 'Enregistrement de la commande…'
+                    : 'Aucune vérification FedaPay. Glissez pour envoyer la commande à CourseGO.'}
+                </Text>
+                {payError ? <Text style={styles.payError}>{payError}</Text> : null}
+                {payBusy ? <ActivityIndicator color={colors.gold} style={{ marginTop: 12 }} /> : null}
+              </View>
+            </ScrollView>
+            <View style={[styles.footer, { paddingBottom: Math.max(16, insets.bottom + 10) }]}>
+              <SwipeToConfirm
+                title={payBusy ? 'Paiement en cours…' : 'Glisser pour payer'}
+                subtitle={selectedPay.label}
+                amount={formatFcfa(checkoutTotal)}
+                disabled={payBusy}
+                onConfirm={confirmPayment}
+              />
+            </View>
+          </>
+        ) : (
+          <>
         <ScrollView
           contentContainerStyle={styles.content}
           showsVerticalScrollIndicator={false}
@@ -324,11 +427,11 @@ export default function CheckoutScreen() {
                     {profile.firstName} {profile.lastName}
                   </Text>
                   <View style={styles.badge}>
-                    <Text style={styles.badgeText}>{defaultAddress.label}</Text>
+                    <Text style={styles.badgeText}>{defaultAddress?.label ?? 'Adresse'}</Text>
                   </View>
                 </View>
-                <Text style={styles.meta}>{defaultAddress.line}</Text>
-                <Text style={styles.meta}>{defaultAddress.phone}</Text>
+                <Text style={styles.meta}>{defaultAddress?.line ?? 'Ajoutez une adresse de livraison'}</Text>
+                <Text style={styles.meta}>{defaultAddress?.phone ?? ''}</Text>
               </View>
               <Feather name="chevron-right" size={18} color={colors.placeholder} />
             </Pressable>
@@ -359,7 +462,7 @@ export default function CheckoutScreen() {
                         ? 'Préparation & départ livreur'
                         : routeEstimate.approximated
                           ? `Approx. ${formatDistanceKm(routeEstimate.distanceMeters)} · ~${formatDurationMin(routeEstimate.durationSeconds)}`
-                          : `${formatDistanceKm(routeEstimate.distanceMeters)} · ~${formatDurationMin(routeEstimate.durationSeconds)} → ${defaultAddress.label}`}
+                          : `${formatDistanceKm(routeEstimate.distanceMeters)} · ~${formatDurationMin(routeEstimate.durationSeconds)} → ${defaultAddress?.label ?? 'votre adresse'}`}
                   </Text>
                 </View>
               </View>
@@ -486,7 +589,7 @@ export default function CheckoutScreen() {
                   <MotionView key={p.id} index={i} preset="right">
                     <PressScale
                       style={[styles.payCard, on && { backgroundColor: p.soft }]}
-                      onPress={() => openPaymentSetup(p.id)}
+                      onPress={() => setPay(p.id)}
                       scaleTo={0.97}>
                       <View style={[styles.payIcon, { backgroundColor: on ? p.accent : colors.cream }]}>
                         <Feather name={p.icon} size={20} color={on ? colors.white : p.accent} />
@@ -578,7 +681,7 @@ export default function CheckoutScreen() {
             <Sum label="Sous-total" value={formatFcfa(subtotal)} />
             <Sum
               label={isUrgent ? 'Livraison (urgente ×2)' : 'Livraison'}
-              value={deliveryFee === 0 ? 'Offerte' : formatFcfa(deliveryFee)}
+              value={formatFcfa(deliveryFee)}
             />
             {discount > 0 ? <Sum label="Réduction" value={`−${formatFcfa(discount)}`} green /> : null}
             <View style={styles.hr} />
@@ -595,20 +698,15 @@ export default function CheckoutScreen() {
         </ScrollView>
 
         <View style={[styles.footer, { paddingBottom: Math.max(16, insets.bottom + 10) }]}>
-          {!payReady ? (
-            <PressScale style={styles.setupCta} onPress={() => openPaymentSetup(pay)} scaleTo={0.98}>
-              <Feather name={selectedPay.icon} size={18} color={colors.onAccent} />
-              <Text style={styles.setupCtaText}>Configurer {selectedPay.label}</Text>
-            </PressScale>
-          ) : (
-            <SwipeToConfirm
-              title="Glisser pour payer"
-              subtitle={`${selectedSlot?.label} · ${selectedPay.label}`}
-              amount={formatFcfa(checkoutTotal)}
-              onConfirm={confirmOrder}
-            />
-          )}
+          <SwipeToConfirm
+            title="Glisser pour confirmer"
+            subtitle={`${selectedSlot?.label} · ${selectedPay.label}`}
+            amount={formatFcfa(checkoutTotal)}
+            onConfirm={confirmReview}
+          />
         </View>
+          </>
+        )}
       </Page>
     </Screen>
   );
@@ -639,6 +737,50 @@ function createStyles(colors: AppColors) {
   headerSpacer: { width: 40 },
   title: { color: colors.text, fontSize: 17, ...displayFont('700') },
   headerSub: { color: colors.muted, fontSize: 12, fontWeight: '600', marginTop: 2 },
+  steps: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    flexWrap: 'wrap',
+    gap: 6,
+    paddingVertical: 4,
+  },
+  step: { color: colors.muted, fontSize: 12, fontWeight: '700' },
+  stepOn: { color: colors.terracotta },
+  stepDone: { color: colors.green },
+  stepSep: { color: colors.placeholder, fontSize: 12, fontWeight: '700' },
+  payHero: {
+    backgroundColor: colors.white,
+    borderRadius: 22,
+    padding: 24,
+    alignItems: 'center',
+    gap: 8,
+  },
+  payHeroIcon: {
+    width: 64,
+    height: 64,
+    borderRadius: 20,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginBottom: 8,
+  },
+  payHeroAmount: { color: colors.text, fontSize: 28, fontWeight: '800' },
+  payHeroMethod: { color: colors.muted, fontSize: 14, fontWeight: '700', textAlign: 'center' },
+  payHeroHint: {
+    color: colors.muted,
+    fontSize: 13,
+    fontWeight: '600',
+    textAlign: 'center',
+    lineHeight: 18,
+    marginTop: 8,
+  },
+  payError: {
+    color: colors.terracotta,
+    fontSize: 13,
+    fontWeight: '700',
+    textAlign: 'center',
+    marginTop: 10,
+  },
   content: { paddingHorizontal: 20, paddingBottom: 28, gap: 22 },
   section: { gap: 10 },
   sectionHead: {
@@ -869,6 +1011,9 @@ function createStyles(colors: AppColors) {
   secureText: { color: colors.muted, fontSize: 12, fontWeight: '600' },
   footer: {
     paddingHorizontal: 16,
-    paddingTop: 12,
-    backgroundColor: colors.white } });
+    paddingTop: 0,
+    backgroundColor: 'transparent',
+    zIndex: 4,
+  },
+  });
 }

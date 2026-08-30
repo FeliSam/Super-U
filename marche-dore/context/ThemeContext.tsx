@@ -1,5 +1,5 @@
 import { lightColors, darkColors, bindActiveColors, type AppColors, type ColorScheme } from '@/constants/theme';
-import AsyncStorage from '@react-native-async-storage/async-storage';
+import { appStorage as AsyncStorage } from '@/lib/db/kv';
 import React, {
   createContext,
   useCallback,
@@ -91,13 +91,7 @@ export function ThemeProvider({ children }: { children: React.ReactNode }) {
     [preference, scheme, colors, setPreference, ready],
   );
 
-  return (
-    <ThemeContext.Provider value={value}>
-      {/* Remount screens when scheme flips so any leftover module styles re-read less often,
-          and live `useColors()` / `useThemedStyles()` trees refresh cleanly. */}
-      <React.Fragment key={scheme}>{children}</React.Fragment>
-    </ThemeContext.Provider>
-  );
+  return <ThemeContext.Provider value={value}>{children}</ThemeContext.Provider>;
 }
 
 export function useTheme() {

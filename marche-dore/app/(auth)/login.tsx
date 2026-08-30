@@ -7,6 +7,7 @@ import {
   AuthScreen,
 } from '@/components/auth/AuthUI';
 import { MotionView, PressScale } from '@/components/motion';
+import { goBack } from '@/lib/navigation';
 import { IconCircle } from '@/components/ui';
 import { bodyFont, type AppColors } from '@/constants/theme';
 import { useAuth } from '@/context/AuthContext';
@@ -45,7 +46,7 @@ export default function LoginScreen() {
   return (
     <AuthScreen>
       <View style={styles.topRow}>
-        <IconCircle name="chevron-left" onPress={() => router.back()} accessibilityLabel="Retour" />
+        <IconCircle name="chevron-left" onPress={() => goBack('/(auth)')} accessibilityLabel="Retour" />
       </View>
 
       <AuthBrand

@@ -13,6 +13,12 @@ export type MapMarker = {
   coordinate: LngLat;
   label?: string;
   kind?: 'store' | 'home' | 'courier' | 'pin';
+  vehicle?: 'moto' | 'voiture' | 'velo' | 'tricycle' | 'pied';
+  heading?: number;
+  /** Colis à ramasser (pin magasin). */
+  badge?: number;
+  /** Super U proposé (le plus proche avec file). */
+  highlight?: boolean;
 };
 
 export const mapStyles = {

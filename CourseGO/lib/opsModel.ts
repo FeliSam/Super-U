@@ -46,6 +46,9 @@ export function normalizeDeliveryStatus(status: string | null | undefined): Deli
   return status as DeliveryStatus;
 }
 
+/** Colis ramassés qu’un coursier peut emporter en parallèle. */
+export const MAX_ACTIVE_DELIVERIES = 3;
+
 /** Colis prêt, course pas encore prise — phase boutique `assembled`. */
 export function isDeliveryClaimable(d: {
   pick_status?: string | null;
@@ -61,6 +64,20 @@ export function isDeliveryActive(d: { delivery_status?: string | null; courier_i
   if (!d.courier_id) return false;
   const del = normalizeDeliveryStatus(d.delivery_status);
   return del === 'assigned' || del === 'at_store' || del === 'picked_up' || del === 'en_route' || del === 'arrived';
+}
+
+/** Sélectionné, tournée pas encore démarrée. */
+export function isDeliveryHeld(d: { delivery_status?: string | null; courier_id?: string | null }) {
+  if (!d.courier_id) return false;
+  const del = normalizeDeliveryStatus(d.delivery_status);
+  return del === 'assigned' || del === 'at_store';
+}
+
+/** Livraison en cours (colis en main / route) — plus d’ajout possible. */
+export function isDeliveryStarted(d: { delivery_status?: string | null; courier_id?: string | null }) {
+  if (!d.courier_id) return false;
+  const del = normalizeDeliveryStatus(d.delivery_status);
+  return del === 'picked_up' || del === 'en_route' || del === 'arrived';
 }
 
 export const PICK_STEPS = [
@@ -81,13 +98,13 @@ export const DELIVERY_STEPS = [
 ] as const;
 
 export const NEXT_DELIVERY_LABEL: Record<string, string> = {
-  unassigned: 'PRENDRE LA COURSE',
-  offered: 'PRENDRE LA COURSE',
-  assigned: 'ARRIVÉ MAGASIN',
-  at_store: 'COLIS RÉCUPÉRÉ',
-  picked_up: 'PARTIR CHEZ LE CLIENT',
-  en_route: 'ARRIVÉ CHEZ LE CLIENT',
-  arrived: 'MARQUER LIVRÉ',
+  unassigned: 'Je prends cette course',
+  offered: 'Je prends cette course',
+  assigned: 'Je démarre la tournée',
+  at_store: 'Je démarre la tournée',
+  picked_up: 'Je suis arrivé',
+  en_route: 'Je suis arrivé',
+  arrived: 'Je remets le colis',
 };
 
 /** Jambe GPS : magasin tant que le colis n’est pas en main, puis client. */

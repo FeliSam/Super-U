@@ -2,7 +2,7 @@ import { CtaButton, IconCircle, Screen, Page } from '@/components/ui';
 import { displayFont, type AppColors } from '@/constants/theme';
 import { useNotifications } from '@/context/NotificationsContext';
 import { useColors } from '@/context/ThemeContext';
-import { navigateTab } from '@/lib/navigation';
+import { goBack, navigateTab } from '@/lib/navigation';
 import { Feather } from '@expo/vector-icons';
 import { Href, router, useLocalSearchParams } from 'expo-router';
 import { useEffect, useMemo } from 'react';
@@ -24,7 +24,7 @@ export default function NotificationDetailScreen() {
       <Screen>
         <Page style={styles.flex}>
           <View style={styles.header}>
-            <IconCircle name="chevron-left" onPress={() => router.back()} />
+            <IconCircle name="chevron-left" onPress={() => goBack()} />
             <Text style={styles.title}>Notification</Text>
             <View style={styles.headerSpacer} />
           </View>
@@ -60,7 +60,7 @@ export default function NotificationDetailScreen() {
     <Screen>
       <Page style={styles.flex}>
         <View style={styles.header}>
-          <IconCircle name="chevron-left" onPress={() => router.back()} />
+          <IconCircle name="chevron-left" onPress={() => goBack()} />
           <Text style={styles.title}>Détail</Text>
           <View style={styles.headerSpacer} />
         </View>

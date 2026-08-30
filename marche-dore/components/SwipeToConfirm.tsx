@@ -3,29 +3,41 @@ import { useColors } from '@/context/ThemeContext';
 import { softShadow } from '@/lib/shadow';
 import { Feather } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
-import { memo, useEffect, useMemo, useRef, useState } from 'react';
+import { memo, useCallback, useEffect, useMemo, useRef } from 'react';
 import {
-  Animated,
-  PanResponder,
+  Platform,
+  Pressable,
   StyleSheet,
   Text,
   View,
+  type GestureResponderEvent,
   type LayoutChangeEvent,
 } from 'react-native';
+import Animated, {
+  interpolate,
+  useAnimatedStyle,
+  useSharedValue,
+  withSpring,
+  withTiming,
+} from 'react-native-reanimated';
 
 const THUMB = 54;
 const PAD = 5;
-const THRESHOLD = 0.82;
+const THRESHOLD = 0.62;
 
 type Props = {
   title?: string;
   subtitle?: string;
   amount: string;
-  onConfirm: () => void;
+  onConfirm: () => void | Promise<void>;
   disabled?: boolean;
 };
 
-/** Swipe left → right to confirm payment. */
+function pageXOf(e: GestureResponderEvent) {
+  return e.nativeEvent.pageX;
+}
+
+/** Swipe left → right to confirm payment. Touch/mouse via RN responders (works on phone web). */
 export const SwipeToConfirm = memo(function SwipeToConfirm({
   title = 'Glisser pour payer',
   subtitle,
@@ -35,139 +47,167 @@ export const SwipeToConfirm = memo(function SwipeToConfirm({
 }: Props) {
   const colors = useColors();
   const styles = useMemo(() => createStyles(colors), [colors]);
-  const [trackW, setTrackW] = useState(0);
-  const maxX = Math.max(1, trackW - THUMB - PAD * 2);
-  const translateX = useRef(new Animated.Value(0)).current;
-  const startX = useRef(0);
-  const locked = useRef(false);
-  const maxXRef = useRef(maxX);
-  const xRef = useRef(0);
-  maxXRef.current = maxX;
+  const x = useSharedValue(0);
+  const maxX = useSharedValue(1);
+  const maxXRef = useRef(1);
+  const lockedRef = useRef(false);
+  const draggingRef = useRef(false);
+  const startPageX = useRef(0);
+  const onConfirmRef = useRef(onConfirm);
+  const disabledRef = useRef(disabled);
 
   useEffect(() => {
-    const id = translateX.addListener(({ value }) => {
-      xRef.current = value;
-    });
-    return () => translateX.removeListener(id);
-  }, [translateX]);
+    onConfirmRef.current = onConfirm;
+  }, [onConfirm]);
 
+  useEffect(() => {
+    disabledRef.current = disabled;
+    if (disabled) {
+      lockedRef.current = false;
+      draggingRef.current = false;
+      x.value = withSpring(0, { damping: 18, stiffness: 220 });
+    }
+  }, [disabled, x]);
 
   const onTrackLayout = (e: LayoutChangeEvent) => {
-    setTrackW(e.nativeEvent.layout.width);
+    const next = Math.max(1, e.nativeEvent.layout.width - THUMB - PAD * 2);
+    maxX.value = next;
+    maxXRef.current = next;
   };
 
-  const reset = () => {
-    locked.current = false;
-    Animated.spring(translateX, {
-      toValue: 0,
-      useNativeDriver: false,
-      friction: 7,
-      tension: 80,
-    }).start();
-  };
+  const resetKnob = useCallback(() => {
+    lockedRef.current = false;
+    draggingRef.current = false;
+    x.value = withSpring(0, { damping: 18, stiffness: 220 });
+  }, [x]);
 
-  const complete = () => {
-    if (locked.current) return;
-    locked.current = true;
-    Animated.timing(translateX, {
-      toValue: maxXRef.current,
-      duration: 140,
-      useNativeDriver: false,
-    }).start(() => {
-      onConfirm();
-      // Allow retry if navigation fails / user comes back
-      setTimeout(reset, 600);
+  const fireConfirm = useCallback(() => {
+    lockedRef.current = true;
+    x.value = withTiming(maxXRef.current, { duration: 120 });
+    void Promise.resolve(onConfirmRef.current()).finally(() => {
+      setTimeout(resetKnob, 450);
     });
+  }, [resetKnob, x]);
+
+  const grant = (e: GestureResponderEvent) => {
+    if (disabledRef.current || lockedRef.current) return;
+    draggingRef.current = true;
+    startPageX.current = pageXOf(e);
+    x.value = 0;
   };
 
-  const pan = useRef(
-    PanResponder.create({
-      onStartShouldSetPanResponder: () => !disabled && !locked.current,
-      onMoveShouldSetPanResponder: (_, g) => !disabled && !locked.current && Math.abs(g.dx) > 3,
-      onPanResponderTerminationRequest: () => false,
-      onPanResponderGrant: () => {
-        translateX.stopAnimation();
-        startX.current = xRef.current;
-      },
-      onPanResponderMove: (_, g) => {
-        if (locked.current || disabled) return;
-        const next = Math.min(maxXRef.current, Math.max(0, startX.current + g.dx));
-        translateX.setValue(next);
-      },
-      onPanResponderRelease: (_, g) => {
-        if (locked.current || disabled) return;
-        const next = Math.min(maxXRef.current, Math.max(0, startX.current + g.dx));
-        if (next >= maxXRef.current * THRESHOLD || g.vx > 1.2) {
-          complete();
-        } else {
-          Animated.spring(translateX, {
-            toValue: 0,
-            useNativeDriver: false,
-            friction: 7,
-            tension: 80,
-          }).start();
-        }
-      },
-    }),
-  ).current;
+  const move = (e: GestureResponderEvent) => {
+    if (!draggingRef.current || disabledRef.current || lockedRef.current) return;
+    const dx = pageXOf(e) - startPageX.current;
+    x.value = Math.min(maxXRef.current, Math.max(0, dx));
+  };
 
-  const fillWidth = Animated.add(translateX, THUMB + PAD * 2);
-  const hintOpacity = translateX.interpolate({
-    inputRange: [0, maxX * 0.55],
-    outputRange: [1, 0],
-    extrapolate: 'clamp',
-  });
-  const doneOpacity = translateX.interpolate({
-    inputRange: [maxX * 0.7, maxX],
-    outputRange: [0, 1],
-    extrapolate: 'clamp',
-  });
+  const release = (e: GestureResponderEvent) => {
+    if (!draggingRef.current || disabledRef.current || lockedRef.current) {
+      draggingRef.current = false;
+      return;
+    }
+    draggingRef.current = false;
+    const dx = pageXOf(e) - startPageX.current;
+    const next = Math.min(maxXRef.current, Math.max(0, dx));
+    if (next >= maxXRef.current * THRESHOLD) {
+      fireConfirm();
+    } else {
+      x.value = withSpring(0, { damping: 18, stiffness: 220 });
+    }
+  };
+
+  const fillStyle = useAnimatedStyle(() => ({
+    width: x.value + THUMB + PAD * 2,
+  }));
+
+  const thumbStyle = useAnimatedStyle(() => ({
+    transform: [{ translateX: x.value }],
+  }));
+
+  const hintStyle = useAnimatedStyle(() => ({
+    opacity: interpolate(x.value, [0, Math.max(1, maxX.value * 0.5)], [1, 0]),
+  }));
+
+  const doneStyle = useAnimatedStyle(() => ({
+    opacity: interpolate(x.value, [Math.max(1, maxX.value * 0.62), Math.max(2, maxX.value)], [0, 1]),
+  }));
 
   return (
-    <View
-      style={[styles.track, disabled && styles.trackDisabled]}
-      onLayout={onTrackLayout}
-      {...(disabled ? {} : pan.panHandlers)}>
-      <LinearGradient
-        colors={['#c84b31', '#a83c26']}
-        start={{ x: 0, y: 0 }}
-        end={{ x: 1, y: 0 }}
-        style={StyleSheet.absoluteFill}
-      />
-
-      <Animated.View style={[styles.fill, { width: fillWidth }]}>
+    <View>
+      <Animated.View
+        style={[
+          styles.track,
+          disabled && styles.trackDisabled,
+          Platform.OS === 'web'
+            ? ({
+                touchAction: 'none',
+                userSelect: 'none',
+                WebkitUserSelect: 'none',
+                cursor: disabled ? 'default' : 'grab',
+              } as object)
+            : null,
+        ]}
+        onLayout={onTrackLayout}
+        onStartShouldSetResponder={() => !disabled && !lockedRef.current}
+        onMoveShouldSetResponder={() => !disabled && !lockedRef.current}
+        onResponderTerminationRequest={() => false}
+        onResponderGrant={grant}
+        onResponderMove={move}
+        onResponderRelease={release}
+        onResponderTerminate={release}>
         <LinearGradient
-          colors={['#d45a3d', '#b8432c']}
+          colors={['#c84b31', '#a83c26']}
           start={{ x: 0, y: 0 }}
           end={{ x: 1, y: 0 }}
           style={StyleSheet.absoluteFill}
+          pointerEvents="none"
         />
+
+        <Animated.View style={[styles.fill, fillStyle]} pointerEvents="none">
+          <LinearGradient
+            colors={['#d45a3d', '#b8432c']}
+            start={{ x: 0, y: 0 }}
+            end={{ x: 1, y: 0 }}
+            style={StyleSheet.absoluteFill}
+          />
+        </Animated.View>
+
+        <Animated.View style={[styles.centerCopy, hintStyle]} pointerEvents="none">
+          <Text style={styles.title}>{title}</Text>
+          {subtitle ? <Text style={styles.subtitle}>{subtitle}</Text> : null}
+        </Animated.View>
+
+        <Animated.View style={[styles.doneCopy, doneStyle]} pointerEvents="none">
+          <Feather name="check" size={18} color={colors.onAccent} />
+          <Text style={styles.doneText}>Confirmé</Text>
+        </Animated.View>
+
+        <View style={styles.amountWrap} pointerEvents="none">
+          <Text style={styles.amount}>{amount}</Text>
+        </View>
+
+        <Animated.View style={[styles.thumb, thumbStyle]} pointerEvents="none">
+          <Feather name="chevron-right" size={22} color={colors.terracotta} />
+          <Feather
+            name="chevron-right"
+            size={22}
+            color={colors.terracotta}
+            style={styles.thumbChevron2}
+          />
+        </Animated.View>
       </Animated.View>
 
-      <Animated.View style={[styles.centerCopy, { opacity: hintOpacity, pointerEvents: 'none' }]}>
-        <Text style={styles.title}>{title}</Text>
-        {subtitle ? <Text style={styles.subtitle}>{subtitle}</Text> : null}
-      </Animated.View>
-
-      <Animated.View style={[styles.doneCopy, { opacity: doneOpacity, pointerEvents: 'none' }]}>
-        <Feather name="check" size={18} color={colors.onAccent} />
-        <Text style={styles.doneText}>Confirmé</Text>
-      </Animated.View>
-
-      <View style={[styles.amountWrap, { pointerEvents: 'none' }]}>
-        <Text style={styles.amount}>{amount}</Text>
-      </View>
-
-      <Animated.View
-        style={[
-          styles.thumb,
-          {
-            transform: [{ translateX }],
-          },
-        ]}>
-        <Feather name="chevron-right" size={22} color={colors.terracotta} />
-        <Feather name="chevron-right" size={22} color={colors.terracotta} style={styles.thumbChevron2} />
-      </Animated.View>
+      <Pressable
+        style={styles.tapFallback}
+        onPress={() => {
+          if (disabled || lockedRef.current) return;
+          fireConfirm();
+        }}
+        disabled={disabled}
+        hitSlop={8}>
+        <Text style={styles.tapFallbackText}>Toucher pour confirmer</Text>
+      </Pressable>
     </View>
   );
 });
@@ -229,5 +269,7 @@ function createStyles(colors: AppColors) {
       ...softShadow({ y: 3, blur: 16, opacity: 0.18, elevation: 4 }),
     },
     thumbChevron2: { marginLeft: -14, opacity: 0.45 },
+    tapFallback: { alignItems: 'center', paddingTop: 10, paddingBottom: 2 },
+    tapFallbackText: { color: colors.muted, fontSize: 13, fontWeight: '700' },
   });
 }

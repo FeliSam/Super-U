@@ -2,11 +2,12 @@ import {
   formatBeninPhone,
   isValidBeninPhone,
   maskBeninPhone,
-  nationalBeninDigits,
 } from '@/lib/beninPhone';
 import type { PaymentId } from '@/context/CheckoutPaymentContext';
-import { paymentMethods as seedMethods, type PaymentMethod } from '@/data/account';
-import AsyncStorage from '@react-native-async-storage/async-storage';
+import type { PaymentMethod } from '@/data/account';
+import { apiGetAccountState, apiPatchAccountState, loadAccountJson, saveAccountJson } from '@/lib/accountSync';
+import { getAuthToken } from '@/lib/api/http';
+import { useAuth } from '@/context/AuthContext';
 import React, { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
 
 const STORAGE_KEY = 'marche-dore.payments.v1';
@@ -48,11 +49,27 @@ function labelFor(id: string) {
 }
 
 function seedWallet(): WalletMethod[] {
-  return seedMethods.map((m) => ({
-    ...m,
-    ready: m.id === 'cod' || Boolean(m.detail && !m.detail.includes('***')),
-    phone: undefined,
-  }));
+  return [
+    { id: 'om', type: 'Orange Money', detail: 'À configurer', icon: 'smartphone', default: false, ready: false },
+    { id: 'wave', type: 'MTN MoMo', detail: 'À configurer', icon: 'smartphone', default: false, ready: false },
+    { id: 'card', type: 'Carte bancaire', detail: 'À configurer', icon: 'credit-card', default: false, ready: false },
+    {
+      id: 'cod',
+      type: 'Paiement à la livraison',
+      detail: 'Espèces ou mobile money',
+      icon: 'dollar-sign',
+      default: true,
+      ready: true,
+    },
+  ];
+}
+
+function looksLikeDemoWallet(list: WalletMethod[]) {
+  const om = list.find((m) => m.id === 'om');
+  const card = list.find((m) => m.id === 'card');
+  const fakeOm = Boolean(om && om.detail.includes('***') && !om.phone);
+  const fakeCard = Boolean(card && /4242/.test(card.detail) && !card.cardLast4);
+  return fakeOm || fakeCard;
 }
 
 function sanitizeMethod(raw: unknown): WalletMethod | null {
@@ -72,47 +89,51 @@ function sanitizeMethod(raw: unknown): WalletMethod | null {
 }
 
 export function PaymentsProvider({ children }: { children: React.ReactNode }) {
+  const { session, ready: authReady } = useAuth();
+  const accountId = session?.accountId ?? null;
   const [methods, setMethods] = useState<WalletMethod[]>(seedWallet);
   const [ready, setReady] = useState(false);
   const hydrated = useRef(false);
+  const skipSave = useRef(true);
 
   useEffect(() => {
+    if (!authReady) return;
     let active = true;
+    skipSave.current = true;
+    hydrated.current = false;
     (async () => {
-      try {
-        const raw = await AsyncStorage.getItem(STORAGE_KEY);
-        if (raw && active) {
-          const parsed = JSON.parse(raw) as unknown;
-          const list = Array.isArray(parsed)
-            ? parsed.map(sanitizeMethod).filter((m): m is WalletMethod => Boolean(m))
-            : [];
-          if (list.length) {
-            const hasDefault = list.some((m) => m.default);
-            setMethods(
-              hasDefault
-                ? list
-                : list.map((m, i) => ({ ...m, default: i === 0 })),
-            );
-          }
-        }
-      } catch {
-        // keep seeds
-      } finally {
-        if (active) {
-          hydrated.current = true;
-          setReady(true);
+      if (!accountId) {
+        setMethods(seedWallet());
+        hydrated.current = true;
+        setReady(true);
+        return;
+      }
+      const local = await loadAccountJson<unknown>(STORAGE_KEY, accountId);
+      let list = Array.isArray(local)
+        ? local.map(sanitizeMethod).filter((m): m is WalletMethod => Boolean(m))
+        : [];
+      if (getAuthToken()) {
+        const state = await apiGetAccountState();
+        if (Array.isArray(state?.payments)) {
+          list = state.payments.map(sanitizeMethod).filter((m): m is WalletMethod => Boolean(m));
         }
       }
+      if (!active) return;
+      setMethods(list.length && !looksLikeDemoWallet(list) ? list : seedWallet());
+      hydrated.current = true;
+      setReady(true);
+      skipSave.current = false;
     })();
     return () => {
       active = false;
     };
-  }, []);
+  }, [authReady, accountId]);
 
   useEffect(() => {
-    if (!hydrated.current) return;
-    AsyncStorage.setItem(STORAGE_KEY, JSON.stringify(methods)).catch(() => undefined);
-  }, [methods]);
+    if (!hydrated.current || skipSave.current || !accountId) return;
+    void saveAccountJson(STORAGE_KEY, accountId, methods);
+    apiPatchAccountState({ payments: methods });
+  }, [methods, accountId]);
 
   const setDefault = useCallback((id: string) => {
     setMethods((prev) => prev.map((m) => ({ ...m, default: m.id === id })));
@@ -120,7 +141,7 @@ export function PaymentsProvider({ children }: { children: React.ReactNode }) {
 
   const saveMobileNumber = useCallback((id: 'om' | 'wave', phone: string) => {
     if (!isValidBeninPhone(phone)) {
-      return { ok: false as const, error: 'Numéro béninois invalide (+229, 8 ou 10 chiffres)' };
+      return { ok: false as const, error: 'Numéro béninois invalide (+229 01 00 00 00 00)' };
     }
     const formatted = formatBeninPhone(phone);
     const masked = maskBeninPhone(phone);

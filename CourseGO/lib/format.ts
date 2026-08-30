@@ -18,7 +18,8 @@ export function kmLabel(meters?: number | null) {
 
 export function minLabel(seconds?: number | null) {
   if (seconds == null || !Number.isFinite(seconds)) return '—';
-  return `≈${Math.max(1, Math.round(seconds / 60))} min`;
+  const m = Math.max(1, Math.round(seconds / 60));
+  return `${m} min`;
 }
 
 export function formatChatClock(iso?: string) {

@@ -1,6 +1,8 @@
 import { userProfile as seedProfile, type UserProfile } from '@/data/account';
+import { apiCompleteOnboarding, apiLogin, apiMe, apiPatchProfile, apiRegister, type ApiUser } from '@/lib/api/auth';
+import { apiAvailable, getAuthToken, loadAuthToken, persistAuthToken, setAuthToken } from '@/lib/api/http';
 import { formatBeninPhone, isValidBeninPhone, nationalBeninDigits } from '@/lib/beninPhone';
-import AsyncStorage from '@react-native-async-storage/async-storage';
+import { appStorage as AsyncStorage } from '@/lib/db/kv';
 import React, {
   createContext,
   useCallback,
@@ -31,6 +33,8 @@ export type AuthSession = {
   firstName: string;
   lastName: string;
   onboardingDone: boolean;
+  birthDate?: string;
+  createdAt?: string;
 };
 
 type AuthResult = { ok: true } | { ok: false; error: string };
@@ -51,6 +55,13 @@ type AuthContextValue = {
   }) => Promise<AuthResult>;
   completeOnboarding: () => Promise<void>;
   signOut: () => Promise<void>;
+  applyProfile: (patch: {
+    firstName?: string;
+    lastName?: string;
+    email?: string;
+    phone?: string;
+    birthDate?: string;
+  }) => Promise<void>;
   toProfile: () => UserProfile | null;
 };
 
@@ -121,6 +132,8 @@ function sanitizeSession(raw: unknown): AuthSession | null {
     firstName: s.firstName.trim(),
     lastName: s.lastName.trim(),
     onboardingDone: Boolean(s.onboardingDone),
+    birthDate: typeof s.birthDate === 'string' ? s.birthDate : '',
+    createdAt: typeof s.createdAt === 'string' ? s.createdAt : undefined,
   };
 }
 
@@ -132,6 +145,21 @@ function sessionFromAccount(account: AuthAccount, onboardingDone: boolean): Auth
     firstName: account.firstName,
     lastName: account.lastName,
     onboardingDone,
+    birthDate: '',
+    createdAt: account.createdAt,
+  };
+}
+
+function sessionFromApiUser(user: ApiUser): AuthSession {
+  return {
+    accountId: user.id,
+    email: normalizeEmail(user.email),
+    phone: user.phone,
+    firstName: user.firstName,
+    lastName: user.lastName,
+    onboardingDone: user.onboardingDone,
+    birthDate: user.birthDate ?? '',
+    createdAt: user.createdAt ? String(user.createdAt) : undefined,
   };
 }
 
@@ -148,6 +176,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         const [rawAccounts, rawSession] = await Promise.all([
           AsyncStorage.getItem(ACCOUNTS_KEY),
           AsyncStorage.getItem(SESSION_KEY),
+          loadAuthToken(),
         ]);
         if (!active) return;
 
@@ -162,11 +191,22 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         }
         setAccounts(nextAccounts);
 
-        if (rawSession) {
-          const s = sanitizeSession(JSON.parse(rawSession));
-          if (s && nextAccounts.some((a) => a.id === s.accountId)) {
-            setSession(s);
+        const remoteUser = await apiMe();
+        if (!active) return;
+        if (remoteUser) {
+          setSession(sessionFromApiUser(remoteUser));
+        } else if (getAuthToken() && rawSession) {
+          try {
+            const s = sanitizeSession(JSON.parse(rawSession));
+            if (s) setSession(s);
+            else setSession(null);
+          } catch {
+            setSession(null);
           }
+        } else {
+          await persistAuthToken(null);
+          setAuthToken(null);
+          setSession(null);
         }
       } catch {
         setAccounts([DEMO_ACCOUNT]);
@@ -189,14 +229,11 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
   useEffect(() => {
     if (!hydrated.current) return;
-    void (async () => {
-      try {
-        if (session) await AsyncStorage.setItem(SESSION_KEY, JSON.stringify(session));
-        else await AsyncStorage.removeItem(SESSION_KEY);
-      } catch {
-        /* ignore */
-      }
-    })();
+    if (session) {
+      void AsyncStorage.setItem(SESSION_KEY, JSON.stringify(session)).catch(() => {});
+      return;
+    }
+    void AsyncStorage.removeItem(SESSION_KEY).catch(() => {});
   }, [session]);
 
   const signIn = useCallback(
@@ -208,11 +245,19 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       }
       if (pwd.length < 6) return { ok: false, error: 'Mot de passe trop court (6 caractères min.).' };
 
+      if (await apiAvailable()) {
+        const remote = await apiLogin(id, pwd);
+        if (remote.ok) {
+          await persistAuthToken(remote.token);
+          setSession(sessionFromApiUser(remote.user));
+          return { ok: true };
+        }
+        return remote;
+      }
       const account = accounts.find((a) => accountMatches(a, id));
       if (!account || account.password !== pwd) {
         return { ok: false, error: 'Identifiants incorrects. Réessayez ou créez un compte.' };
       }
-
       setSession(sessionFromAccount(account, true));
       return { ok: true };
     },
@@ -238,48 +283,60 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         return { ok: false, error: 'Entrez une adresse e-mail valide.' };
       }
       if (!isValidBeninPhone(phone)) {
-        return { ok: false, error: 'Numéro béninois invalide (+229…).' };
+        return { ok: false, error: 'Numéro béninois invalide (+229 01 00 00 00 00).' };
       }
       if (password.length < 6) {
         return { ok: false, error: 'Choisissez un mot de passe d’au moins 6 caractères.' };
       }
 
-      if (accounts.some((a) => a.email === email)) {
-        return { ok: false, error: 'Un compte existe déjà avec cet e-mail.' };
+      if (await apiAvailable()) {
+        const remote = await apiRegister({ firstName, lastName, email, phone: formatBeninPhone(phone), password });
+        if (remote.ok) {
+          await persistAuthToken(remote.token);
+          setSession(sessionFromApiUser(remote.user));
+          return { ok: true };
+        }
+        return remote;
       }
-      const phoneKey = nationalBeninDigits(phone);
-      if (accounts.some((a) => nationalBeninDigits(a.phone) === phoneKey)) {
-        return { ok: false, error: 'Un compte existe déjà avec ce numéro.' };
-      }
+        if (accounts.some((a) => a.email === email)) {
+          return { ok: false, error: 'Un compte existe déjà avec cet e-mail.' };
+        }
+        const phoneKey = nationalBeninDigits(phone);
+        if (accounts.some((a) => nationalBeninDigits(a.phone) === phoneKey)) {
+          return { ok: false, error: 'Un compte existe déjà avec ce numéro.' };
+        }
 
-      const account: AuthAccount = {
-        id: `u-${Date.now().toString(36)}`,
-        email,
-        phone: formatBeninPhone(phone),
-        password,
-        firstName,
-        lastName,
-        createdAt: new Date().toISOString(),
-      };
+        const account: AuthAccount = {
+          id: `u-${Date.now().toString(36)}`,
+          email,
+          phone: formatBeninPhone(phone),
+          password,
+          firstName,
+          lastName,
+          createdAt: new Date().toISOString(),
+        };
 
-      setAccounts((prev) => [...prev, account]);
-      setSession(sessionFromAccount(account, false));
-      return { ok: true };
+        setAccounts((prev) => [...prev, account]);
+        setSession(sessionFromAccount(account, false));
+        return { ok: true };
     },
     [accounts],
   );
 
   const completeOnboarding = useCallback(async () => {
     setSession((prev) => (prev ? { ...prev, onboardingDone: true } : prev));
+    try {
+      await apiCompleteOnboarding();
+    } catch {
+      /* local session still marked done */
+    }
   }, []);
 
   const signOut = useCallback(async () => {
+    setAuthToken(null);
     setSession(null);
-    try {
-      await AsyncStorage.removeItem(SESSION_KEY);
-    } catch {
-      /* ignore */
-    }
+    void persistAuthToken(null);
+    void AsyncStorage.removeItem(SESSION_KEY).catch(() => {});
   }, []);
 
   const toProfile = useCallback((): UserProfile | null => {
@@ -289,9 +346,41 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       lastName: session.lastName,
       email: session.email,
       phone: session.phone || seedProfile.phone,
-      birthDate: seedProfile.birthDate,
+      birthDate: session.birthDate || '',
+      photoUri: '',
     };
   }, [session]);
+
+  const applyProfile = useCallback(async (patch: {
+    firstName?: string;
+    lastName?: string;
+    email?: string;
+    phone?: string;
+    birthDate?: string;
+  }) => {
+    const remote = await apiPatchProfile(patch);
+    setSession((prev) => {
+      if (!prev) return prev;
+      const next = {
+        ...prev,
+        firstName: remote?.firstName ?? patch.firstName ?? prev.firstName,
+        lastName: remote?.lastName ?? patch.lastName ?? prev.lastName,
+        email: remote?.email ?? patch.email ?? prev.email,
+        phone: remote?.phone ?? patch.phone ?? prev.phone,
+        birthDate: remote?.birthDate ?? patch.birthDate ?? prev.birthDate,
+      };
+      if (
+        next.firstName === prev.firstName &&
+        next.lastName === prev.lastName &&
+        next.email === prev.email &&
+        next.phone === prev.phone &&
+        next.birthDate === prev.birthDate
+      ) {
+        return prev;
+      }
+      return next;
+    });
+  }, []);
 
   const value = useMemo<AuthContextValue>(
     () => ({
@@ -304,9 +393,10 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       signUp,
       completeOnboarding,
       signOut,
+      applyProfile,
       toProfile,
     }),
-    [ready, session, signIn, signUp, completeOnboarding, signOut, toProfile],
+    [ready, session, signIn, signUp, completeOnboarding, signOut, applyProfile, toProfile],
   );
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;

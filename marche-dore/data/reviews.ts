@@ -31,7 +31,7 @@ const catalogReviews: Review[] = [
   {
     id: 'bananes-2',
     productId: 'bananes',
-    author: 'Moussa K.',
+    author: 'Bodouin D.',
     rating: 5,
     date: '3 août 2026',
     comment: 'Livraison rapide, régime complet et sans taches. Je recommande.',
@@ -62,7 +62,7 @@ const catalogReviews: Review[] = [
   {
     id: 'mangues-1',
     productId: 'mangues',
-    author: 'Amina B.',
+    author: 'Khadija B.',
     rating: 5,
     date: '15 août 2026',
     comment: 'Chair fondante, très juteuse. Les enfants adorent.',
@@ -126,7 +126,7 @@ const catalogReviews: Review[] = [
   },
 ];
 
-const fallbackAuthors = ['Fatou D.', 'Moussa K.', 'Aïssatou N.', 'Ibrahima S.', 'Mariama L.'];
+const fallbackAuthors = ['Fatou D.', 'Bodouin D.', 'Aïssatou N.', 'Ibrahima S.', 'Mariama L.'];
 const fallbackComments = [
   'Produit frais, conforme à la description. Je rachèterai.',
   'Bonne qualité et livraison dans les temps. Satisfait.',

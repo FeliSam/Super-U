@@ -1,0 +1,322 @@
+================================================================================
+PROMPT AGENT — DASHBOARD ADMIN PERSONNEL & RÔLES
+Marché Doré / SuperU
+Copie-colle CE FICHIER ENTIER dans un nouvel agent Cursor.
+Un prompt = un périmètre. NE PAS implémenter le catalogue / stock ici
+(voir PROMPT-ADMIN-CATALOGUE-STOCK.txt).
+================================================================================
+
+TU ES un agent qui construit le BACK-OFFICE RH / organisation : enregistrement
+du personnel, rôles bien définis, rattachement magasin, habilitations CourseGO
+(ramassage / livraison), et le rôle « recruteur ». Tu t’appuies sur l’état
+RÉEL de ops.staff et tu prépares la vision (onboarding, documents, révocation).
+Tu ne réécris pas marche-dore ni le flux pick/livraison CourseGO.
+
+================================================================================
+0) CONTEXTE PRODUIT — LIRE AVANT DE CODER
+================================================================================
+
+Monorepo SuperU :
+  marche-dore/   CLIENT  Expo 57  web 8081   auth public.users
+  CourseGO/      STAFF   Expo 57  web 8082   auth ops.staff
+  server/        Hono + Postgres  8787
+  prompts/       ce fichier
+
+UNE base : docker-compose racine
+  marche / marche_local / marche_dore / 5432
+Ne PAS recréer une 2e base.
+Ne PAS connecter un employé avec le login client (public.users).
+Ne PAS connecter un client avec ops.staff.
+
+Expo v57 : https://docs.expo.dev/versions/v57.0.0/
+UI français, téléphones Bénin (lib/beninPhone côté boutique — réutiliser la
+même normalisation côté API : digits, préfixe 229).
+
+Surface proposée : même app web marche-admin/ (Vite React TS, port 8083)
+que le dashboard catalogue SI elle existe déjà ; sinon crée marche-admin/
+avec uniquement le module Personnel. Routes UI /personnel/*.
+API : étendre server/ (pas de 2e process métier).
+
+Démos actuelles À CONSERVER :
+  picker@marchedore.bj  / marche2024  Koffi Adjovi   coursier  su-aeroport  moto
+  courier@marchedore.bj / marche2024  Moussa Ndiaye  coursier  su-aeroport  moto
+Les deux ont can_pick = true ET can_deliver = true (coursier solo :
+picker_id === courier_id possible sur une commande).
+
+================================================================================
+1) ÉTAT ACTUEL DU PERSONNEL (SOURCE DE VÉRITÉ)
+================================================================================
+
+1.1 Table ops.staff (server/src/schema-ops.sql)
+  id TEXT PK
+  email TEXT UNIQUE NOT NULL
+  phone TEXT UNIQUE NOT NULL
+  password_hash TEXT NOT NULL     -- scrypt:salt:hash (server/src/password.ts)
+  first_name, last_name TEXT
+  role TEXT NOT NULL DEFAULT 'coursier'
+    CHECK (role IN ('picker', 'courier', 'coursier', 'dispatcher', 'both'))
+  can_pick BOOLEAN NOT NULL DEFAULT TRUE
+  can_deliver BOOLEAN NOT NULL DEFAULT TRUE
+  CONSTRAINT staff_can_act_chk CHECK (can_pick OR can_deliver)
+    ← BLOQUE admin / recruteur / support qui ne ramassent pas.
+      À ÉLARGIR dans ce chantier (voir §3).
+  store_id TEXT NULL              -- démo 'su-aeroport' (public.stores.id)
+  vehicle TEXT NULL CHECK (moto | voiture | velo | pied)
+  is_active BOOLEAN NOT NULL DEFAULT TRUE
+  created_at TIMESTAMPTZ
+
+1.2 Sessions
+  ops.staff_sessions (token PK, staff_id FK, created_at)
+  Login actuel : POST /ops/login  { email|phone|identifier, password }
+  GET /ops/me
+  Token Bearer. Utilisé par CourseGO (StaffAuthContext) ET comms.
+
+1.3 Rôles SQL d’aujourd’hui (trop pauvres)
+  picker      intention : ramassage seul
+  courier     intention : livraison seule
+  coursier    ramasse ET livre (démo ; rôle réel terrain)
+  both        legacy, migré vers coursier si can_pick AND can_deliver
+  dispatcher  prévu (affectation) — PAS d’UI admin ni d’API RH
+
+  Les flags can_pick / can_deliver sont la VRAIE habilitation CourseGO :
+    canPick  → GET/POST /ops/pick-jobs*
+    canDeliver → /ops/deliveries*, /ops/location
+  Un dispatcher actuel ne peut rien faire s’il a les deux flags false
+  (interdit par staff_can_act_chk).
+
+1.4 Ops métier lié aux personnes (ne pas casser)
+  pick_jobs.picker_id → staff.id
+  deliveries.courier_id → staff.id
+  courses.courier_id
+  courier_locations.courier_id
+  comms.thread_members.staff_id
+  ensure_courier_thread(order_id, staff_id) quand courier_id posé
+  CourseGO : 1 ramassage à la fois, 1 livraison à la fois (guards /claim)
+  same_handler : après pack, le même staff peut « LIVRER MAINTENANT »
+    (skip at_store / assigned → picked_up)
+
+1.5 App CourseGO déjà présente (fiches, pas RH)
+  app/account/ : documents, vehicle, security, about, support
+  Ce sont des écrans COURSIER pour son propre profil. Le dashboard RH
+  crée / suspend / assigne les comptes ; il ne remplace pas CourseGO.
+
+1.6 Pas de table documents RH en SQL aujourd’hui
+  Vision : ops.staff_documents (permis, CIP, photo, contrat).
+
+================================================================================
+2) VISION — RÔLES BIEN DÉFINIS (CONTRAT À IMPLÉMENTER)
+================================================================================
+
+Chaque personne a UN rôle principal (ops.staff.role) + flags d’habilitation
+CourseGO (can_pick, can_deliver) + store_id + is_active.
+
+Matrice (colonnes = ce que le compte a le droit de faire) :
+
+Rôle            | Login CourseGO | Pick | Deliver | Admin catalogue | Admin RH | Disp. courses | Notes
+----------------+----------------+------+---------+-----------------+----------+---------------+------
+coursier        | oui            | oui  | oui     | non             | non      | non           | Défaut terrain (Koffi / Moussa)
+picker          | oui            | oui  | non     | non             | non      | non           | Magasinier ramasseur
+courier         | oui            | non  | oui     | non             | non      | non           | Livreur sans scan
+dispatcher      | optionnel      | non  | non     | non             | non      | oui           | Affecte courses (futur board)
+manager         | non*           | non  | non     | son magasin     | son magasin | son magasin | Chef de magasin
+magasinier      | non            | non  | non     | stock son mag.  | non      | non           | Voir prompt catalogue
+admin           | non            | non  | non     | tous magasins   | tous     | tous          | Siège
+recruteur       | non            | non  | non     | non             | créer / onboarding | non | Pas de prix, pas d’ops live
+support         | non            | non  | non     | non             | lecture  | non           | SAV interne (futur)
+
+* manager : pas d’app moto, sauf si on pose can_pick pour dépanner — éviter
+  par défaut.
+
+Règles d’or rôles :
+  1) role détermine le BACK-OFFICE. can_pick / can_deliver déterminent COURSEGO.
+  2) recruteur PEUT créer un coursier mais NE PEUT PAS se donner role=admin.
+  3) Un coursier NE PEUT PAS s’auto-promouvoir admin.
+  4) Désactiver (is_active=false) révoque les sessions (DELETE staff_sessions).
+  5) On ne SUPPRIME pas un staff lié à des livraisons : on archive
+     (is_active=false). FK ON DELETE RESTRICT sur courses.
+  6) store_id obligatoire pour picker, courier, coursier, magasinier, manager.
+     admin / recruteur / support : store_id NULL = national.
+  7) vehicle obligatoire si can_deliver (moto par défaut Cotonou).
+  8) Email + téléphone uniques. Téléphone format +229 …
+
+« Recruteur » — parcours cible :
+  A. Crée la fiche (identité, tel, email, magasin visé, rôle cible).
+  B. Statut onboarding : draft → invited → active
+     (invite = mot de passe temporaire ou code à 6 chiffres, à changer
+     à la 1re connexion CourseGO).
+  C. Coche documents reçus (permis A/B, CIP, RIB plus tard).
+  D. Un manager ou admin PASSE is_active=true et can_* définitifs.
+  E. Le recruteur ne voit pas le chiffre d’affaires ni le catalogue prix.
+
+« Dispatcher » (préparer le modèle, UI minimale OK) :
+  - Voit les files pick/delivery du magasin (lecture /ops déjà filtrée store).
+  - N’est PAS le même écran que le RH. Si tu n’as pas le temps du board
+    dispatcher, crée le rôle + 403 propre, documente « board plus tard ».
+
+================================================================================
+3) MIGRATION SQL OBLIGATOIRE (MÊME BASE)
+================================================================================
+
+Fichier : server/schema/03-admin-staff.sql  (appliqué dans migrate() comme
+schema-ops.sql)
+
+A. Élargir staff_role_check :
+   ('picker','courier','coursier','dispatcher','both',
+    'admin','manager','magasinier','recruteur','support')
+   Garder 'both' en lecture pour l’existant ; nouveaux inserts : jamais both,
+   utiliser coursier.
+
+B. Remplacer staff_can_act_chk :
+   CHECK (
+     can_pick OR can_deliver
+     OR role IN ('admin','manager','magasinier','recruteur','dispatcher','support')
+   )
+
+C. Colonnes nouvelles (ADD COLUMN IF NOT EXISTS) :
+   hired_at TIMESTAMPTZ
+   onboard_status TEXT NOT NULL DEFAULT 'active'
+     CHECK (onboard_status IN ('draft','invited','active','suspended'))
+   created_by TEXT REFERENCES ops.staff(id)
+   notes TEXT
+   must_reset_password BOOLEAN NOT NULL DEFAULT FALSE
+
+D. ops.staff_documents (
+     id TEXT PK,
+     staff_id FK ON DELETE CASCADE,
+     kind TEXT CHECK (kind IN ('cip','permis','photo','contrat','autre')),
+     label TEXT,
+     url_or_path TEXT,          -- fichier local uploads/ ou storage plus tard
+     verified_at TIMESTAMPTZ,
+     verified_by TEXT REFERENCES ops.staff(id),
+     created_at
+   )
+
+E. Seed SI ABSENT :
+   admin@marchedore.bj     / marche2024  role=admin      can_pick=false can_deliver=false
+   rh@marchedore.bj        / marche2024  role=recruteur  idem
+  Ne pas écraser picker@ / courier@.
+
+================================================================================
+4) API RH (server/)
+================================================================================
+
+Réutiliser hashPassword / verifyPassword / newToken (password.ts).
+IDs staff : st-{role}-{hex} comme seedOpsStaff (st-picker-…).
+
+Préfixe /admin/staff  Bearer
+Garde : requireHr(staff) =
+  admin | recruteur | manager (manager filtré sur store_id)
+
+  GET    /admin/staff?q=&role=&storeId=&active=1|0&onboard=
+  GET    /admin/staff/:id          (jamais password_hash)
+  POST   /admin/staff              créer
+         body : { email, phone, firstName, lastName, role, storeId,
+                  canPick, canDeliver, vehicle, temporaryPassword? }
+         Recruteur : role cible ∈ {picker, courier, coursier} seulement
+         Admin : tous les rôles sauf s’auto-rétrograder s’il est le dernier admin
+  PATCH  /admin/staff/:id          identité, rôle, flags, store, vehicle, notes
+  POST   /admin/staff/:id/disable  is_active=false, onboard=suspended, wipe sessions
+  POST   /admin/staff/:id/enable
+  POST   /admin/staff/:id/reset-password  { temporaryPassword } + must_reset_password
+  POST   /admin/staff/:id/documents       (niveau 2)
+  GET    /ops/login reste INCHANGÉ pour CourseGO
+  PATCH  /ops/me/password  (si must_reset_password) — utile 1re connexion
+
+Dérivation flags si le client RH envoie seulement role (serveur autoritaire) :
+  coursier → can_pick=true,  can_deliver=true,  vehicle défaut moto
+  picker   → can_pick=true,  can_deliver=false, vehicle null
+  courier  → can_pick=false, can_deliver=true,  vehicle moto
+  dispatcher, manager, magasinier, admin, recruteur, support →
+             can_pick=false, can_deliver=false
+  Interdire can_deliver=true sans vehicle.
+  Interdire role=coursier avec can_pick XOR can_deliver (incohérent).
+
+Login CourseGO : refuser is_active=false et onboard_status ≠ 'active'
+avec message clair « Compte non activé, voir le magasin / RH ».
+
+================================================================================
+5) UX DASHBOARD PERSONNEL
+================================================================================
+
+Français. Desktop. Sidebar : Personnel, Recrutement, Rôles (aide).
+
+Écrans :
+  1) Annuaire — table : nom, rôle (libellé FR), magasin, pick/livraison
+     (puces), statut, dernière session si dispo.
+  2) Fiche — identité, tel, email, magasin (select public.stores),
+     véhicule, rôle (select avec texte d’aide de la matrice §2),
+     toggles pick / livraison (désactivés / forcés selon rôle),
+     bouton Activer / Suspendre, Reset mot de passe.
+  3) Nouveau collaborateur — wizard 3 étapes :
+     Identité → Rôle & magasin → Mot de passe temporaire + récap habilitations
+     (« Pourra se connecter à CourseGO : oui/non »).
+  4) File recrutement — onboard_status draft/invited (vue recruteur).
+
+Libellés FR des rôles :
+  coursier → Coursier (ramasse + livre)
+  picker → Préparateur magasin
+  courier → Livreur
+  dispatcher → Régulateur
+  manager → Chef de magasin
+  magasinier → Magasinier (stocks)
+  admin → Administrateur siège
+  recruteur → Recruteur
+  support → Support interne
+  both → (legacy) Coursier
+
+Interdits :
+  - Créer un user dans public.users pour un employé.
+  - Afficher password_hash.
+  - Permettre deux comptes email identiques.
+  - Laisser un coursier suspendu garder un token (wipe sessions).
+
+================================================================================
+6) IMPACT COURSEGO / COMMS / BOUTIQUE
+================================================================================
+
+CourseGO StaffAuthContext : si 403 « suspended », écran « compte désactivé ».
+Ne pas changer le flux pick one-at-a-time / delivery one-at-a-time.
+Ne pas changer les threads courier-{orderId}.
+Boutique : inchangée (jamais de login staff).
+
+Si tu ajoutes must_reset_password, écran CourseGO login → changer le mot de
+passe avant d’entrer dans les tabs.
+
+================================================================================
+7) TESTS MANUELS
+================================================================================
+
+- rh@… crée un coursier test, store su-aeroport, mdp temporaire.
+  Login CourseGO → jobs du magasin. Login /admin/products → 403.
+- rh@… tente role=admin → 403.
+- admin@… suspend courier@… → /ops/login 401/403, sessions mortes.
+  Réactiver → login OK.
+- Créer un picker (can_deliver false) → pas de file « À livrer ».
+- Créer un courier (can_pick false) → pas de claim pick.
+- Dernier admin : refuse PATCH role→recruteur.
+- Téléphone déjà pris → 409 « Téléphone déjà enregistré ».
+- Client demo@… → 401 /admin/staff.
+
+================================================================================
+8) HORS PÉRIMÈTRE (CE PROMPT)
+================================================================================
+
+- CRUD produits, prix, stock_moves (prompt catalogue).
+- Paie, congés, planning horaires avancé.
+- WebRTC audio (CallOverlay reste signalisation).
+- Board dispatcher temps réel (rôle seulement, ou lecture seule).
+- Fusion des deux apps Expo.
+
+================================================================================
+9) LIVRABLES
+================================================================================
+
+- Migration SQL rôles + contrainte + colonnes onboarding + seed admin/rh.
+- Routes /admin/staff* + garde RH.
+- Login CourseGO refuse comptes inactifs / non active.
+- UI marche-admin module Personnel + wizard recruteur.
+- README : comptes admin@ et rh@, matrice des rôles.
+- Une ligne dans AGENTS.md : logins admin ≠ client ≠ staff terrain.
+
+FIN DU PROMPT PERSONNEL & RÔLES
+================================================================================

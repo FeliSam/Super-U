@@ -1,6 +1,7 @@
 import { IconBtn, Screen } from '@/components/ui';
 import { bodyFont, colors, displayFont, radius } from '@/constants/theme';
 import { useCall } from '@/context/CallContext';
+import { useStaffAuth } from '@/context/StaffAuthContext';
 import {
   fetchMessages,
   fetchThread,
@@ -10,10 +11,13 @@ import {
   type CommsMessage,
 } from '@/lib/api/comms';
 import { formatChatClock } from '@/lib/format';
+import { staffPhotoSource } from '@/lib/staffPhoto';
+import { userPhotoSource } from '@/lib/userPhoto';
 import { Feather } from '@expo/vector-icons';
 import { router, useLocalSearchParams } from 'expo-router';
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import {
+  Image,
   KeyboardAvoidingView,
   Platform,
   Pressable,
@@ -31,11 +35,16 @@ export default function ChatScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
   const threadId = decodeURIComponent(id ?? '');
   const { startOutgoing } = useCall();
+  const { staff } = useStaffAuth();
   const insets = useSafeAreaInsets();
   const [peer, setPeer] = useState('Client');
+  const [peerUserId, setPeerUserId] = useState<string | null>(null);
   const [disabled, setDisabled] = useState(false);
+  const [archived, setArchived] = useState(false);
   const [messages, setMessages] = useState<CommsMessage[]>([]);
   const [draft, setDraft] = useState('');
+  const scrollRef = useRef<ScrollView>(null);
+  const lastIdRef = useRef<string | null>(null);
 
   const load = useCallback(async () => {
     try {
@@ -43,8 +52,22 @@ export default function ChatScreen() {
       const customer = th.members.find((m) => m.actor_kind === 'customer');
       const name = [customer?.user_first, customer?.user_last].filter(Boolean).join(' ');
       if (name) setPeer(name);
-      setDisabled(Boolean(th.thread?.disabled_at));
-      setMessages(msgs.messages);
+      if (customer?.user_id) setPeerUserId(customer.user_id);
+      setDisabled(Boolean(th.thread?.disabled_at || th.thread?.archived_at));
+      setArchived(Boolean(th.thread?.archived_at));
+      const list = [...(msgs.messages ?? [])].sort((a, b) => {
+        const ta = new Date(a.created_at).getTime();
+        const tb = new Date(b.created_at).getTime();
+        if (ta !== tb) return ta - tb;
+        return String(a.id).localeCompare(String(b.id));
+      });
+      setMessages((prev) => {
+        const same =
+          prev.length === list.length &&
+          prev.at(0)?.id === list.at(0)?.id &&
+          prev.at(-1)?.id === list.at(-1)?.id;
+        return same ? prev : list;
+      });
       await markRead(threadId);
     } catch {
       /* thread may not exist until delivery claimed */
@@ -75,10 +98,12 @@ export default function ChatScreen() {
       <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
         <View style={styles.header}>
           <IconBtn name="chevron-left" size={36} onPress={() => router.back()} />
+          <Image source={userPhotoSource(peerUserId)} style={styles.headerAvatar} />
           <View style={{ flex: 1 }}>
             <Text style={styles.name}>{peer}</Text>
-            <Text style={styles.online}>{disabled ? 'Désactivée' : 'En ligne'}</Text>
+            <Text style={styles.online}>{archived ? 'Archivée' : disabled ? 'Désactivée' : 'En ligne'}</Text>
           </View>
+          {archived ? null : (
           <Pressable
             accessibilityRole="button"
             accessibilityLabel={disabled ? 'Réactiver la conversation' : 'Désactiver la conversation'}
@@ -86,6 +111,7 @@ export default function ChatScreen() {
             onPress={() => void toggleDisabled()}>
             <Feather name={disabled ? 'message-circle' : 'slash'} size={16} color={colors.teal} />
           </Pressable>
+          )}
           {disabled ? null : (
           <Pressable
             style={styles.call}
@@ -94,22 +120,35 @@ export default function ChatScreen() {
           </Pressable>
           )}
         </View>
-        <ScrollView contentContainerStyle={styles.stream}>
+        <ScrollView
+          ref={scrollRef}
+          contentContainerStyle={styles.stream}
+          onContentSizeChange={() => {
+            const last = messages.at(-1)?.id ?? null;
+            if (last && last !== lastIdRef.current) {
+              lastIdRef.current = last;
+              scrollRef.current?.scrollToEnd({ animated: true });
+            } else {
+              scrollRef.current?.scrollToEnd({ animated: false });
+            }
+          }}>
           {messages.map((m) => {
-            const callerKind = m.payload?.caller_kind;
+            const callerKind = String(m.payload?.caller_kind ?? '');
             const mine =
-              m.kind === 'call'
-                ? callerKind === 'staff' || m.sender_kind === 'staff'
-                : m.sender_kind === 'staff';
+              m.sender_kind === 'staff' || (m.kind === 'call' && callerKind === 'staff');
             const isCall = m.kind === 'call';
             return (
-              <View key={m.id} style={[styles.row, mine && { justifyContent: 'flex-end' }]}>
-                <View style={[styles.bubble, mine ? styles.mine : styles.theirs, isCall && styles.callBubble]}>
-                  <Text style={[styles.body, mine && { color: colors.onAccent }]}>
-                    {isCall ? `☎ ${m.body}` : m.body}
-                  </Text>
+              <View key={m.id} style={[styles.row, mine ? styles.rowMine : styles.rowTheirs]}>
+                {mine ? null : <Image source={userPhotoSource(peerUserId)} style={styles.avatar} />}
+                <View style={[styles.col, mine && styles.colMine]}>
+                  <View style={[styles.bubble, mine ? styles.mine : styles.theirs, isCall && styles.callBubble]}>
+                    <Text style={[styles.body, mine && { color: colors.onAccent }]}>
+                      {isCall ? `☎ ${m.body}` : m.body}
+                    </Text>
+                  </View>
+                  <Text style={[styles.time, mine && styles.timeMine]}>{formatChatClock(m.created_at)}</Text>
                 </View>
-                <Text style={styles.time}>{formatChatClock(m.created_at)}</Text>
+                {mine ? <Image source={staffPhotoSource(staff?.photoUrl)} style={styles.avatar} /> : null}
               </View>
             );
           })}
@@ -117,10 +156,16 @@ export default function ChatScreen() {
         <View style={[styles.composer, { paddingBottom: Math.max(12, insets.bottom + 8) }]}>
           {disabled ? (
             <View style={styles.disabledBox}>
-              <Text style={styles.disabledTxt}>Conversation désactivée. Plus de messages ni d’appels.</Text>
+              <Text style={styles.disabledTxt}>
+                {archived
+                  ? 'Conversation archivée 30 minutes après la livraison. Plus de messages ni d’appels.'
+                  : 'Conversation désactivée. Plus de messages ni d’appels.'}
+              </Text>
+              {archived ? null : (
               <Pressable style={styles.disabledBtn} onPress={() => void toggleDisabled()}>
                 <Text style={styles.disabledBtnTxt}>Réactiver</Text>
               </Pressable>
+              )}
             </View>
           ) : (
             <>
@@ -182,6 +227,7 @@ const styles = StyleSheet.create({
     borderColor: colors.border,
   },
   name: { ...displayFont('800'), fontSize: 16 },
+  headerAvatar: { width: 36, height: 36, borderRadius: 18, backgroundColor: colors.tealSoft },
   online: { ...bodyFont('400'), fontSize: 12, color: colors.teal },
   call: {
     width: 36,
@@ -191,14 +237,20 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
-  stream: { padding: 24, gap: 16 },
-  row: { gap: 4 },
+  stream: { padding: 24, gap: 14 },
+  row: { flexDirection: 'row', alignItems: 'flex-end', gap: 8, width: '100%' },
+  rowMine: { justifyContent: 'flex-end' },
+  rowTheirs: { justifyContent: 'flex-start' },
+  col: { maxWidth: 260, gap: 4 },
+  colMine: { alignItems: 'flex-end' },
+  avatar: { width: 28, height: 28, borderRadius: 14, backgroundColor: colors.tealSoft },
   bubble: { maxWidth: 260, padding: 12, borderRadius: 16 },
-  theirs: { backgroundColor: colors.white, borderBottomLeftRadius: 4, alignSelf: 'flex-start' },
-  mine: { backgroundColor: colors.teal, borderBottomRightRadius: 4, alignSelf: 'flex-end' },
+  theirs: { backgroundColor: colors.white, borderBottomLeftRadius: 4 },
+  mine: { backgroundColor: colors.teal, borderBottomRightRadius: 4 },
   callBubble: { backgroundColor: colors.tealSoft },
   body: { ...bodyFont('400'), fontSize: 14, color: colors.text },
   time: { ...bodyFont('400'), fontSize: 10, color: colors.placeholder },
+  timeMine: { alignSelf: 'flex-end' },
   composer: {
     borderTopWidth: 1,
     borderTopColor: colors.border,

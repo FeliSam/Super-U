@@ -48,8 +48,13 @@ export function lockWebInputZoom(): () => void {
   }
 
   ensureViewport();
-  const obs = new MutationObserver(ensureViewport);
-  obs.observe(document.head, { childList: true, subtree: true, attributes: true });
+  // Do not observe `attributes` on all of <head>: RN-web / Expo rewrite tags on
+  // every layout, which would call setAttribute → visualViewport resize →
+  // useWindowDimensions setState → infinite "Maximum update depth exceeded".
+  const obs = new MutationObserver(() => {
+    ensureViewport();
+  });
+  obs.observe(document.head, { childList: true, subtree: false });
 
   return () => obs.disconnect();
 }

@@ -1,3 +1,3 @@
-export { migrateLocalDb, LOCAL_DB_VERSION } from './migrate';
-
-export const LOCAL_DB_NAME = 'marche-dore.db';
+export { LOCAL_DB_NAME, LOCAL_DB_VERSION, migrateLocalDb, getLocalDb } from '@/lib/db/client';
+export { appStorage } from '@/lib/db/kv';
+export { hydrateCatalogFromDb, hydrateCatalogFromApi } from '@/lib/db/hydrateCatalog';

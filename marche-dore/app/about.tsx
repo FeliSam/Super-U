@@ -1,4 +1,5 @@
 import { IconCircle, Page, Screen } from '@/components/ui';
+import { goBack } from '@/lib/navigation';
 import { displayFont, type AppColors } from '@/constants/theme';
 import { useColors } from '@/context/ThemeContext';
 import { Feather } from '@expo/vector-icons';
@@ -20,7 +21,7 @@ export default function AboutScreen() {
     <Screen>
       <Page style={styles.flex}>
         <View style={styles.header}>
-          <IconCircle name="chevron-left" onPress={() => router.back()} />
+          <IconCircle name="chevron-left" onPress={() => goBack()} />
           <Text style={styles.title}>À propos</Text>
           <View style={styles.headerSpacer} />
         </View>

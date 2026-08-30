@@ -1,10 +1,14 @@
 import { useStaffAuth } from '@/context/StaffAuthContext';
+import { useStaffPrefs } from '@/context/StaffPrefsContext';
 import { errorMessage } from '@/lib/api/http';
 import {
   fetchDeliveries,
+  fetchMapStores,
   fetchPickJobs,
   type DeliveryJob,
+  type MapStore,
   type PickJob,
+  type TourHop,
 } from '@/lib/api/ops';
 import React, { createContext, useCallback, useContext, useEffect, useMemo, useState } from 'react';
 import { AppState, Platform } from 'react-native';
@@ -12,6 +16,8 @@ import { AppState, Platform } from 'react-native';
 type BoardValue = {
   jobs: PickJob[];
   deliveries: DeliveryJob[];
+  tourHop: TourHop | null;
+  mapStores: MapStore[];
   online: boolean;
   setOnline: (v: boolean) => void;
   refreshing: boolean;
@@ -31,9 +37,13 @@ function isHidden() {
 
 export function BoardProvider({ children }: { children: React.ReactNode }) {
   const { staff } = useStaffAuth();
+  const { prefs, patchPrefs } = useStaffPrefs();
   const [jobs, setJobs] = useState<PickJob[]>([]);
   const [deliveries, setDeliveries] = useState<DeliveryJob[]>([]);
-  const [online, setOnline] = useState(true);
+  const [tourHop, setTourHop] = useState<TourHop | null>(null);
+  const [mapStores, setMapStores] = useState<MapStore[]>([]);
+  const online = prefs.online;
+  const setOnline = useCallback((v: boolean) => patchPrefs({ online: v }), [patchPrefs]);
   const [refreshing, setRefreshing] = useState(false);
   const [lastError, setLastError] = useState<string | null>(null);
   const [lastOkAt, setLastOkAt] = useState<number | null>(null);
@@ -42,20 +52,27 @@ export function BoardProvider({ children }: { children: React.ReactNode }) {
     if (!staff) {
       setJobs([]);
       setDeliveries([]);
+      setTourHop(null);
+      setMapStores([]);
       setLastError(null);
       return;
     }
     if (!opts?.silent) setRefreshing(true);
     try {
-      const [p, d] = await Promise.allSettled([
+      const [p, d, s] = await Promise.allSettled([
         staff.canPick ? fetchPickJobs() : Promise.resolve({ jobs: [] as PickJob[] }),
         staff.canDeliver ? fetchDeliveries() : Promise.resolve({ deliveries: [] as DeliveryJob[] }),
+        fetchMapStores(),
       ]);
       const errors: string[] = [];
-      if (p.status === 'fulfilled') setJobs(p.value.jobs);
-      else errors.push(errorMessage(p.reason));
-      if (d.status === 'fulfilled') setDeliveries(d.value.deliveries);
-      else errors.push(errorMessage(d.reason));
+      if (p.status === 'fulfilled') {
+        setJobs(p.value.jobs.filter((j) => !j.picker_id || j.picker_id === staff.id));
+      } else errors.push(errorMessage(p.reason));
+      if (d.status === 'fulfilled') {
+        setDeliveries(d.value.deliveries.filter((row) => !row.courier_id || row.courier_id === staff.id));
+        setTourHop(d.value.tourHop ?? null);
+      } else errors.push(errorMessage(d.reason));
+      if (s.status === 'fulfilled') setMapStores(s.value.stores);
       if (errors.length) setLastError(errors[0] ?? null);
       else {
         setLastError(null);
@@ -96,8 +113,8 @@ export function BoardProvider({ children }: { children: React.ReactNode }) {
   }, [staff, refresh]);
 
   const value = useMemo(
-    () => ({ jobs, deliveries, online, setOnline, refreshing, lastError, lastOkAt, refresh }),
-    [jobs, deliveries, online, refreshing, lastError, lastOkAt, refresh],
+    () => ({ jobs, deliveries, tourHop, mapStores, online, setOnline, refreshing, lastError, lastOkAt, refresh }),
+    [jobs, deliveries, tourHop, mapStores, online, setOnline, refreshing, lastError, lastOkAt, refresh],
   );
 
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>;

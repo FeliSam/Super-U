@@ -4,20 +4,16 @@ import { useStaffAuth } from '@/context/StaffAuthContext';
 import { useStaffNotifications } from '@/context/NotificationsContext';
 import { staffPhotoSource } from '@/lib/staffPhoto';
 import { router } from 'expo-router';
-import { ActivityIndicator, Image, StyleSheet, Text, View } from 'react-native';
+import { Image, StyleSheet, Text, View } from 'react-native';
 
 export function AppHeader({
   hello,
   title,
   subtitle,
-  onRefresh,
-  refreshing,
 }: {
   hello?: string;
   title: string;
   subtitle?: string;
-  onRefresh?: () => void;
-  refreshing?: boolean;
 }) {
   const { staff } = useStaffAuth();
   const { unreadCount } = useStaffNotifications();
@@ -38,15 +34,6 @@ export function AppHeader({
         </View>
       </View>
       <View style={styles.actions}>
-        {onRefresh ? (
-          refreshing ? (
-            <View style={[styles.spin, { backgroundColor: colors.white }]}>
-              <ActivityIndicator color={colors.text} />
-            </View>
-          ) : (
-            <IconBtn name="refresh-cw" bg={colors.white} onPress={onRefresh} />
-          )
-        ) : null}
         <IconBtn name="bell" bg={colors.white} badge={unreadCount} onPress={() => router.push('/notifications')} />
       </View>
     </View>
@@ -63,7 +50,6 @@ const styles = StyleSheet.create({
   },
   user: { flexDirection: 'row', gap: 12, alignItems: 'center', flex: 1 },
   actions: { flexDirection: 'row', alignItems: 'center', gap: 8 },
-  spin: { width: 44, height: 44, borderRadius: 22, alignItems: 'center', justifyContent: 'center' },
   avatar: { width: 44, height: 44, borderRadius: 22 },
   hello: { ...bodyFont('400'), fontSize: 13, color: colors.muted },
   name: { ...displayFont('800'), fontSize: 18, color: colors.text },

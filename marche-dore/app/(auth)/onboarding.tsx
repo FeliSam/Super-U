@@ -3,9 +3,11 @@ import { AppImage } from '@/components/AppImage';
 import { MotionView, PressScale } from '@/components/motion';
 import { bodyFont, displayFont, type AppColors } from '@/constants/theme';
 import { useAuth } from '@/context/AuthContext';
+import { useUiState } from '@/context/UiStateContext';
 import { useColors } from '@/context/ThemeContext';
 import { Feather } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
+import { Href, router } from 'expo-router';
 import { useMemo, useState, type ComponentProps } from 'react';
 import { StyleSheet, Text, View, type ImageRequireSource } from 'react-native';
 import Animated, { FadeIn, FadeOut } from 'react-native-reanimated';
@@ -102,6 +104,7 @@ export default function OnboardingScreen() {
   const styles = useMemo(() => createStyles(colors), [colors]);
   const insets = useSafeAreaInsets();
   const { session, completeOnboarding } = useAuth();
+  const { setInterests: persistInterests, setAlertsOn: persistAlerts, setHomeActiveChipId } = useUiState();
   const [step, setStep] = useState(0);
   const [interests, setInterests] = useState<string[]>(['fruits', 'cuisine']);
   const [alertsOn, setAlertsOn] = useState(true);
@@ -127,7 +130,11 @@ export default function OnboardingScreen() {
     }
     setFinishing(true);
     try {
+      persistInterests(interests);
+      persistAlerts(alertsOn);
+      if (interests[0]) setHomeActiveChipId(interests[0]);
       await completeOnboarding();
+      router.replace('/account/addresses?setup=1' as Href);
     } finally {
       setFinishing(false);
     }
@@ -136,7 +143,11 @@ export default function OnboardingScreen() {
   const skip = async () => {
     setFinishing(true);
     try {
+      persistInterests(interests);
+      persistAlerts(alertsOn);
+      if (interests[0]) setHomeActiveChipId(interests[0]);
       await completeOnboarding();
+      router.replace('/account/addresses?setup=1' as Href);
     } finally {
       setFinishing(false);
     }

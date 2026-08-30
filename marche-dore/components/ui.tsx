@@ -1,10 +1,11 @@
 import { AppImage } from '@/components/AppImage';
 import { MotionView, PressScale, enterZoom } from '@/components/motion';
-import { heroChrome, inkOnSurface, type AppColors, displayFont, floatingAboveTabBar } from '@/constants/theme';
+import { heroChrome, inkOnSurface, type AppColors, bodyFont, displayFont, floatingAboveTabBar } from '@/constants/theme';
 import { useColors, useTheme } from '@/context/ThemeContext';
-import { Product, productReviewStats } from '@/data/catalog';
+import { Product, liveReviewStats } from '@/data/catalog';
 import { useCart, useProductQty } from '@/context/CartContext';
 import { useFavorites } from '@/context/FavoritesContext';
+import { useReviews } from '@/context/ReviewsContext';
 import { formatFcfa } from '@/lib/format';
 import { transferWebKeyboard, pinWebKeyboard } from '@/lib/keepKeyboard';
 import { navigateTab, tabPaths } from '@/lib/navigation';
@@ -147,6 +148,7 @@ export const ProductCard = memo(function ProductCard({
   const styles = useMemo(() => createStyles(colors), [colors]);
   const { qty, increment, decrement } = useProductQty(product.id);
   const { isFavorite, toggle } = useFavorites();
+  const { reviewsForProduct } = useReviews();
   const liked = isFavorite(product.id);
   const outOfStock = product.inStock === false;
   const badge = outOfStock ? ('rupture' as const) : product.badge;
@@ -171,7 +173,7 @@ export const ProductCard = memo(function ProductCard({
   };
 
   const openProduct = () => router.push(`/product/${product.id}`);
-  const { rating, reviews } = productReviewStats(product);
+  const { rating, reviews } = liveReviewStats(product, reviewsForProduct(product.id));
   const hasDeal = Boolean(product.oldPrice && product.oldPrice > product.price);
   const unitPrice = product.price;
   const unitOld = product.oldPrice;
@@ -179,14 +181,14 @@ export const ProductCard = memo(function ProductCard({
   // resolve against a shrink-wrapped parent and collapse the image (~70×168).
   const widthStyle = { width } as const;
 
-  const priceBlock = (lineQty = 1, showReduction = true) => (
+  const priceBlock = (showReduction = true) => (
     <View style={[styles.priceStack, compact && styles.priceStackCompact]}>
       <Text style={[styles.price, compact && styles.priceCompact]} numberOfLines={1}>
-        {formatFcfa(unitPrice * lineQty)}
+        {formatFcfa(unitPrice)}
       </Text>
       {showReduction && hasDeal && unitOld ? (
         <Text style={[styles.priceOld, compact && styles.priceOldCompact]} numberOfLines={1}>
-          {formatFcfa(unitOld * lineQty)}
+          {formatFcfa(unitOld)}
         </Text>
       ) : null}
     </View>
@@ -333,8 +335,8 @@ export const ProductCard = memo(function ProductCard({
                 </Pressable>
                 <View
                   style={[styles.qtyPriceMid, compact && styles.qtyPriceMidCompact]}
-                  accessibilityLabel={`Quantité ${qty}, total ${formatFcfa(unitPrice * qty)}`}>
-                  {priceBlock(qty, false)}
+                  accessibilityLabel={`Quantité ${qty}, ${formatFcfa(unitPrice)} l’unité`}>
+                  {priceBlock(false)}
                 </View>
                 <Pressable
                   style={[styles.stepBtn, compact && styles.stepBtnCompact]}
@@ -355,7 +357,7 @@ export const ProductCard = memo(function ProductCard({
                 hitSlop={6}
                 accessibilityRole="button"
                 accessibilityLabel={`Ajouter ${product.name} au panier`}>
-                {priceBlock(1, !circleImage)}
+                {priceBlock(!circleImage)}
                 <View style={[styles.add, compact && styles.addCompact]}>
                   <Feather name="plus" size={compact ? 14 : 16} color={colors.onAccent} />
                 </View>
@@ -731,8 +733,7 @@ function createStyles(colors: AppColors) {
     tabHeroTitle: {
       flex: 1,
       fontSize: 30,
-      letterSpacing: -0.5,
-      ...displayFont('800'),
+      ...bodyFont('800'),
     },
     tabHeroRight: {
       flexDirection: 'row',

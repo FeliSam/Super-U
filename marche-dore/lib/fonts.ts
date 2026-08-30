@@ -4,11 +4,6 @@ import {
   DMSans_600SemiBold,
   DMSans_700Bold,
 } from '@expo-google-fonts/dm-sans';
-import {
-  Syne_600SemiBold,
-  Syne_700Bold,
-  Syne_800ExtraBold,
-} from '@expo-google-fonts/syne';
 import { INPUT_FONT_SIZE, noZoomInputStyle } from '@/lib/noZoomInput';
 import * as Font from 'expo-font';
 import { Platform, Text, TextInput } from 'react-native';
@@ -19,9 +14,6 @@ const brandFonts = {
   DMSans_500Medium,
   DMSans_600SemiBold,
   DMSans_700Bold,
-  Syne_600SemiBold,
-  Syne_700Bold,
-  Syne_800ExtraBold,
 };
 
 let applied = false;
@@ -30,13 +22,14 @@ let applied = false;
 function injectWebFontCss() {
   if (Platform.OS !== 'web' || typeof document === 'undefined') return;
   const id = 'marche-dore-fonts-base';
-  if (document.getElementById(id)) return;
+  document.getElementById(id)?.remove();
 
   const style = document.createElement('style');
   style.id = id;
-  style.textContent = `
+    style.textContent = `
+    @import url('https://fonts.googleapis.com/css2?family=DM+Sans:ital,opsz,wght@0,9..40,400;0,9..40,500;0,9..40,600;0,9..40,700;1,9..40,400&display=swap');
     html, body, #root, input, textarea, button, select {
-      font-family: ${fontFamilies.body}, system-ui, -apple-system, sans-serif;
+      font-family: 'DM Sans', ${fontFamilies.body}, system-ui, -apple-system, sans-serif;
       -webkit-font-smoothing: antialiased;
       -moz-osx-font-smoothing: grayscale;
       text-rendering: optimizeLegibility;

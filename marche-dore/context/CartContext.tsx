@@ -1,5 +1,8 @@
 import { getProduct, Product } from '@/data/catalog';
-import AsyncStorage from '@react-native-async-storage/async-storage';
+import { apiGetCart, apiPutCart } from '@/lib/api/cart';
+import { getAuthToken } from '@/lib/api/http';
+import { loadAccountJson, saveAccountJson } from '@/lib/accountSync';
+import { useAuth } from '@/context/AuthContext';
 import React, { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
 
 export type CartLine = {
@@ -9,12 +12,6 @@ export type CartLine = {
 };
 
 const STORAGE_KEY = 'marche-dore.cart.v1';
-
-const PROMO_CODES: Record<string, number> = {
-  FRAIS20: 2000,
-  MARCHE10: 1500,
-  SUPERU: 1000,
-};
 
 type PersistedCart = {
   lines: CartLine[];
@@ -58,41 +55,77 @@ function sanitizeLines(lines: unknown): CartLine[] {
 }
 
 export function CartProvider({ children }: { children: React.ReactNode }) {
+  const { session, ready: authReady } = useAuth();
+  const accountId = session?.accountId ?? null;
   const [lines, setLines] = useState<CartLine[]>([]);
   const [promoCode, setPromoCode] = useState<string | null>(null);
   const [promoMessage, setPromoMessage] = useState<string | null>(null);
   const [ready, setReady] = useState(false);
   const hydrated = useRef(false);
+  const skipNextPut = useRef(false);
+  const skipSave = useRef(true);
+  const linesRef = useRef(lines);
+  const promoRef = useRef(promoCode);
+  linesRef.current = lines;
+  promoRef.current = promoCode;
 
   useEffect(() => {
+    if (!authReady) return;
     let active = true;
+    skipSave.current = true;
+    hydrated.current = false;
     (async () => {
-      try {
-        const raw = await AsyncStorage.getItem(STORAGE_KEY);
-        if (raw && active) {
-          const parsed = JSON.parse(raw) as PersistedCart;
-          setLines(sanitizeLines(parsed.lines));
-          setPromoCode(parsed.promoCode && PROMO_CODES[parsed.promoCode] ? parsed.promoCode : null);
+      if (!accountId) {
+        setLines([]);
+        setPromoCode(null);
+        hydrated.current = true;
+        setReady(true);
+        return;
+      }
+      const local = await loadAccountJson<PersistedCart>(STORAGE_KEY, accountId);
+      let nextLines = local ? sanitizeLines(local.lines) : [];
+      let nextPromo: string | null = local?.promoCode ?? null;
+      let remoteOk = false;
+      if (getAuthToken()) {
+        const remote = await apiGetCart();
+        if (remote && active) {
+          remoteOk = true;
+          nextLines = sanitizeLines(remote.lines);
+          nextPromo = remote.promoCode ?? nextPromo;
         }
-      } catch {
-        // ignore corrupt storage
-      } finally {
-        if (active) {
-          hydrated.current = true;
-          setReady(true);
-        }
+      }
+      if (!active) return;
+      skipNextPut.current = true;
+      setLines(nextLines);
+      setPromoCode(nextPromo);
+      hydrated.current = true;
+      setReady(true);
+      skipSave.current = false;
+      if (getAuthToken() && !remoteOk && nextLines.length) {
+        void apiPutCart(nextLines, nextPromo).catch(() => undefined);
       }
     })();
     return () => {
       active = false;
     };
-  }, []);
+  }, [authReady, accountId]);
 
   useEffect(() => {
-    if (!hydrated.current) return;
-    const payload: PersistedCart = { lines, promoCode };
-    AsyncStorage.setItem(STORAGE_KEY, JSON.stringify(payload)).catch(() => undefined);
-  }, [lines, promoCode]);
+    if (!hydrated.current || skipSave.current || !accountId) return;
+    void saveAccountJson(STORAGE_KEY, accountId, { lines, promoCode } satisfies PersistedCart);
+  }, [lines, promoCode, accountId]);
+
+  useEffect(() => {
+    if (!hydrated.current || !session || !getAuthToken()) return;
+    if (skipNextPut.current) {
+      skipNextPut.current = false;
+      return;
+    }
+    const timer = setTimeout(() => {
+      void apiPutCart(lines, promoCode).catch(() => undefined);
+    }, 450);
+    return () => clearTimeout(timer);
+  }, [lines, promoCode, session?.accountId]);
 
   const add = useCallback((productId: string, qty = 1) => {
     if (!getProduct(productId)) return;
@@ -121,21 +154,9 @@ export function CartProvider({ children }: { children: React.ReactNode }) {
     setPromoMessage(null);
   }, []);
 
-  const applyPromo = useCallback((code: string) => {
-    const normalized = code.trim().toUpperCase();
-    if (!normalized) {
-      setPromoMessage('Saisissez un code promo');
-      return false;
-    }
-    const amount = PROMO_CODES[normalized];
-    if (!amount) {
-      setPromoMessage('Code promo invalide');
-      setPromoCode(null);
-      return false;
-    }
-    setPromoCode(normalized);
-    setPromoMessage(null);
-    return true;
+  const applyPromo = useCallback((_code: string) => {
+    setPromoMessage('Les codes promo ne sont pas actifs.');
+    return false;
   }, []);
 
   const clearPromo = useCallback(() => {
@@ -162,11 +183,7 @@ export function CartProvider({ children }: { children: React.ReactNode }) {
     [lines],
   );
   const delivery = useMemo(() => (lines.length ? 1500 : 0), [lines.length]);
-  const discount = useMemo(() => {
-    const promoDiscount = promoCode ? PROMO_CODES[promoCode] : 0;
-    const autoDiscount = !promoCode && subtotal >= 10000 ? 2000 : 0;
-    return promoDiscount || autoDiscount;
-  }, [promoCode, subtotal]);
+  const discount = 0;
   const total = useMemo(() => Math.max(0, subtotal + delivery - discount), [subtotal, delivery, discount]);
 
   const value = useMemo(
@@ -222,10 +239,7 @@ export function useProductQty(productId: string) {
   const qty = lines.find((l) => l.productId === productId)?.qty ?? 0;
   return {
     qty,
-    increment: () => {
-      if (qty === 0) add(productId);
-      else setQty(productId, qty + 1);
-    },
+    increment: () => add(productId, 1),
     decrement: () => setQty(productId, qty - 1),
   };
 }

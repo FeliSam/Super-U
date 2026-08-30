@@ -4,6 +4,7 @@ import {
   type SuperUFormat,
   type SuperUStore,
 } from '@/data/superU';
+import { apiAvailable, apiFetch } from '@/lib/api/http';
 
 export type SuperUListParams = {
   city?: SuperUCity | 'all';
@@ -38,8 +39,31 @@ function filterStores({ city = 'all', format = 'all', q }: SuperUListParams = {}
  * Remplaçable plus tard par `fetch('/api/super-u')` si output serveur activé.
  */
 export async function listSuperUStores(params: SuperUListParams = {}): Promise<SuperUListResponse> {
-  // Micro-délai pour garder une surface async (comme un vrai GET).
-  await Promise.resolve();
+  if (await apiAvailable()) {
+    try {
+      const remote = await apiFetch<{ ok: true; stores: SuperUStore[] }>('/stores');
+      if (remote.ok && remote.stores?.length) {
+        const city = params.city ?? 'all';
+        const format = params.format ?? 'all';
+        const needle = params.q?.trim().toLowerCase();
+        const stores = remote.stores.filter((store) => {
+          if (city !== 'all' && store.city !== city) return false;
+          if (format !== 'all' && store.format !== format) return false;
+          if (!needle) return true;
+          const hay = `${store.name} ${store.address} ${store.fullAddress} ${store.cityLabel}`.toLowerCase();
+          return hay.includes(needle);
+        });
+        return {
+          ok: true,
+          count: stores.length,
+          cities: ['cotonou', 'calavi'],
+          stores,
+        };
+      }
+    } catch {
+      /* local list */
+    }
+  }
   const stores = filterStores(params);
   return {
     ok: true,

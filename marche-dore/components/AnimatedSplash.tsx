@@ -20,13 +20,15 @@ const BRAND_MARK = require('../assets/images/brand-mark.png');
 
 type Props = {
   onFinish: () => void;
+  /** Exit only once fonts/shell are ready — avoids a blank gap under a faded splash. */
+  allowExit?: boolean;
 };
 
 /**
  * Branded animated splash — matches native splash cream/gold so the handoff is seamless.
- * Syne for the wordmark, DM Sans for the tagline.
+ * Wordmark and tagline use the same family (DM Sans); weight does the rest.
  */
-export function AnimatedSplash({ onFinish }: Props) {
+export function AnimatedSplash({ onFinish, allowExit = true }: Props) {
   const markScale = useSharedValue(0.72);
   const markOpacity = useSharedValue(0);
   const markRotate = useSharedValue(-8);
@@ -41,40 +43,44 @@ export function AnimatedSplash({ onFinish }: Props) {
   useEffect(() => {
     void hideSplash();
 
-    orb.value = withTiming(1, { duration: 1400, easing: Easing.out(Easing.cubic) });
+    orb.value = withTiming(1, { duration: 720, easing: Easing.out(Easing.cubic) });
 
-    markOpacity.value = withTiming(1, { duration: 420, easing: Easing.out(Easing.cubic) });
-    markScale.value = withSpring(1, { damping: 14, stiffness: 160, mass: 0.85 });
-    markRotate.value = withSpring(0, { damping: 16, stiffness: 140 });
+    markOpacity.value = withTiming(1, { duration: 280, easing: Easing.out(Easing.cubic) });
+    markScale.value = withSpring(1, { damping: 14, stiffness: 180, mass: 0.8 });
+    markRotate.value = withSpring(0, { damping: 16, stiffness: 160 });
 
-    titleOpacity.value = withDelay(180, withTiming(1, { duration: 480 }));
-    titleY.value = withDelay(180, withSpring(0, { damping: 18, stiffness: 160 }));
+    titleOpacity.value = withDelay(80, withTiming(1, { duration: 320 }));
+    titleY.value = withDelay(80, withSpring(0, { damping: 18, stiffness: 180 }));
 
-    tagOpacity.value = withDelay(360, withTiming(1, { duration: 420 }));
-    tagY.value = withDelay(360, withSpring(0, { damping: 18, stiffness: 150 }));
+    tagOpacity.value = withDelay(160, withTiming(1, { duration: 280 }));
+    tagY.value = withDelay(160, withSpring(0, { damping: 18, stiffness: 170 }));
 
     bar.value = withDelay(
-      420,
-      withTiming(1, { duration: 1100, easing: Easing.inOut(Easing.cubic) }),
+      180,
+      withTiming(1, { duration: 520, easing: Easing.inOut(Easing.cubic) }),
     );
 
-    // Soft pulse on the mark while loading completes.
     markScale.value = withDelay(
-      700,
+      420,
       withSequence(
-        withTiming(1.04, { duration: 420, easing: Easing.inOut(Easing.sin) }),
-        withTiming(1, { duration: 420, easing: Easing.inOut(Easing.sin) }),
+        withTiming(1.03, { duration: 220, easing: Easing.inOut(Easing.sin) }),
+        withTiming(1, { duration: 220, easing: Easing.inOut(Easing.sin) }),
       ),
     );
+  }, [bar, markOpacity, markRotate, markScale, orb, tagOpacity, tagY, titleOpacity, titleY]);
 
-    const finish = () => onFinish();
-    exit.value = withDelay(
-      1750,
-      withTiming(1, { duration: 480, easing: Easing.in(Easing.cubic) }, (done) => {
-        if (done) runOnJS(finish)();
-      }),
-    );
-  }, [bar, exit, markOpacity, markRotate, markScale, onFinish, orb, tagOpacity, tagY, titleOpacity, titleY]);
+  useEffect(() => {
+    if (!allowExit) return;
+    let finished = false;
+    const finish = () => {
+      if (finished) return;
+      finished = true;
+      onFinish();
+    };
+    exit.value = withTiming(1, { duration: 280, easing: Easing.in(Easing.cubic) }, (done) => {
+      if (done) runOnJS(finish)();
+    });
+  }, [allowExit, exit, onFinish]);
 
   const rootStyle = useAnimatedStyle(() => ({
     opacity: interpolate(exit.value, [0, 1], [1, 0], Extrapolation.CLAMP),

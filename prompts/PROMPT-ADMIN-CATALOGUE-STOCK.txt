@@ -1,0 +1,321 @@
+================================================================================
+PROMPT AGENT — DASHBOARD ADMIN CATALOGUE & STOCK
+Marché Doré / SuperU
+Copie-colle CE FICHIER ENTIER dans un nouvel agent Cursor.
+Un prompt = un périmètre. NE PAS implémenter le RH / personnel ici
+(voir PROMPT-ADMIN-PERSONNEL.txt).
+================================================================================
+
+TU ES un agent qui construit le BACK-OFFICE magasin : gestion des produits,
+catégories, prix, ruptures et stocks. Tu t’appuies sur l’état RÉEL du
+monorepo SuperU et tu prépares la vision (stock par magasin, mouvements,
+SKU scannable). Tu ne réécris pas la boutique ni CourseGO.
+
+================================================================================
+0) CONTEXTE PRODUIT — LIRE AVANT DE CODER
+================================================================================
+
+Monorepo Git : SuperU
+  marche-dore/   app CLIENT Expo 57 (port web 8081)
+  CourseGO/      app STAFF picking + livraison Expo 57 (port web 8082)
+  server/        API Hono + Postgres (port 8787)
+  prompts/       ce fichier
+
+UNE seule base Postgres. docker-compose à la racine SuperU :
+  user marche / mdp marche_local / db marche_dore / port 5432
+  DATABASE_URL dans server/.env — ne jamais committer ni afficher le secret.
+
+Schémas :
+  public  = boutique (users, products, categories, stores, orders, order_lines…)
+  ops     = staff, pick_jobs, deliveries, courses, GPS, events
+  comms   = threads, messages, calls
+
+Règle d’or SuperU :
+  - Ne PAS recréer une 2e base.
+  - Ne PAS mélanger login client (public.users + public.sessions) et login
+    staff/admin (ops.staff + ops.staff_sessions).
+  - Expo v57 : https://docs.expo.dev/versions/v57.0.0/
+  - UI métier en français (Bénin, Cotonou). Prix en FCFA entiers.
+  - Ne PAS committer sans demande explicite.
+
+Apps déjà en prod locale :
+  Client démo : demo@marchedore.bj / marche2024
+  Staff démo  : picker@marchedore.bj et courier@marchedore.bj / marche2024
+                (tous deux can_pick + can_deliver, magasin su-aeroport)
+
+Ce dashboard est une 4e surface : « Marché Admin », usage bureau (tablette /
+ordinateur), PAS un clone PhoneShell de CourseGO.
+
+Dossier cible proposé : marche-admin/
+  Stack : Vite + React + TypeScript (web desktop). PAS Expo, sauf si
+  l’utilisateur impose le même runtime. Port 8083.
+  Auth : Bearer ops.staff avec rôle autorisé (admin | manager | magasinier).
+  API : même server/ Hono, CORS déjà origin *.
+
+Si marche-admin/ n’existe pas, crée-le. N’installe pas une 2e API.
+
+================================================================================
+1) ÉTAT ACTUEL DU CATALOGUE (NE PAS IGNORER)
+================================================================================
+
+1.1 Postgres — tables minces, vérité dans JSONB
+  public.products    (id TEXT PK, category_id TEXT NOT NULL, payload JSONB NOT NULL)
+  public.categories  (id TEXT PK, payload JSONB NOT NULL)
+  public.banners     (id TEXT PK, payload JSONB NOT NULL)
+  public.chips       (id TEXT PK, payload JSONB NOT NULL)
+  public.stores      (id TEXT PK, payload JSONB NOT NULL)
+
+  Seed : server/src/seed.ts lit server/data/catalog.json (INSERT ON CONFLICT DO NOTHING).
+  Dump  : scripts serveur dump-catalog.mjs. Export schéma : server/schema/00-public.sql
+
+1.2 Payload produit (aujourd’hui)
+  Champs observés dans catalog.json + type Product (marche-dore/data/catalog.ts) :
+    id, name, unit, price (INT Fcfa), oldPrice?, discount? (ex. "-20%"),
+    categoryId, producer?, description?, inStock? (BOOLEAN, défaut true),
+    badge? ('nouveau' | 'local' | 'rupture'), rating?, reviews?,
+    nutrition? { energy, protein, fat, carbs }
+  IL N’Y A PAS encore : quantité en stock, SKU EAN, coût d’achat, TVA,
+  stock par magasin, seuil d’alerte, lot / DLC.
+
+  Rupture actuelle = inStock: false ET souvent badge: 'rupture'
+  (ex. id "gingembre"). La boutique filtre inStockOnly via inStock !== false.
+
+1.3 Double source images (IMPORTANT)
+  - Fichiers locaux : marche-dore/assets/images/catalog/{id}.png
+    (et cat-*.png pour rayons). Bundlés dans marche-dore/data/catalog.ts via require().
+  - API GET /catalog/media/:id sert le PNG depuis ce dossier (server/src/productMedia.ts).
+  - CourseGO : lib/catalogImages.generated.ts généré par
+    SuperU/scripts/gen-catalog-images.mjs (npm run catalog:map à la racine).
+  - hydrateCatalog.ts (boutique) : overlay prix/stock/texte depuis API ou SQLite
+    SUR le catalogue local. JAMAIS d’image ni d’URL API. JAMAIS supprimer un SKU
+    bundlé. restoreBundledCatalogImages() après overlay.
+
+  Conséquence admin : un nouveau produit n’apparaît PAS correctement dans les
+  apps mobiles tant que :
+    a) la ligne Postgres existe,
+    b) un PNG {id}.png est dans marche-dore/assets/images/catalog/,
+    c) catalog.ts (boutique) ET catalogImages.generated.ts (CourseGO) sont
+       régénérés / mis à jour.
+  Phase 1 du dashboard : CRUD payload Postgres + flag inStock (les apps
+  hydratent les SKU déjà bundlés). Phase 2 : upload image + script generate
+  + documenter le rebuild Metro.
+
+1.4 Lecture API actuelle (pas d’écriture catalogue)
+  GET /catalog  → { products, categories, banners, chips }  PUBLIC
+  GET /catalog/media/:id  → image
+  GET /health
+  Aucun PATCH /admin/products aujourd’hui. À AJOUTER dans server/src/index.ts
+  (ou module server/src/admin.ts registerAdminRoutes).
+
+1.5 Magasins (public.stores.payload)
+  su-aeroport  Super U Aéroport  Cadjehoun  coord [2.386957, 6.349016]
+  su-akpakpa   Super U Akpakpa
+  su-ganhi     Super U Ganhi
+  su-calavi    Super U Calavi
+  Champs : name, format, city, cityLabel, address, fullAddress, phone,
+  coordinate [lng, lat], areaM2, hours.
+  CourseGO / ops.staff.store_id démo = 'su-aeroport'.
+  Stock FUTUR = par (product_id, store_id), pas un stock unique « global »
+  si on veut coller à l’ops magasin.
+
+1.6 Catégories (ids stables — ne pas renommer sans migration apps)
+  fruits-legumes, viandes, charcuterie, poissons, surgeles, laitiers, oeufs,
+  boulangerie, petit-dej, cafe-the, feculents, huiles, epices, conserves,
+  epicerie, snacking, boissons, alcools, bio, cuisine, glaces, hygiene,
+  maison, bebe, animalerie.
+
+1.7 Lien ops (picking)
+  public.order_lines : product_id, name, unit, qty, unit_price, picked_qty,
+  unavailable, note. Le coursier marque unavailable = rupture rayon pendant
+  le ramassage. ÇA N’EST PAS le stock catalogue. Vision : une rupture rayon
+  peut proposer « débiter stock magasin » ou « créer mouvement ajustement ».
+  Ne pas casser PATCH /ops/pick-jobs/:id/lines.
+
+1.8 Panier / commande
+  cart_lines.product_id → products.id
+  Prix pris au checkout depuis le produit hydraté. Modifier le prix en admin
+  ne recalcule PAS les commandes déjà payées (orders.payload + order_lines
+  figés). Documenter ça dans l’UI (« les commandes en cours gardent le prix
+  encaissé »).
+
+================================================================================
+2) VISION (CE QUE LE DASHBOARD DOIT DEVENIR)
+================================================================================
+
+Niveau A — immédiat (MVP, coller à l’existant)
+  - Liste produits : recherche, filtre catégorie, filtre en stock / rupture.
+  - Fiche : nom, unité, prix, oldPrice, discount, producer, description,
+    badge, inStock, nutrition, categoryId.
+  - Toggle rupture (inStock false + badge rupture) / retour en rayon.
+  - Catégories : titre (payload), pas forcément les images (bundlées).
+  - Bannières home : texte / ids existants (images bundlées).
+  - Audit simple : qui a changé le prix, quand (ops.events ou table
+    public.catalog_audit).
+
+Niveau B — stock réel
+  Nouvelle table (MÊME base, schéma public ou ops — préférer public) :
+    public.product_stock (
+      product_id TEXT REFERENCES products(id),
+      store_id   TEXT REFERENCES stores(id),  -- ou TEXT aligné sur stores.id
+      qty        NUMERIC(12,3) NOT NULL DEFAULT 0,  -- kg / pièces selon unit
+      reserved   NUMERIC(12,3) NOT NULL DEFAULT 0,  -- paniers / commandes non packées
+      min_qty    NUMERIC(12,3) NOT NULL DEFAULT 0,  -- seuil alerte
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      PRIMARY KEY (product_id, store_id)
+    )
+    public.stock_moves (
+      id, product_id, store_id, delta, reason
+        chk ('receipt','sale','adjust','shrink','pick_unavailable','transfer'),
+      ref_type TEXT,  -- 'order' | 'admin' | 'pick_job'
+      ref_id TEXT,
+      actor_staff_id TEXT REFERENCES ops.staff(id),
+      created_at
+    )
+  Règles :
+    - inStock dérivé : qty - reserved > 0 (sync payload.inStock à chaque
+      mouvement pour ne pas casser hydrateCatalog).
+    - Réservation : à la confirmation de commande (status confirmed),
+      reserved += qty lignes. Au pack / shipped : reserved -= , qty -= .
+    - Si stock insuffisant au checkout : 409 clair, pas de survente silencieuse.
+    - Transfert entre su-aeroport et su-ganhi = 2 moves.
+
+Niveau C — catalogue vivant
+  - Création SKU : id slug kebab-case unique (ex. mangues-kent), categoryId
+    obligatoire, image upload →
+    marche-dore/assets/images/catalog/{id}.png + npm run catalog:map
+    + note « rebuild Expo ».
+  - Code-barres (EAN-13 / code interne) pour ScanSheet CourseGO
+    (aujourd’hui productBarcode() est dérivé de l’id).
+  - Multi-unités plus tard (caisse vs kg) : hors MVP sauf si déjà dans unit.
+
+================================================================================
+3) AUTH ADMIN CATALOGUE (SANS FAIRE LE RH COMPLET)
+================================================================================
+
+Réutiliser ops.staff. Ne pas créer public.admins.
+
+Rôles AUTORISÉS à ce dashboard (voir aussi prompt personnel) :
+  admin       tout catalogue + tout magasin
+  manager     catalogue + stock de SON store_id
+  magasinier  stock et ruptures de SON store_id, pas les prix (option)
+
+Seed un compte démo SI absent :
+  admin@marchedore.bj / marche2024
+  role = 'admin', can_pick = false, can_deliver = false, is_active = true
+  ATTENTION : contrainte actuelle
+    CONSTRAINT staff_can_act_chk CHECK (can_pick OR can_deliver)
+  DOIT être élargie AVANT d’insérer un admin :
+    CHECK (can_pick OR can_deliver OR role IN
+      ('admin','manager','magasinier','recruteur','dispatcher','support'))
+  Adapter staff_role_check pour ajouter admin, manager, magasinier, recruteur,
+  support. Ne casse pas picker | courier | coursier | dispatcher | both.
+
+Middleware Hono : staffFromToken (déjà dans ops.ts) + requireCatalogAdmin(staff).
+Sessions : ops.staff_sessions comme CourseGO.
+
+================================================================================
+4) API À AJOUTER (server/)
+================================================================================
+
+Préfixe /admin/*  (Bearer staff)
+
+  GET    /admin/me
+  GET    /admin/products?q=&categoryId=&stock=all|in|out&storeId=
+  GET    /admin/products/:id
+  PATCH  /admin/products/:id
+         body : champs payload autorisés (whitelist). Interdit d’écraser id.
+         Recalcule discount si oldPrice + price.
+         Si inStock false → badge 'rupture' ; si true et badge rupture → retirer.
+  POST   /admin/products
+         body : { id, categoryId, payload } — id kebab, unique.
+  PATCH  /admin/categories/:id
+  GET    /admin/stores
+  GET    /admin/stock?storeId=          (niveau B)
+  POST   /admin/stock/moves             (niveau B)
+  POST   /admin/products/:id/image      multipart PNG/WebP → fichier catalog
+         (niveau C ; valider taille, pas de SVG script)
+
+GET /catalog public reste en lecture pour les apps. Après PATCH admin, le
+prochain hydrate boutique voit les nouveaux prix. Pas de cache long côté API.
+
+Ne PAS exposer password_hash. Ne PAS laisser PATCH /admin sans auth.
+
+Validation :
+  price >= 0 entier Fcfa
+  categoryId ∈ catégories existantes
+  unit string non vide
+  name 2–120 caractères
+
+================================================================================
+5) UX DASHBOARD (FRANÇAIS)
+================================================================================
+
+Layout desktop : sidebar (Catalogue, Stocks, Rayons, Magasins) + table.
+Thème : s’inspirer marche-dore (or / terracotta / crème) SANS copier le
+PhoneShell. Typo lisible bureau.
+
+Écrans MVP :
+  1) Catalogue — tableau : vignette (URL /catalog/media/:id), nom, rayon,
+     prix, stock (oui/non), actions Modifier / Rupture.
+  2) Fiche produit — formulaire + preview carte boutique.
+  3) Stocks (niveau B) — par magasin, qty, min_qty, bouton « Entrée / Sortie /
+     Ajustement » avec motif obligatoire.
+  4) Alertes — qty <= min_qty (bandeau).
+
+Interdits UX :
+  - Simuler un stock si la table n’existe pas encore (afficher inStock bool).
+  - Éditer les images en « collant une URL http » dans le payload (les apps
+    ignorent payload.image). Upload fichier ou message « image bundlée {id}.png ».
+
+================================================================================
+6) IMPACT APPS (À RESPECTER)
+================================================================================
+
+marche-dore :
+  hydrateCatalog overlay. Si tu ajoutes des champs payload (stockQty),
+  étendre le type Product SANS casser inStock.
+  Ne pas prendre image depuis l’API.
+
+CourseGO :
+  ProductThumb = require() généré. Nouveau SKU → relancer catalog:map.
+  Scan : viser plus tard barcode dans payload.
+
+server live / ops : ne pas changer map_ops_to_shop_status ni les files
+pick/delivery pour ce prompt.
+
+================================================================================
+7) TESTS MANUELS
+================================================================================
+
+- Login admin@… → liste produits, PATCH prix tomates, recharger boutique
+  (Ctrl+F5) → prix hydraté.
+- Toggle rupture gingembre → boutique masque si inStockOnly.
+- Compte courier@… → 403 sur /admin/products.
+- Compte demo@… (client) → 401 /admin.
+- Manager store su-ganhi ne voit / n’ajuste que su-ganhi (niveau B).
+- Commande déjà payée : ancien prix conservé dans order_lines.
+
+================================================================================
+8) HORS PÉRIMÈTRE (CE PROMPT)
+================================================================================
+
+- Recrutement, fiches RH, documents permis, salaires.
+- Chat / appels comms.
+- FedaPay, checkout client.
+- Carte OSRM / CourseGO.
+- Réécriture du catalogue JS bundlé comme source de vérité (Postgres d’abord).
+
+================================================================================
+9) LIVRABLES
+================================================================================
+
+- SQL migration dans server/src/schema.sql ET/OU fichier
+  server/schema/03-admin-catalog.sql appliqué au boot (migrate()).
+- Routes Hono + auth rôles.
+- App marche-admin (Vite) pages catalogue (+ stock si niveau B).
+- Compte seed admin@marchedore.bj.
+- README court dans marche-admin/ (port, login, lien API).
+- Ne pas toucher AGENTS.md sauf une ligne « admin web port 8083 ».
+
+FIN DU PROMPT CATALOGUE & STOCK
+================================================================================

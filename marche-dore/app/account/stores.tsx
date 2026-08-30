@@ -1,4 +1,5 @@
 import { LibreMap, warmLibreMap } from '@/components/LibreMap';
+import { goBack } from '@/lib/navigation';
 import { CtaButton, IconCircle, Screen } from '@/components/ui';
 import { cotonouMap, mapStyles, type LngLat } from '@/constants/map';
 import { displayFont, type AppColors } from '@/constants/theme';
@@ -6,13 +7,13 @@ import { useColors, useTheme } from '@/context/ThemeContext';
 import { useAddresses } from '@/context/AddressesContext';
 import { useStores } from '@/context/StoresContext';
 import { SUPER_U_BRAND, type SuperUStore } from '@/data/superU';
-import { findStoreNearPoint, formatDistanceKm, formatDurationMin } from '@/lib/deliveryRouting';
+import { findNearestSuperU, findStoreNearPoint, formatDistanceKm, formatDurationMin } from '@/lib/deliveryRouting';
 import { superUStoresToMapMarkers } from '@/lib/api/superU';
 import { SHEET_SPRING } from '@/lib/expandableSheet';
 import { softShadow } from '@/lib/shadow';
 import { useDeliveryEstimate } from '@/lib/useDeliveryEstimate';
 import { Feather } from '@expo/vector-icons';
-import { router } from 'expo-router';
+import { router, useLocalSearchParams } from 'expo-router';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   ActivityIndicator,
@@ -22,7 +23,8 @@ import {
   StyleSheet,
   Text,
   View } from 'react-native';
-import { Gesture, GestureDetector, GestureHandlerRootView } from 'react-native-gesture-handler';
+import { GestureRoot } from '@/components/GestureRoot';
+import { Gesture, GestureDetector } from 'react-native-gesture-handler';
 import Animated, {
   useAnimatedStyle,
   useSharedValue,
@@ -88,10 +90,13 @@ export default function StoresScreen() {
   const colors = useColors();
   const styles = useMemo(() => createStyles(colors), [colors]);
   const insets = useSafeAreaInsets();
+  const { setup } = useLocalSearchParams<{ setup?: string }>();
+  const setupMode = setup === '1';
   const { stores, selectedStoreId, selectedStore, setSelectedStoreId } = useStores();
   const { defaultAddress } = useAddresses();
 
   const [draftId, setDraftId] = useState(selectedStoreId);
+  const [setupPrimed, setSetupPrimed] = useState(false);
   const [mapReady, setMapReady] = useState(false);
   const [mapError, setMapError] = useState(false);
   const [mapCenter, setMapCenter] = useState<LngLat>([...selectedStore.coordinate]);
@@ -103,7 +108,7 @@ export default function StoresScreen() {
     () => stores.find((s) => s.id === draftId) ?? selectedStore,
     [stores, draftId, selectedStore],
   );
-  const draftEstimate = useDeliveryEstimate(draftStore.coordinate, defaultAddress.coordinate);
+  const draftEstimate = useDeliveryEstimate(draftStore.coordinate, defaultAddress?.coordinate ?? null);
 
   const orderedStores = useMemo(() => {
     const selected = stores.find((s) => s.id === draftId);
@@ -112,9 +117,20 @@ export default function StoresScreen() {
   }, [stores, draftId]);
 
   useEffect(() => {
+    if (setupMode && !setupPrimed) return;
     setDraftId(selectedStoreId);
     setMapCenter([...selectedStore.coordinate]);
-  }, [selectedStoreId, selectedStore.coordinate]);
+  }, [selectedStoreId, selectedStore.coordinate, setupMode, setupPrimed]);
+
+  useEffect(() => {
+    if (!setupMode || setupPrimed) return;
+    if (defaultAddress?.coordinate) {
+      const nearest = findNearestSuperU(defaultAddress.coordinate);
+      setDraftId(nearest.store.id);
+      setMapCenter([...nearest.store.coordinate]);
+    }
+    setSetupPrimed(true);
+  }, [setupMode, setupPrimed, defaultAddress?.coordinate]);
 
   useEffect(() => {
     void warmLibreMap(
@@ -156,6 +172,7 @@ export default function StoresScreen() {
   const sheetPan = useMemo(
     () =>
       Gesture.Pan()
+        .maxPointers(1)
         .activeOffsetY([-8, 8])
         .onStart(() => {
           dragStartH.value = sheetH.value;
@@ -180,12 +197,16 @@ export default function StoresScreen() {
 
   const save = () => {
     setSelectedStoreId(draftId);
-    router.back();
+    if (setupMode) {
+      router.replace('/(tabs)');
+      return;
+    }
+    goBack();
   };
 
   return (
     <Screen>
-      <GestureHandlerRootView style={styles.root}>
+      <GestureRoot style={styles.root}>
         <View style={styles.mapLayer}>
           <LibreMap
             style={StyleSheet.absoluteFill}
@@ -224,12 +245,28 @@ export default function StoresScreen() {
         </View>
 
         <View style={[styles.topBar, { paddingTop: Math.max(10, insets.top + 6) }]}>
-          <IconCircle name="chevron-left" onPress={() => router.back()} />
+          <IconCircle
+            name="chevron-left"
+            onPress={() =>
+              setupMode ? router.replace('/account/addresses?setup=1') : goBack()
+            }
+          />
           <View style={styles.titlePill}>
-            <Text style={styles.titlePillMain}>Magasin Super U</Text>
-            <Text style={styles.titlePillSub}>Touchez un pin U sur la carte</Text>
+            <Text style={styles.titlePillMain}>
+              {setupMode ? 'Choisir votre Super U' : 'Magasin Super U'}
+            </Text>
+            <Text style={styles.titlePillSub}>
+              {setupMode
+                ? 'Le magasin qui prépare vos courses'
+                : 'Touchez un pin U sur la carte'}
+            </Text>
           </View>
-          <IconCircle name="map-pin" onPress={() => router.push('/account/addresses')} />
+          <IconCircle
+            name="map-pin"
+            onPress={() =>
+              router.push(setupMode ? '/account/addresses?setup=1' : '/account/addresses')
+            }
+          />
         </View>
 
         <View
@@ -237,7 +274,11 @@ export default function StoresScreen() {
             styles.segmentWrap,
             { top: Math.max(10, insets.top + 6) + 54 },
           ]}>
-          <Pressable style={styles.segment} onPress={() => router.replace('/account/addresses')}>
+          <Pressable
+            style={styles.segment}
+            onPress={() =>
+              router.replace(setupMode ? '/account/addresses?setup=1' : '/account/addresses')
+            }>
             <Text style={styles.segmentText}>Adresse</Text>
           </Pressable>
           <View style={[styles.segment, styles.segmentOn]}>
@@ -245,23 +286,28 @@ export default function StoresScreen() {
           </View>
         </View>
 
-        <GestureDetector gesture={sheetPan}>
-          <Animated.View
-            style={[
-              styles.sheet,
-              sheetAnimStyle,
-              softShadow({ y: -8, blur: 24, opacity: 0.12 }),
-              { paddingBottom: Math.max(14, insets.bottom + 8), backgroundColor: colors.bg },
-            ]}>
+        <Animated.View
+          style={[
+            styles.sheet,
+            sheetAnimStyle,
+            softShadow({ y: -8, blur: 24, opacity: 0.12 }),
+            { paddingBottom: Math.max(14, insets.bottom + 8), backgroundColor: colors.bg },
+          ]}>
+          <GestureDetector gesture={sheetPan}>
             <View style={styles.sheetHandle}>
               <View style={[styles.sheetHandleBar, { backgroundColor: colors.grabber }]} />
             </View>
+          </GestureDetector>
             <Text style={[styles.sheetEyebrow, { color: colors.muted }]}>
-              Préparation & départ livreur
+              {setupMode ? 'Étape 2 · Supermarché' : 'Préparation & départ livreur'}
             </Text>
-            <Text style={styles.sheetTitle}>Choisissez votre Super U</Text>
+            <Text style={styles.sheetTitle}>
+              {setupMode ? 'Quel Super U vous sert ?' : 'Choisissez votre Super U'}
+            </Text>
             <Text style={styles.sheetSub}>
-              Liste ou carte · le magasin sélectionné prépare votre commande.
+              {setupMode
+                ? 'Nous pré-sélectionnons le magasin le plus proche de chez vous — changez si besoin.'
+                : 'Liste ou carte · le magasin sélectionné prépare votre commande.'}
             </Text>
 
             <Animated.ScrollView
@@ -287,14 +333,16 @@ export default function StoresScreen() {
                   : draftEstimate.unavailable
                     ? `${draftStore.name} · ${draftStore.cityLabel}`
                     : draftEstimate.approximated
-                      ? `${draftStore.name} → ${defaultAddress.label} · approx. ${formatDistanceKm(draftEstimate.distanceMeters)} · ~${formatDurationMin(draftEstimate.durationSeconds)}`
-                      : `${draftStore.name} → ${defaultAddress.label} · ${formatDistanceKm(draftEstimate.distanceMeters)} · ~${formatDurationMin(draftEstimate.durationSeconds)}`}
+                      ? `${draftStore.name} → ${defaultAddress?.label ?? 'adresse'} · approx. ${formatDistanceKm(draftEstimate.distanceMeters)} · ~${formatDurationMin(draftEstimate.durationSeconds)}`
+                      : `${draftStore.name} → ${defaultAddress?.label ?? 'adresse'} · ${formatDistanceKm(draftEstimate.distanceMeters)} · ~${formatDurationMin(draftEstimate.durationSeconds)}`}
               </Text>
-              <CtaButton label="Enregistrer ce magasin" onPress={save} />
+              <CtaButton
+                label={setupMode ? 'Entrer dans Marché Doré' : 'Enregistrer ce magasin'}
+                onPress={save}
+              />
             </View>
           </Animated.View>
-        </GestureDetector>
-      </GestureHandlerRootView>
+      </GestureRoot>
     </Screen>
   );
 }

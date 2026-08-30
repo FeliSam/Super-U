@@ -1,4 +1,5 @@
 import { CtaButton, IconCircle, Screen, Page } from '@/components/ui';
+import { goBack } from '@/lib/navigation';
 import { displayFont, type AppColors } from '@/constants/theme';
 import { useCheckoutPayment, type PaymentId } from '@/context/CheckoutPaymentContext';
 import { usePayments, type WalletMethod } from '@/context/PaymentsContext';
@@ -117,14 +118,14 @@ export default function PaymentMethodsScreen() {
         cardLast4: method.cardLast4,
         ready: true });
     }
-    router.back();
+    goBack();
   };
 
   return (
     <Screen>
       <Page style={styles.flex}>
         <View style={styles.header}>
-          <IconCircle name="chevron-left" onPress={() => router.back()} />
+          <IconCircle name="chevron-left" onPress={() => goBack()} />
           <Text style={styles.title}>Moyens de paiement</Text>
           <View style={styles.headerSpacer} />
         </View>
@@ -163,7 +164,7 @@ export default function PaymentMethodsScreen() {
 
           <View style={styles.secure}>
             <Feather name="lock" size={16} color={colors.green} />
-            <Text style={styles.secureText}>Format Bénin · +229 · 8 ou 10 chiffres</Text>
+            <Text style={styles.secureText}>Format Bénin · +229 01 00 00 00 00</Text>
           </View>
         </ScrollView>
 
@@ -179,12 +180,12 @@ export default function PaymentMethodsScreen() {
             <Text style={styles.modalTitle}>
               {editId === 'wave' ? 'MTN MoMo' : 'Orange Money'}
             </Text>
-            <Text style={styles.modalSub}>Numéro béninois au format +229 XX XX XX XX</Text>
+            <Text style={styles.modalSub}>Numéro béninois au format +229 01 00 00 00 00</Text>
             <TextInput
               value={phoneDraft}
               onChangeText={(t) => setPhoneDraft(formatBeninPhoneInput(t))}
               keyboardType="phone-pad"
-              placeholder="+229 97 12 34 56"
+              placeholder="+229 01 00 00 00 00"
               placeholderTextColor={colors.placeholder}
               style={[
                 styles.phoneInput,

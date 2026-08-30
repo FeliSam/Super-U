@@ -1,11 +1,15 @@
 import { AccountScreen, InfoRow } from '@/components/AccountScreen';
+import { CourseLogo } from '@/components/CourseLogo';
 import { bodyFont, colors } from '@/constants/theme';
 import { getApiBaseUrl } from '@/lib/api/http';
-import { Text } from 'react-native';
+import { Text, View } from 'react-native';
 
 export default function AboutScreen() {
   return (
     <AccountScreen title="À propos">
+      <View style={{ alignItems: 'center', paddingVertical: 8 }}>
+        <CourseLogo width={200} />
+      </View>
       <InfoRow icon="package" label="Application" value="CourseGo 1.0.0" />
       <InfoRow icon="server" label="API SuperU" value={getApiBaseUrl()} />
       <InfoRow icon="map" label="Cartes" value="MapLibre · OpenFreeMap Liberty" />

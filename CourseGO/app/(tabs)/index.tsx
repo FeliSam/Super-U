@@ -1,8 +1,10 @@
 import { ApiBanner } from '@/components/ApiBanner';
 import { LibreMap } from '@/components/LibreMap';
 import { MissionCard, deliveryCardProps, pickCardProps } from '@/components/MissionCard';
+import { NowPresence } from '@/components/NowPresence';
+import { PullBanner, pullRefreshControl } from '@/components/PullRefresh';
 import { IconBtn, PillButton } from '@/components/ui';
-import { cotonouMap, mapStyles, type LngLat, type MapMarker } from '@/constants/map';
+import { cotonouMap, mapStyles, motoEtaSeconds, type LngLat, type MapMarker } from '@/constants/map';
 import { bodyFont, colors, displayFont, radius, shadow, TAB_BAR_HEIGHT, TAB_BAR_MARGIN } from '@/constants/theme';
 import { useBoard } from '@/context/BoardContext';
 import { useLocation } from '@/context/LocationContext';
@@ -10,26 +12,30 @@ import { useStaffAuth } from '@/context/StaffAuthContext';
 import { useStaffNotifications } from '@/context/NotificationsContext';
 import { useAppViewport } from '@/components/PhoneShell';
 import { useRoadRoute } from '@/hooks/useRoadRoute';
-import { formatFcfa, kmLabel, minLabel, shortOrderId } from '@/lib/format';
-import { ApiError } from '@/lib/api/http';
-import { claimDelivery } from '@/lib/api/ops';
+import { useMultiRoadRoute } from '@/hooks/useMultiRoadRoute';
+import { kmLabel, minLabel, shortOrderId } from '@/lib/format';
 import {
   deliveryNavLeg,
   isActivePickStatus,
   isDeliveryActive,
-  isDeliveryClaimable,
-  isPickBoardStatus,
+  isDeliveryHeld,
+  isDeliveryStarted,
+  MAX_ACTIVE_DELIVERIES,
 } from '@/lib/opsModel';
+import { livePosKey, mapStoresForNow, suggestedStore } from '@/lib/nearestStore';
+import {
+  buildCourierTourPlan,
+  buildTourMapMarkers,
+  tourRouteSummary,
+} from '@/lib/tourRoute';
 import { staffPhotoSource } from '@/lib/staffPhoto';
 import { router, useFocusEffect } from 'expo-router';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
-  Alert,
   Animated,
   Image,
   PanResponder,
   Pressable,
-  RefreshControl,
   ScrollView,
   StyleSheet,
   Text,
@@ -40,7 +46,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 export default function HomeScreen() {
   const { staff } = useStaffAuth();
   const { unreadCount } = useStaffNotifications();
-  const { jobs, deliveries, online, setOnline, refresh, refreshing, lastError } = useBoard();
+  const { jobs, deliveries, tourHop, mapStores, online, setOnline, refresh, refreshing, lastError } = useBoard();
   const { mapPosition } = useLocation();
 
   useFocusEffect(
@@ -52,9 +58,8 @@ export default function HomeScreen() {
   const { height: screenH } = useAppViewport();
   const tabLift = TAB_BAR_HEIGHT + TAB_BAR_MARGIN + Math.max(insets.bottom, 8);
   const sheetMin = Math.round(screenH * 0.28);
-  const sheetMax = Math.max(sheetMin, Math.round(screenH * 0.48));
+  const sheetMax = Math.max(sheetMin, Math.round(screenH * 0.8));
   const [sheetOpen, setSheetOpen] = useState(true);
-  const [busy, setBusy] = useState<string | null>(null);
   const sheetOpenRef = useRef(true);
   sheetOpenRef.current = sheetOpen;
   const sheetH = useRef(new Animated.Value(sheetMax)).current;
@@ -90,45 +95,112 @@ export default function HomeScreen() {
     }),
   ).current;
 
-  const minePick = jobs.filter((j) => isActivePickStatus(j.pick_status)).slice(0, 1);
-  const mineDel = deliveries.filter(isDeliveryActive).slice(0, 1);
-  const blockedByWork = minePick.length > 0 || mineDel.length > 0;
-  const claimable = deliveries.filter(isDeliveryClaimable);
-  const preferredDel = claimable.find((d) => d.picker_id === staff?.id) ?? claimable[0];
-  const readyToTake = blockedByWork ? [] : preferredDel ? [preferredDel] : [];
-  const filePick = jobs.filter((j) => isPickBoardStatus(j.pick_status)).length;
+  const minePick = jobs.filter((j) => isActivePickStatus(j.pick_status) && j.picker_id === staff?.id);
+  const mineDel = deliveries.filter((d) => isDeliveryActive(d) && d.courier_id === staff?.id).slice(0, MAX_ACTIVE_DELIVERIES);
+  const tourStarted = mineDel.some(isDeliveryStarted);
+  const heldDel = mineDel.filter(isDeliveryHeld);
+  const startedDel = mineDel.filter(isDeliveryStarted);
   const greet = staff?.firstName ?? 'Coursier';
+  const idle = !minePick[0] && !mineDel[0];
+  const lockedStoreId = minePick[0]?.store_id ?? mineDel[0]?.store_id ?? null;
+  const liveKey = livePosKey(mapPosition);
+  const suggested = useMemo(
+    () => suggestedStore(mapStores, mapPosition, lockedStoreId),
+    [mapStores, liveKey, lockedStoreId],
+  );
 
-  const focusDel = mineDel[0] ?? deliveries.find((d) => d.order_id === minePick[0]?.order_id) ?? readyToTake[0];
-  const storePt: LngLat =
-    focusDel?.pickup_lng != null && Math.abs(focusDel.pickup_lng) > 0.2
-      ? [focusDel.pickup_lng, focusDel.pickup_lat!]
-      : cotonouMap.store;
+  const tourPlan = useMemo(
+    () =>
+      buildCourierTourPlan(deliveries, staff?.id, {
+        courierPosition: mapPosition,
+        lastDrop: tourHop ? [tourHop.lng, tourHop.lat] : null,
+        lastDropLabel: tourHop?.label,
+        lastDropStoreId: tourHop?.storeId,
+      }),
+    [deliveries, staff?.id, mapPosition, tourHop],
+  );
+
+  const focusDel = tourPlan?.focusDelivery ?? mineDel[0] ?? deliveries.find((d) => d.order_id === minePick[0]?.order_id);
+  const storePt: LngLat = tourPlan?.store ??
+    (idle && suggested?.coordinate
+      ? suggested.coordinate
+      : focusDel?.pickup_lng != null && Math.abs(focusDel.pickup_lng) > 0.2
+        ? [focusDel.pickup_lng, focusDel.pickup_lat!]
+        : cotonouMap.store);
   const clientPt: LngLat | null =
-    focusDel?.dropoff_lng != null && Math.abs(focusDel.dropoff_lng) > 0.2
+    !tourPlan?.multiStop && focusDel?.dropoff_lng != null && Math.abs(focusDel.dropoff_lng) > 0.2
       ? [focusDel.dropoff_lng, focusDel.dropoff_lat!]
       : null;
-  const goingToClient = Boolean(mineDel[0] && deliveryNavLeg(mineDel[0].delivery_status) === 'client');
+  const goingToClient = Boolean(focusDel && deliveryNavLeg(focusDel.delivery_status) === 'client');
   const dest: LngLat = goingToClient && clientPt ? clientPt : storePt;
-  const road = useRoadRoute(mapPosition, dest);
-  const etaS = road?.durationSeconds;
-  const destName = goingToClient
+  const vehicle = staff?.vehicle;
+  const legRoad = useRoadRoute(tourPlan?.navFrom ?? mapPosition, tourPlan?.navTo ?? dest, vehicle);
+  const tourRoad = useMultiRoadRoute(
+    tourPlan && tourPlan.routeWaypoints.length >= 2 ? tourPlan.routeWaypoints : null,
+    vehicle,
+  );
+  const road =
+    tourPlan && tourPlan.routeWaypoints.length >= 2 ? tourRoad : legRoad;
+  const etaS = road?.durationSeconds ?? legRoad?.durationSeconds;
+  const tourSummary = tourPlan ? tourRouteSummary(tourPlan) : null;
+  const destKicker = !online
+    ? 'Pause'
+    : minePick[0]
+      ? `Ramassage ${shortOrderId(minePick[0].order_id)}`
+      : tourSummary
+        ? tourSummary
+        : goingToClient
+          ? `Livraison ${shortOrderId(focusDel?.order_id ?? '')}`
+          : mineDel[0]
+            ? `Aller au magasin · ${shortOrderId(mineDel[0].order_id)}`
+            : 'En attente';
+  const destName = tourPlan?.tourStarted
     ? [focusDel?.address_line, focusDel?.address_city].filter(Boolean).join(', ') ||
       focusDel?.address_label ||
-      'Client'
-    : focusDel?.store_name || 'Magasin';
-  const destKicker = minePick[0]
-    ? `Ramassage ${shortOrderId(minePick[0].order_id)}`
-    : goingToClient
-      ? `Livraison ${shortOrderId(focusDel?.order_id ?? '')}`
-      : mineDel[0]
-        ? `Aller au magasin · ${shortOrderId(mineDel[0].order_id)}`
-        : 'En attente';
+      `Client ${tourPlan.stops.find((s) => s.status === 'current')?.stopIndex ?? 1}`
+    : tourPlan?.multiStop
+      ? `${mineDel.length} colis · ${tourPlan.storeName}`
+      : goingToClient
+      ? [focusDel?.address_line, focusDel?.address_city].filter(Boolean).join(', ') ||
+        focusDel?.address_label ||
+        'Client'
+      : idle
+        ? suggested?.name || 'Magasin'
+        : focusDel?.store_name || 'Magasin';
 
   const mapMarkers = useMemo(() => {
-    const markers: MapMarker[] = [
-      { id: 'store', coordinate: storePt, kind: 'store', label: focusDel?.store_name || 'Magasin' },
-    ];
+    if (tourPlan) {
+      return buildTourMapMarkers(
+        tourPlan,
+        mapPosition,
+        (staff?.vehicle as MapMarker['vehicle']) || 'moto',
+        `Vous · ${minLabel(etaS).replace('≈', '')}`,
+      );
+    }
+
+    const markers: MapMarker[] = [];
+    const seen = new Set<string>();
+    for (const store of mapStoresForNow(mapStores, lockedStoreId, idle)) {
+      if (!store.coordinate) continue;
+      seen.add(store.id);
+      const short = store.name.replace(/^Super U\s+/i, '').replace(/^U Express\s+/i, '');
+      markers.push({
+        id: store.id,
+        coordinate: store.coordinate,
+        kind: 'store',
+        label: short,
+        badge: idle && store.parcels > 0 ? store.parcels : undefined,
+        highlight: idle && suggested?.id === store.id,
+      });
+    }
+    if (!seen.size && !idle) {
+      markers.push({
+        id: 'store',
+        coordinate: storePt,
+        kind: 'store',
+        label: focusDel?.store_name || 'Magasin',
+      });
+    }
     if (clientPt) {
       markers.push({ id: 'home', coordinate: clientPt, kind: 'home', label: 'Client' });
     }
@@ -136,28 +208,38 @@ export default function HomeScreen() {
       id: 'me',
       coordinate: mapPosition,
       kind: 'courier',
+      vehicle: (staff?.vehicle as 'moto' | 'voiture' | 'velo' | 'tricycle' | 'pied') || 'moto',
       label: `Vous · ${minLabel(etaS).replace('≈', '')}`,
     });
     return markers;
-  }, [storePt, clientPt, mapPosition, etaS, focusDel?.store_name]);
+  }, [tourPlan, mapStores, storePt, clientPt, mapPosition, etaS, focusDel?.store_name, staff?.vehicle, suggested?.id, idle, lockedStoreId]);
 
-  const pickupRoute = road?.coordinates?.length ? road.coordinates : [mapPosition, dest];
+  const onMapMarker = useCallback(
+    (id: string) => {
+      if (id === 'me') return;
+      if (id.startsWith('del-')) {
+        router.push(`/run/${encodeURIComponent(id)}`);
+        return;
+      }
+      if (mineDel.length > 0) return;
+      const store = mapStores.find((s) => s.id === id);
+      if (store?.parcels) {
+        router.push('/(tabs)/missions');
+        return;
+      }
+      if (mineDel[0] && (id === mineDel[0].store_id || id === 'store')) {
+        router.push(`/run/${encodeURIComponent(mineDel[0].id)}`);
+      }
+    },
+    [mapStores, mineDel],
+  );
+
+  const pickupRoute =
+    road?.coordinates?.length
+      ? road.coordinates
+      : [mapPosition, tourPlan?.navTo ?? dest];
 
   const goCourses = () => router.push('/(tabs)/missions');
-
-  const takeDelivery = async (id: string) => {
-    setBusy(id);
-    try {
-      await claimDelivery(id);
-      await refresh();
-      router.push(`/run/${encodeURIComponent(id)}`);
-    } catch (e) {
-      Alert.alert('Livraison', e instanceof ApiError ? e.message : (e as Error).message);
-      await refresh();
-    } finally {
-      setBusy(null);
-    }
-  };
 
   return (
     <View style={styles.root}>
@@ -169,9 +251,12 @@ export default function HomeScreen() {
         markers={mapMarkers}
         route={pickupRoute}
         fitToMarkers
-        fitIncludeCourier
-        fitPadding={{ top: 100, bottom: Math.round(screenH * 0.4), left: 40, right: 40 }}
-        showNavigation={false}
+        fitIncludeCourier={false}
+        fitPadding={{ top: 100, bottom: Math.round(screenH * 0.72), left: 40, right: 40 }}
+        fitMaxZoom={12.6}
+        followCamera={false}
+        showNavigation
+        onMarkerPress={onMapMarker}
       />
 
       <View style={[styles.top, { paddingTop: Math.max(insets.top, 10) }]}>
@@ -184,9 +269,15 @@ export default function HomeScreen() {
             </Text>
           </View>
         </View>
-        <Pressable onPress={() => setOnline(!online)} style={[styles.statusChip, !online && styles.statusOff]}>
-          <View style={styles.dot} />
-          <Text style={styles.statusTxt}>{online ? 'En ligne' : 'Repos'}</Text>
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel={online ? 'Passer en pause' : 'Passer en ligne'}
+          onPress={() => setOnline(!online)}
+          style={[styles.statusChip, !online && styles.statusOff]}>
+          <View style={[styles.dot, !online && styles.dotOff]} />
+          <Text style={[styles.statusTxt, !online && styles.statusTxtOff]}>
+            {online ? 'En ligne' : 'Pause'}
+          </Text>
         </Pressable>
         <IconBtn name="bell" bg={colors.white} badge={unreadCount} onPress={() => router.push('/notifications')} />
       </View>
@@ -198,7 +289,7 @@ export default function HomeScreen() {
           style={styles.etaInner}
           onPress={
             mineDel[0]
-              ? () => router.push(`/run/${encodeURIComponent(mineDel[0].id)}`)
+              ? () => router.push(`/run/${encodeURIComponent(tourPlan?.focusDelivery.id ?? mineDel[0].id)}`)
               : minePick[0]
                 ? () => router.push(`/job/${encodeURIComponent(minePick[0].id)}`)
                 : undefined
@@ -206,12 +297,11 @@ export default function HomeScreen() {
           <View style={{ flex: 1 }}>
             <Text style={styles.etaKicker}>{destKicker}</Text>
             <Text style={styles.etaStore} numberOfLines={1}>
-              {destName}
+              {!online ? 'Radar fermé' : destName}
             </Text>
             {goingToClient && focusDel?.address_phone ? (
               <Text style={styles.etaMeta} numberOfLines={1}>
                 {focusDel.address_phone}
-                {(focusDel.cash_to_collect ?? 0) > 0 ? ` · COD ${formatFcfa(focusDel.cash_to_collect)}` : ''}
               </Text>
             ) : null}
           </View>
@@ -233,25 +323,54 @@ export default function HomeScreen() {
           contentContainerStyle={styles.listInner}
           scrollEventThrottle={16}
           bounces
-          refreshControl={<RefreshControl refreshing={refreshing} onRefresh={refresh} />}>
-          {!online ? (
-            <View style={styles.empty}>
-              <Text style={styles.emptyTitle}>Vous êtes en pause</Text>
-              <Text style={styles.emptySub}>Passez en ligne pour reprendre une course.</Text>
-            </View>
-          ) : (
+          refreshControl={pullRefreshControl(refreshing, refresh)}>
+          <PullBanner visible={refreshing} />
+          <NowPresence
+            online={online}
+            pickCount={minePick.length}
+            deliveryCount={startedDel.length}
+            heldCount={heldDel.length}
+            tourStarted={tourStarted}
+            onResume={() => setOnline(true)}
+          />
+          {online && idle && suggested ? (
+            <Pressable
+              onPress={goCourses}
+              style={styles.suggest}
+              accessibilityRole="button"
+              accessibilityLabel={`${suggested.name}, Super U le plus proche`}>
+              <View style={styles.suggestTop}>
+                <Text style={styles.suggestKicker}>
+                  {lockedStoreId === suggested.id ? 'VOTRE SUPER U' : 'LE PLUS PROCHE'}
+                </Text>
+                {suggested.waiting > 0 ? (
+                  <View style={styles.suggestTag}>
+                    <Text style={styles.suggestTagTxt}>
+                      {suggested.waiting} commande{suggested.waiting > 1 ? 's' : ''} en attente
+                    </Text>
+                  </View>
+                ) : null}
+              </View>
+              <Text style={styles.suggestName}>{suggested.name}</Text>
+              <Text style={styles.suggestMeta}>
+                {kmLabel(suggested.distanceM)} · {minLabel(motoEtaSeconds(mapPosition, suggested.coordinate as LngLat))}
+              </Text>
+            </Pressable>
+          ) : null}
+          {online ? (
             <>
-              <Text style={styles.kicker}>Maintenant</Text>
               {minePick.map((j) => (
                 <MissionCard
                   key={j.id}
                   {...pickCardProps(j)}
+                  nearest={idle && Boolean(suggested?.id && j.store_id === suggested.id)}
+                  distanceM={suggested?.id === j.store_id ? suggested.distanceM : undefined}
                   cta="CONTINUER"
                   onAccept={() => router.push(`/job/${encodeURIComponent(j.id)}`)}
                   onPress={() => router.push(`/job/${encodeURIComponent(j.id)}`)}
                 />
               ))}
-              {mineDel.map((d) => (
+              {startedDel.map((d) => (
                 <MissionCard
                   key={d.id}
                   {...deliveryCardProps(d)}
@@ -260,37 +379,14 @@ export default function HomeScreen() {
                   onPress={() => router.push(`/run/${encodeURIComponent(d.id)}`)}
                 />
               ))}
-              {readyToTake.map((d) => (
-                <MissionCard
-                  key={d.id}
-                  {...deliveryCardProps(d)}
-                  cta={busy === d.id ? '…' : 'PRENDRE'}
-                  onAccept={() => void takeDelivery(d.id)}
-                  onPress={() => void takeDelivery(d.id)}
-                />
-              ))}
-              {!minePick.length && !mineDel.length && !readyToTake.length ? (
-                <Text style={styles.emptySub}>
-                  Rien en cours. Les nouvelles commandes à ramasser sont dans Courses.
+              {heldDel.length && !tourStarted ? (
+                <Text style={styles.heldHint}>
+                  {heldDel.length} colis sélectionné{heldDel.length > 1 ? 's' : ''} · démarrez depuis Courses
                 </Text>
-              ) : !minePick.length && !mineDel.length && readyToTake.length ? (
-                <Text style={styles.emptySub}>Colis prêt — prenez la livraison pour partir.</Text>
-              ) : null}
-              {filePick > 0 || readyToTake.length ? (
-                <View style={styles.stats}>
-                  <View style={styles.stat}>
-                    <Text style={styles.statN}>{filePick}</Text>
-                    <Text style={styles.statL}>file magasin</Text>
-                  </View>
-                  <View style={styles.stat}>
-                    <Text style={[styles.statN, { color: colors.coral }]}>{readyToTake.length}</Text>
-                    <Text style={styles.statL}>colis prêts</Text>
-                  </View>
-                </View>
               ) : null}
               <PillButton label="VOIR LA FILE · COURSES" onPress={goCourses} variant="ghost" />
             </>
-          )}
+          ) : null}
         </ScrollView>
       </Animated.View>
     </View>
@@ -335,9 +431,11 @@ const styles = StyleSheet.create({
     paddingVertical: 10,
     ...shadow.card,
   },
-  statusOff: { backgroundColor: '#6b7280' },
+  statusOff: { backgroundColor: '#1f2937' },
   dot: { width: 8, height: 8, borderRadius: 4, backgroundColor: '#fff' },
+  dotOff: { backgroundColor: '#fbbf24' },
   statusTxt: { ...displayFont('800'), fontSize: 12, color: colors.onAccent },
+  statusTxtOff: { color: '#fde68a' },
   etaCard: {
     position: 'absolute',
     left: 16,
@@ -384,24 +482,25 @@ const styles = StyleSheet.create({
   },
   list: { flex: 1 },
   listInner: { gap: 12, paddingBottom: 16 },
-  kicker: {
-    ...displayFont('800'),
+  heldHint: {
+    ...bodyFont('600'),
     fontSize: 13,
-    letterSpacing: 0.6,
-    textTransform: 'uppercase',
     color: colors.muted,
+    textAlign: 'center',
+    paddingVertical: 4,
   },
-  stats: { flexDirection: 'row', gap: 10 },
-  stat: {
-    flex: 1,
+  suggest: {
     backgroundColor: colors.bg,
-    borderRadius: 16,
-    paddingVertical: 12,
-    alignItems: 'center',
+    borderRadius: radius.card,
+    padding: 16,
+    gap: 6,
+    borderWidth: 1.5,
+    borderColor: '#fbbf24',
   },
-  statN: { ...displayFont('900'), fontSize: 22, color: colors.teal },
-  statL: { ...bodyFont('600'), fontSize: 12, color: colors.muted, marginTop: 2 },
-  empty: { alignItems: 'center', paddingVertical: 24, gap: 8 },
-  emptyTitle: { ...displayFont('800'), fontSize: 16 },
-  emptySub: { ...bodyFont('400'), fontSize: 14, color: colors.muted, textAlign: 'center' },
+  suggestTop: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 8, flexWrap: 'wrap' },
+  suggestKicker: { ...displayFont('800'), fontSize: 11, letterSpacing: 0.6, color: '#b45309' },
+  suggestTag: { backgroundColor: colors.teal, borderRadius: 999, paddingHorizontal: 10, paddingVertical: 4 },
+  suggestTagTxt: { ...displayFont('800'), fontSize: 11, color: colors.onAccent },
+  suggestName: { ...displayFont('800'), fontSize: 18, color: colors.text },
+  suggestMeta: { ...bodyFont('600'), fontSize: 13, color: colors.muted },
 });

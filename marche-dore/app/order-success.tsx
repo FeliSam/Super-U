@@ -1,5 +1,6 @@
-import { Screen, Page } from '@/components/ui';
+import { HandoffCodeCard } from '@/components/HandoffCodeCard';
 import { MotionView, PressScale } from '@/components/motion';
+import { Page, Screen } from '@/components/ui';
 import { displayFont, type AppColors } from '@/constants/theme';
 import { useColors } from '@/context/ThemeContext';
 import { formatOrderId, useOrders } from '@/context/OrdersContext';
@@ -10,7 +11,7 @@ import { useMemo, useEffect, useRef, useState } from 'react';
 import { Animated, StyleSheet, Text, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
-const REDIRECT_MS = 3000;
+const REDIRECT_MS = 8000;
 
 export default function OrderSuccessScreen() {
   const colors = useColors();
@@ -20,7 +21,7 @@ export default function OrderSuccessScreen() {
   const { id } = useLocalSearchParams<{ id?: string }>();
   const { getOrder, activeOrder } = useOrders();
   const order = (id ? getOrder(id) : null) ?? activeOrder;
-  const [remaining, setRemaining] = useState(3);
+  const [remaining, setRemaining] = useState(8);
   const progress = useRef(new Animated.Value(0)).current;
   const checkScale = useRef(new Animated.Value(0.4)).current;
   const redirected = useRef(false);
@@ -84,7 +85,7 @@ export default function OrderSuccessScreen() {
 
           <MotionView preset="up" delay={180}>
             <Text style={styles.message}>
-              Votre commande a bien été validée. Elle vous sera livrée dans le délai indiqué :
+              Votre commande est chez le magasin. Conservez le code à 4 chiffres : vous devrez le donner au livreur avant de récupérer le colis.
             </Text>
             <Text style={styles.slot}>{slotLabel}</Text>
           </MotionView>
@@ -95,18 +96,21 @@ export default function OrderSuccessScreen() {
                 <Text style={styles.metaId}>{formatOrderId(order.id)}</Text>
                 <Text style={styles.metaTotal}>{formatFcfa(order.total)}</Text>
               </View>
+              <View style={{ marginTop: 14, width: '100%', maxWidth: 320 }}>
+                <HandoffCodeCard code={order.handoffCode} />
+              </View>
             </MotionView>
           ) : null}
 
           <MotionView preset="fade" delay={320} style={styles.redirectBlock}>
             <Text style={styles.redirect}>
-              Redirection vers le suivi{remaining > 0 ? ` dans ${remaining} s` : '…'}
+              Ouverture du suivi de préparation{remaining > 0 ? ` dans ${remaining} s` : '…'}
             </Text>
             <View style={styles.track}>
               <Animated.View style={[styles.fill, { width: barWidth }]} />
             </View>
             <PressScale style={styles.skipBtn} onPress={goTracking} scaleTo={0.97}>
-              <Text style={styles.skipText}>Voir le suivi maintenant</Text>
+              <Text style={styles.skipText}>Suivre la préparation</Text>
               <Feather name="arrow-right" size={15} color={colors.gold} />
             </PressScale>
           </MotionView>

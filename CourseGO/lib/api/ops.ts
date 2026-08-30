@@ -1,5 +1,19 @@
 import { apiFetch } from '@/lib/api/http';
 
+export type StaffProfile = {
+  vehiclePlate: string;
+  ownsVehicle: boolean;
+  needsKit: boolean;
+  idNumber: string;
+  hasLicense: boolean;
+  licenseNumber: string;
+  residenceLine: string;
+  residenceCity: string;
+  hasInsurance: boolean;
+  insuranceRef: string;
+  storeIds: string[];
+};
+
 export type Staff = {
   id: string;
   email: string;
@@ -12,12 +26,16 @@ export type Staff = {
   storeId: string | null;
   vehicle: string | null;
   photoUrl?: string | null;
+  ratingAvg?: number;
+  ratingCount?: number;
+  profile?: StaffProfile | null;
 };
 
 export type PickJob = {
   id: string;
   order_id: string;
   store_id: string | null;
+  store_name?: string | null;
   pick_status: string;
   picker_id: string | null;
   item_count: number;
@@ -54,6 +72,9 @@ export type DeliveryJob = {
   pick_status: string | null;
   picker_id: string | null;
   packed_at: string | null;
+  picked_up_at?: string | null;
+  en_route_at?: string | null;
+  comms_thread_id?: string | null;
   same_handler: boolean;
   comment?: string | null;
   customer_first?: string | null;
@@ -73,11 +94,22 @@ export type OrderLine = {
   image_url?: string | null;
 };
 
+export async function opsRegister(body: Record<string, unknown>) {
+  return apiFetch<{ ok: true; token: string; staff: Staff }>('/ops/register', {
+    method: 'POST',
+    body: JSON.stringify(body),
+  });
+}
+
 export async function opsLogin(identifier: string, password: string) {
   return apiFetch<{ ok: true; token: string; staff: Staff }>('/ops/login', {
     method: 'POST',
     body: JSON.stringify({ identifier, email: identifier, password }),
   });
+}
+
+export async function opsMe() {
+  return apiFetch<{ ok: true; staff: Staff }>('/ops/me');
 }
 
 export async function patchStaffPhoto(photo: string) {
@@ -87,12 +119,48 @@ export async function patchStaffPhoto(photo: string) {
   });
 }
 
+export async function patchStaffStores(storeIds: string[]) {
+  return apiFetch<{ ok: true; staff: Staff }>('/ops/me', {
+    method: 'PATCH',
+    body: JSON.stringify({ storeIds }),
+  });
+}
+
+export type MapStore = {
+  id: string;
+  name: string;
+  format?: string | null;
+  city?: string | null;
+  cityLabel?: string | null;
+  address?: string | null;
+  coordinate: [number, number] | null;
+  affiliated: boolean;
+  parcels: number;
+};
+
+export async function fetchMapStores() {
+  return apiFetch<{ ok: true; stores: MapStore[] }>('/ops/map-stores');
+}
+
+export async function fetchCatalogStores() {
+  return apiFetch<{ ok: true; stores: Array<Record<string, unknown> & { id: string; name?: string; coordinate?: [number, number] }> }>(
+    '/stores',
+  );
+}
+
 export async function fetchPickJobs() {
   return apiFetch<{ ok: true; jobs: PickJob[] }>('/ops/pick-jobs');
 }
 
+export type TourHop = {
+  lng: number;
+  lat: number;
+  storeId: string | null;
+  label: string;
+};
+
 export async function fetchDeliveries() {
-  return apiFetch<{ ok: true; deliveries: DeliveryJob[] }>('/ops/deliveries');
+  return apiFetch<{ ok: true; deliveries: DeliveryJob[]; tourHop?: TourHop | null }>('/ops/deliveries');
 }
 
 export async function claimPick(id: string) {
@@ -116,7 +184,7 @@ export async function patchPickLines(
 }
 
 export async function packPick(id: string) {
-  return apiFetch<{ ok: true; orderId?: string; payout?: number }>(
+  return apiFetch<{ ok: true; orderId?: string; payout?: number; addedToTour?: boolean }>(
     `/ops/pick-jobs/${encodeURIComponent(id)}/pack`,
     { method: 'POST' },
   );
@@ -129,14 +197,49 @@ export async function claimDelivery(id: string) {
   );
 }
 
+export async function releaseDelivery(id: string) {
+  return apiFetch<{ ok: true; orderId: string }>(`/ops/deliveries/${encodeURIComponent(id)}/release`, {
+    method: 'POST',
+  });
+}
+
+export async function startDeliveryRun() {
+  return apiFetch<{ ok: true; deliveryId: string; count: number }>('/ops/deliveries/start-run', {
+    method: 'POST',
+  });
+}
+
+export async function releasePick(id: string) {
+  return apiFetch<{ ok: true; orderId: string }>(`/ops/pick-jobs/${encodeURIComponent(id)}/release`, {
+    method: 'POST',
+  });
+}
+
 export async function setDeliveryStatus(
   id: string,
   status: string,
-  extra?: { reason?: string; proofUrl?: string; customerRating?: number; customerComment?: string },
+  extra?: {
+    reason?: string;
+    reasonCode?: string;
+    proofUrl?: string;
+    customerRating?: number;
+    customerComment?: string;
+    handoffCode?: string;
+  },
 ) {
-  return apiFetch<{ ok: true; payout?: number }>(`/ops/deliveries/${encodeURIComponent(id)}/status`, {
+  return apiFetch<{ ok: true; payout?: number; nextDeliveryId?: string | null }>(`/ops/deliveries/${encodeURIComponent(id)}/status`, {
     method: 'POST',
     body: JSON.stringify({ status, ...extra }),
+  });
+}
+
+export async function rateCustomer(
+  id: string,
+  extra: { rating: number; comment?: string },
+) {
+  return apiFetch<{ ok: true }>(`/ops/deliveries/${encodeURIComponent(id)}/rate-customer`, {
+    method: 'POST',
+    body: JSON.stringify(extra),
   });
 }
 
@@ -149,10 +252,29 @@ export type OpsHistoryItem = {
   payout: number;
   total: number;
   address_label: string | null;
+  failed_reason?: string | null;
+  failed_reason_code?: string | null;
+  client_action?: string | null;
 };
 
 export async function fetchHistory() {
   return apiFetch<{ ok: true; items: OpsHistoryItem[] }>('/ops/history');
+}
+
+export type OpsIncidentItem = {
+  id: string;
+  order_id: string;
+  reason_code: string;
+  reason_text: string;
+  created_at: string;
+  address_label: string | null;
+  client_action: string | null;
+  client_note: string | null;
+  client_action_at: string | null;
+};
+
+export async function fetchIncidents() {
+  return apiFetch<{ ok: true; items: OpsIncidentItem[] }>('/ops/incidents');
 }
 
 export async function fetchEarnings() {
@@ -164,6 +286,22 @@ export async function fetchEarnings() {
     deliveriesToday: number;
     picksToday: number;
     cashToday: number;
+    pickToday: number;
+    deliverToday: number;
+    pickWeek: number;
+    deliverWeek: number;
+    deliveriesWeek: number;
+    picksWeek: number;
+    avgDeliveryPayout: number;
+    jobsAll: number;
+    failedAll: number;
+    successRate: number | null;
+    avgMinutes: number;
+    ratingAvg: number;
+    ratingCount: number;
+    tipToday: number;
+    tipAll: number;
+    weekDays: { date: string; amount: number }[];
   }>('/ops/earnings');
 }
 
@@ -176,6 +314,7 @@ export type StaffNotification = {
   order_id: string | null;
   created_at: string;
   read_at: string | null;
+  live_hint?: string | null;
 };
 
 export async function fetchNotifications() {

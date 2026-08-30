@@ -20,6 +20,7 @@ function shouldProxy(url) {
     url.startsWith('/ops') ||
     url.startsWith('/comms') ||
     url.startsWith('/catalog') ||
+    url.startsWith('/stores') ||
     url.startsWith('/health')
   );
 }

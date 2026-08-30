@@ -1,7 +1,7 @@
 import { AppImage } from '@/components/AppImage';
-import { CategoryTile, IconCircle, ProductCard, PromoBanner, Screen, SearchField, Page, SmartNavbar, TabHero } from '@/components/ui';
+import { CartTotalFab, CategoryTile, IconCircle, ProductCard, PromoBanner, Screen, SearchField, Page } from '@/components/ui';
 import { MotionView, PressScale } from '@/components/motion';
-import { displayFont, heroChrome, tabBarClearance, type AppColors } from '@/constants/theme';
+import { bodyFont, displayFont, heroChrome, tabBarClearance, type AppColors } from '@/constants/theme';
 import { useColors, useTheme } from '@/context/ThemeContext';
 import { useUiState } from '@/context/UiStateContext';
 import {
@@ -17,6 +17,7 @@ import {
   trendingSearches } from '@/data/catalog';
 import { openSearchScreen } from '@/lib/searchNav';
 import { Feather } from '@expo/vector-icons';
+import { LinearGradient } from 'expo-linear-gradient';
 import { router } from 'expo-router';
 import { memo, useEffect, useMemo, useState } from 'react';
 import {
@@ -33,10 +34,16 @@ import Animated, {
   useAnimatedScrollHandler,
   useAnimatedStyle,
   useSharedValue } from 'react-native-reanimated';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 const PROMO_WIDTH = Dimensions.get('window').width - 40;
+const EXPLORE_PRODUCT_ROW = {
+  flexDirection: 'row' as const,
+  columnGap: 3.6,
+  gap: 3.6,
+  paddingRight: 4,
+};
 const explorePromo = homePromoBanners[1];
-const HERO_OVERLAP = 36;
 const TREND_LIMIT = 5;
 /** Same height on every rayon tile; bento is width (`flex`) only. */
 const RAYON_TILE_H = 140;
@@ -46,7 +53,7 @@ function ExploreScreen() {
   const colors = useColors();
   const chrome = useMemo(() => heroChrome(scheme), [scheme]);
   const styles = useMemo(() => createStyles(colors), [colors]);
-  const [heroHeight, setHeroHeight] = useState(220);
+  const insets = useSafeAreaInsets();
   const [trendTick, setTrendTick] = useState(() => Math.floor(Date.now() / 12_000));
   const scrollY = useSharedValue(0);
 
@@ -109,14 +116,38 @@ function ExploreScreen() {
   return (
     <Screen>
       <Page style={styles.flex}>
-        <View
-          style={styles.heroBackdrop}
-          onLayout={(e) => setHeroHeight(e.nativeEvent.layout.height)}
-          pointerEvents="none">
-          <TabHero
-            title="Explorer"
-            subtitle="Parcourez nos rayons et découvrez les produits du marché."
-            right={<View style={styles.navActionsSlot} />}>
+        <View style={styles.hero} pointerEvents="box-none">
+          <LinearGradient colors={chrome.gradient} style={StyleSheet.absoluteFill} pointerEvents="none" />
+          <View style={[styles.heroBar, { paddingTop: Math.max(8, insets.top + 6) }]}>
+            <View style={styles.heroTitleCol}>
+              <Text style={[styles.heroTitle, { color: chrome.ink }]} numberOfLines={1}>
+                Explorer
+              </Text>
+            </View>
+            <View style={styles.actions}>
+              <IconCircle
+                name="search"
+                variant="hero"
+                accessibilityLabel="Rechercher"
+                onPress={() => openSearch()}
+              />
+              <IconCircle
+                name="tag"
+                variant="hero"
+                accessibilityLabel="Promotions"
+                onPress={openPromos}
+              />
+            </View>
+          </View>
+        </View>
+
+        <Animated.ScrollView
+          style={styles.scrollLayer}
+          contentContainerStyle={styles.scrollContent}
+          showsVerticalScrollIndicator={false}
+          scrollEventThrottle={16}
+          onScroll={onScroll}>
+          <Animated.View style={[styles.bodySheet, sheetAnimStyle]}>
             <View
               style={[
                 styles.heroStats,
@@ -124,57 +155,24 @@ function ExploreScreen() {
               ]}>
               <View style={styles.heroStat}>
                 <Feather name="grid" size={15} color={colors.gold} />
-                <Text style={[styles.heroStatText, { color: chrome.ink }]}>
+                <Text style={[styles.heroStatText, { color: colors.text }]}>
                   {exploreCategories.length} rayons
                 </Text>
               </View>
               <View style={[styles.heroDivider, { backgroundColor: chrome.divider }]} />
               <View style={styles.heroStat}>
                 <Feather name="shopping-bag" size={15} color={colors.terracotta} />
-                <Text style={[styles.heroStatText, { color: chrome.ink }]}>
+                <Text style={[styles.heroStatText, { color: colors.text }]}>
                   {products.length}+ produits
                 </Text>
               </View>
               <View style={[styles.heroDivider, { backgroundColor: chrome.divider }]} />
               <View style={styles.heroStat}>
                 <Feather name="truck" size={15} color={colors.green} />
-                <Text style={[styles.heroStatText, { color: chrome.ink }]}>Livraison</Text>
+                <Text style={[styles.heroStatText, { color: colors.text }]}>Livraison</Text>
               </View>
             </View>
-          </TabHero>
-        </View>
 
-        <View style={styles.navbarFloat} pointerEvents="box-none">
-          <SmartNavbar
-            right={
-              <View style={styles.actions}>
-                <IconCircle
-                  name="search"
-                  variant="hero"
-                  accessibilityLabel="Rechercher"
-                  onPress={() => openSearch()}
-                />
-                <IconCircle
-                  name="tag"
-                  variant="hero"
-                  accessibilityLabel="Promotions"
-                  onPress={openPromos}
-                />
-              </View>
-            }
-          />
-        </View>
-
-        <Animated.ScrollView
-          style={styles.scrollLayer}
-          contentContainerStyle={[
-            styles.scrollContent,
-            { paddingTop: Math.max(0, heroHeight - HERO_OVERLAP) },
-          ]}
-          showsVerticalScrollIndicator={false}
-          scrollEventThrottle={16}
-          onScroll={onScroll}>
-          <Animated.View style={[styles.bodySheet, sheetAnimStyle]}>
             <MotionView delay={40} preset="up">
               <SearchField onPress={() => openSearch()} />
             </MotionView>
@@ -229,13 +227,12 @@ function ExploreScreen() {
                   <Text style={styles.sectionLink}>Voir tout</Text>
                 </Pressable>
               </View>
-              <ScrollView
-                horizontal
-                showsHorizontalScrollIndicator={false}
-                contentContainerStyle={styles.productRow}>
-                {trending.map((product) => (
-                  <ProductCard key={product.id} product={product} width={148} imageHeight={130} compact />
-                ))}
+              <ScrollView horizontal showsHorizontalScrollIndicator={false}>
+                <View style={EXPLORE_PRODUCT_ROW}>
+                  {trending.map((product) => (
+                    <ProductCard key={product.id} product={product} width={148} imageHeight={130} compact />
+                  ))}
+                </View>
               </ScrollView>
             </MotionView>
 
@@ -244,13 +241,12 @@ function ExploreScreen() {
                 <Text style={styles.sectionTitle}>Populaires</Text>
                 <Text style={styles.sectionMeta}>Les plus commandés</Text>
               </View>
-              <ScrollView
-                horizontal
-                showsHorizontalScrollIndicator={false}
-                contentContainerStyle={styles.productRow}>
-                {popular.map((product) => (
-                  <ProductCard key={product.id} product={product} width={148} imageHeight={130} compact />
-                ))}
+              <ScrollView horizontal showsHorizontalScrollIndicator={false}>
+                <View style={EXPLORE_PRODUCT_ROW}>
+                  {popular.map((product) => (
+                    <ProductCard key={product.id} product={product} width={148} imageHeight={130} compact />
+                  ))}
+                </View>
               </ScrollView>
             </MotionView>
 
@@ -315,6 +311,7 @@ function ExploreScreen() {
             </MotionView>
           </Animated.View>
         </Animated.ScrollView>
+        <CartTotalFab aboveTabs />
       </Page>
     </Screen>
   );
@@ -325,35 +322,34 @@ export default memo(ExploreScreen);
 function createStyles(colors: AppColors) {
   return StyleSheet.create({
     flex: { flex: 1 },
-    heroBackdrop: {
-      position: 'absolute',
-      top: 0,
-      left: 0,
-      right: 0,
-      zIndex: 0 },
-    navbarFloat: {
-      position: 'absolute',
-      top: 0,
-      left: 0,
-      right: 0,
+    hero: {
       zIndex: 10,
-      paddingHorizontal: 20,
-      paddingTop: 8 },
-    navActionsSlot: {
-      width: 92,
-      height: 42 },
+      overflow: 'hidden' },
+    heroBar: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'space-between',
+      paddingHorizontal: 16,
+      paddingBottom: 10,
+      gap: 12 },
+    heroTitleCol: { flex: 1, minWidth: 0 },
+    heroTitle: {
+      ...bodyFont('800'),
+      fontSize: 28,
+      lineHeight: 34,
+    },
     scrollLayer: {
       flex: 1,
       zIndex: 1 },
     scrollContent: { paddingBottom: tabBarClearance },
-    actions: { flexDirection: 'row', alignItems: 'center', gap: 8 },
+    actions: { flexDirection: 'row', alignItems: 'center', gap: 8, flexShrink: 0 },
     heroStats: {
       flexDirection: 'row',
       alignItems: 'center',
       borderRadius: 16,
       paddingVertical: 12,
       paddingHorizontal: 14,
-      marginTop: 8 },
+      borderWidth: StyleSheet.hairlineWidth },
     heroStat: {
       flex: 1,
       flexDirection: 'row',
@@ -421,7 +417,6 @@ function createStyles(colors: AppColors) {
     quickImage: { width: '100%', height: '100%' },
     quickLabel: { color: colors.text, fontSize: 13, fontWeight: '700', textAlign: 'center' },
     quickCount: { color: colors.placeholder, fontSize: 10, fontWeight: '600' },
-    productRow: { gap: 12, paddingRight: 4 },
     suggestCard: {
       backgroundColor: colors.white,
       borderRadius: 18,

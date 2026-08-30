@@ -5,7 +5,7 @@ import {
   homePromoBanners,
   promoProducts } from '@/data/catalog';
 import { formatFcfa } from '@/lib/format';
-import { navigateTab, tabPaths } from '@/lib/navigation';
+import { goBack, navigateTab, tabPaths } from '@/lib/navigation';
 import { Feather } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
 import { router } from 'expo-router';
@@ -29,7 +29,7 @@ export default function PromotionsScreen() {
     <Screen>
       <Page style={styles.flex}>
         <View style={styles.header}>
-          <IconCircle name="chevron-left" onPress={() => router.back()} />
+          <IconCircle name="chevron-left" onPress={() => goBack()} />
           <Text style={styles.title}>Promotions</Text>
           <View style={styles.headerSpacer} />
         </View>

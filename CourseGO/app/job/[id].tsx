@@ -10,7 +10,8 @@ import { claimDelivery, claimPick, fetchOrder, packPick, patchPickLines, startPi
 import { deliveryJobId, PICK_STEPS } from '@/lib/opsModel';
 import { productBarcode } from '@/lib/productMedia';
 import { formatFcfa, shortOrderId } from '@/lib/format';
-import { router, useLocalSearchParams } from 'expo-router';
+import { showToast } from '@/lib/toastBus';
+import { router, useFocusEffect, useLocalSearchParams } from 'expo-router';
 import { useCallback, useEffect, useState } from 'react';
 import { Alert, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
 
@@ -30,12 +31,14 @@ export default function JobScreen() {
   const [busy, setBusy] = useState(false);
   const [scanLine, setScanLine] = useState<OrderLine | null>(null);
   const [packedDone, setPackedDone] = useState(false);
+  const [live, setLive] = useState<Record<string, unknown> | null>(null);
 
   const load = useCallback(async () => {
     if (!orderId) return;
     try {
       const res = await fetchOrder(orderId);
       setLines(res.lines);
+      setLive(res.order ?? null);
     } catch {
       setLines([]);
     }
@@ -45,12 +48,42 @@ export default function JobScreen() {
     void load();
   }, [load]);
 
-  const packed = packedDone || job?.pick_status === 'packed' || delivery?.pick_status === 'packed';
-  const queued = !packed && (!job || job.pick_status === 'queued');
-  const collected = lines.filter(lineDone).length;
+  useFocusEffect(
+    useCallback(() => {
+      void load();
+    }, [load]),
+  );
+
+  const pickStatus = String(job?.pick_status ?? live?.pick_status ?? '');
+  const pickerId = (job?.picker_id ?? live?.picker_id) as string | null | undefined;
+  const delStatus = String(delivery?.delivery_status ?? live?.delivery_status ?? '');
+  const courierId = (delivery?.courier_id ?? live?.courier_id) as string | null | undefined;
+  const packed =
+    packedDone ||
+    pickStatus === 'packed' ||
+    delivery?.pick_status === 'packed' ||
+    delStatus === 'delivered' ||
+    String(live?.status ?? '') === 'delivered';
+  const mine = Boolean(staff?.id && pickerId === staff.id);
+  const takenByOther = Boolean(pickerId && staff?.id && pickerId !== staff.id && pickStatus !== 'packed');
+  const closed =
+    delStatus === 'delivered' ||
+    delStatus === 'failed' ||
+    delStatus === 'cancelled' ||
+    pickStatus === 'cancelled' ||
+    String(live?.status ?? '') === 'delivered' ||
+    String(live?.status ?? '') === 'cancelled';
+  const loaded = Boolean(job) || live !== null;
+  const queued =
+    loaded && !packed && !takenByOther && !closed && (pickStatus === 'queued' || (!pickStatus && !pickerId));
+  const unitsNeed = lines.reduce((s, l) => s + Math.max(1, l.qty), 0);
+  const unitsGot = lines.reduce((s, l) => {
+    if (l.unavailable) return s + Math.max(1, l.qty);
+    return s + Math.min(l.picked_qty ?? 0, l.qty);
+  }, 0);
   const allScanned = lines.length > 0 && lines.every(lineDone);
   const nextScan = lines.find((l) => !lineDone(l)) ?? null;
-  const pct = lines.length ? Math.round((collected / lines.length) * 100) : 0;
+  const pct = unitsNeed ? Math.round((unitsGot / unitsNeed) * 100) : 0;
 
   const saveLine = async (line: OrderLine, patch: Partial<OrderLine>) => {
     const next = { ...line, ...patch };
@@ -106,14 +139,19 @@ export default function JobScreen() {
   };
 
   const onScanned = async (line: OrderLine) => {
-    await saveLine(line, { picked_qty: line.qty, unavailable: false });
+    const nextQty = Math.min(line.qty, (line.picked_qty ?? 0) + 1);
+    await saveLine(line, { picked_qty: nextQty, unavailable: false });
+    if (nextQty < line.qty) {
+      setScanLine({ ...line, picked_qty: nextQty, unavailable: false });
+      return;
+    }
     const remaining = lines.find((l) => l.product_id !== line.product_id && !lineDone(l));
     setScanLine(remaining ?? null);
   };
 
   const onPack = async () => {
     if (!allScanned) {
-      Alert.alert('Ramassage', 'Scannez chaque produit avant de valider.');
+      Alert.alert('Ramassage', 'Scannez chaque unité avant de valider.');
       return;
     }
     setBusy(true);
@@ -122,9 +160,14 @@ export default function JobScreen() {
       setPackedDone(true);
       await refresh();
       const bonus = Number(packed.payout ?? 0);
-      if (bonus > 0) {
-        Alert.alert('Ramassage terminé', `+${formatFcfa(bonus)} ajoutés à vos revenus.`);
-      }
+      const extra = packed.addedToTour
+        ? 'Colis ajouté à votre tournée. Vous pouvez ramasser un autre colis dans ce Super U s’il vous reste de la place (max 3).'
+        : 'Ramassage terminé. Ajoutez le colis à votre tournée pour le retirer des autres livreurs.';
+      showToast({
+        title: bonus > 0 ? `Ramassage · +${formatFcfa(bonus)}` : 'Ramassage terminé',
+        body: extra,
+        tone: 'success',
+      });
     } catch (e) {
       Alert.alert('Rassemblement', e instanceof ApiError ? e.message : String(e));
     } finally {
@@ -138,7 +181,7 @@ export default function JobScreen() {
       const delId = delivery?.id ?? deliveryJobId(orderId);
       await claimDelivery(delId);
       await refresh();
-      router.replace(`/run/${encodeURIComponent(delId)}`);
+      router.replace('/(tabs)/missions');
     } catch (e) {
       Alert.alert('Livraison', e instanceof ApiError ? e.message : (e as Error).message);
       await refresh();
@@ -159,12 +202,12 @@ export default function JobScreen() {
         </View>
       </View>
       <View style={styles.stepWrap}>
-        <OpsStepper steps={PICK_STEPS} status={packed ? 'packed' : (job?.pick_status ?? 'queued')} />
+        <OpsStepper steps={PICK_STEPS} status={packed ? 'packed' : (pickStatus || 'queued')} />
       </View>
       <View style={styles.progress}>
         <View style={styles.progressRow}>
           <Text style={styles.progressLabel}>
-            {collected} / {lines.length} PRODUITS SCANNÉS
+            {unitsGot} / {unitsNeed} UNITÉS SCANNÉES
           </Text>
           <Text style={styles.pct}>{pct}%</Text>
         </View>
@@ -182,7 +225,7 @@ export default function JobScreen() {
               <View style={{ flex: 1 }}>
                 <Text style={styles.prod}>{line.name}</Text>
                 <Text style={styles.qty}>
-                  {line.qty} × {line.unit ?? 'u'}
+                  {Math.min(line.picked_qty ?? 0, line.qty)} / {line.qty} × {line.unit ?? 'u'}
                 </Text>
                 <Text style={styles.code}>{line.barcode || productBarcode(line.product_id)}</Text>
                 {line.unavailable ? (
@@ -198,12 +241,23 @@ export default function JobScreen() {
               <View style={{ alignItems: 'flex-end', gap: 6 }}>
                 <View style={[styles.badge, done && styles.badgeDone, active && styles.badgeScan]}>
                   <Text style={[styles.badgeTxt, done && { color: colors.teal }, active && { color: colors.onAccent }]}>
-                    {done ? (line.unavailable ? 'RUPTURE' : '✓ SCANNÉ') : queued ? 'EN ATTENTE' : 'À SCANNER'}
+                    {done
+                      ? line.unavailable
+                        ? 'RUPTURE'
+                        : '✓ SCANNÉ'
+                      : queued
+                        ? 'EN ATTENTE'
+                        : `${line.picked_qty ?? 0}/${line.qty}`}
                   </Text>
                 </View>
                 {queued ? null : (
-                  <Pressable onPress={() => void saveLine(line, { unavailable: !line.unavailable, picked_qty: 0 })}>
-                    <Text style={styles.rupture}>{line.unavailable ? 'Remettre' : 'Rupture'}</Text>
+                  <Pressable
+                    onPress={() =>
+                      router.push(
+                        `/missing?pickId=${encodeURIComponent(pickId)}&productId=${encodeURIComponent(line.product_id)}&name=${encodeURIComponent(line.name)}`,
+                      )
+                    }>
+                    <Text style={styles.rupture}>{line.unavailable ? 'Corriger' : 'Introuvable'}</Text>
                   </Pressable>
                 )}
               </View>
@@ -212,23 +266,33 @@ export default function JobScreen() {
         })}
       </ScrollView>
       <View style={styles.bottom}>
-        {queued ? (
+        {closed ? (
+          <PillButton label="VOIR L’HISTORIQUE" onPress={() => router.replace('/(tabs)/history')} />
+        ) : takenByOther ? (
+          <PillButton label="DÉJÀ PRISE — RETOUR" onPress={() => router.replace('/(tabs)/missions')} />
+        ) : queued ? (
           <PillButton label={busy ? '…' : 'PRENDRE'} onPress={() => void onTake()} disabled={busy || !staff?.canPick} />
         ) : packed ? (
-          delivery?.courier_id ? (
-            <PillButton
-              label="SUIVRE LA LIVRAISON"
-              onPress={() => router.replace(`/run/${encodeURIComponent(delivery.id)}`)}
-            />
+          delivery?.courier_id || courierId ? (
+            courierId && staff?.id && courierId !== staff.id ? (
+              <PillButton label="COURSE DÉJÀ PRISE" onPress={() => router.replace('/(tabs)/missions')} />
+            ) : (
+              <PillButton
+                label="SUIVRE LA LIVRAISON"
+                onPress={() => router.replace(`/run/${encodeURIComponent(delivery?.id ?? `del-${orderId}`)}`)}
+              />
+            )
           ) : staff?.canDeliver ? (
             <PillButton
-              label={busy ? '…' : 'LIVRER MAINTENANT'}
+              label={busy ? '…' : 'AJOUTER À LA TOURNÉE'}
               onPress={() => void onTakeDelivery()}
               disabled={busy}
             />
           ) : (
             <PillButton label="RETOUR À L’ACCUEIL" onPress={() => router.replace('/(tabs)/missions')} />
           )
+        ) : !mine && pickerId ? (
+          <PillButton label="DÉJÀ PRISE — RETOUR" onPress={() => router.replace('/(tabs)/missions')} />
         ) : allScanned ? (
           <PillButton
             label={busy ? '…' : 'TERMINER LE RAMASSAGE'}
@@ -248,6 +312,12 @@ export default function JobScreen() {
         visible={Boolean(scanLine)}
         onClose={() => setScanLine(null)}
         onScanned={(line) => void onScanned(line)}
+        onMissing={(line) => {
+          setScanLine(null);
+          router.push(
+            `/missing?pickId=${encodeURIComponent(pickId)}&productId=${encodeURIComponent(line.product_id)}&name=${encodeURIComponent(line.name)}`,
+          );
+        }}
       />
     </Screen>
   );

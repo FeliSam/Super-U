@@ -1,7 +1,7 @@
 import { AppImage } from '@/components/AppImage';
-import { IconCircle, Page, ProductCard, Screen, SmartNavbar, TabHero } from '@/components/ui';
+import { IconCircle, Page, ProductCard, Screen } from '@/components/ui';
 import { MotionView, PressScale } from '@/components/motion';
-import { displayFont, floatingAboveTabBar, heroChrome, tabBarClearance, type AppColors } from '@/constants/theme';
+import { bodyFont, displayFont, floatingAboveTabBar, heroChrome, tabBarClearance, type AppColors } from '@/constants/theme';
 import { useAddresses } from '@/context/AddressesContext';
 import { useColors, useTheme } from '@/context/ThemeContext';
 import { CartLine, lineListTotal, lineProduct, lineTotal, useCart } from '@/context/CartContext';
@@ -24,17 +24,12 @@ import {
   ScrollView,
   StyleSheet,
   Text,
-  TextInput,
   View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 const DELETE_WIDTH = 88;
 const OPEN_X = -DELETE_WIDTH;
 const OVERSWIPE = 28;
-const FREE_DELIVERY_THRESHOLD = 15000;
-const AUTO_DISCOUNT_THRESHOLD = 10000;
-const SUGGESTED_PROMOS = ['FRAIS20', 'MARCHE10', 'SUPERU'] as const;
-const HERO_OVERLAP = 28;
 
 function SwipeCartItem({
   line,
@@ -210,7 +205,6 @@ function CartScreen() {
   const chrome = useMemo(() => heroChrome(scheme), [scheme]);
   const styles = useMemo(() => createStyles(colors), [colors]);
   const dockBottom = floatingAboveTabBar(insets.bottom, 12);
-  const [heroHeight, setHeroHeight] = useState(140);
   const { defaultAddress } = useAddresses();
   const { selectedStore } = useStores();
   const {
@@ -222,14 +216,10 @@ function CartScreen() {
     listSubtotal,
     delivery,
     discount,
-    total,
-    applyPromo,
-    clearPromo,
-    promoCode,
-    promoMessage } = useCart();
+    total } = useCart();
   const routeEstimate = useDeliveryEstimate(
     selectedStore.coordinate,
-    defaultAddress.coordinate,
+    defaultAddress?.coordinate ?? null,
   );
   const etaText = routeEstimate.loading
     ? 'Calcul du trajet…'
@@ -238,18 +228,9 @@ function CartScreen() {
       : routeEstimate.approximated
         ? `Approx. ${formatDistanceKm(routeEstimate.distanceMeters)} · ~${formatDurationMin(routeEstimate.durationSeconds)} · ${selectedStore.name}`
         : `${formatDistanceKm(routeEstimate.distanceMeters)} · ~${formatDurationMin(routeEstimate.durationSeconds)} · ${selectedStore.name}`;
-  const [promo, setPromo] = useState('');
   const [summaryOpen, setSummaryOpen] = useState(false);
 
   const savings = Math.max(0, listSubtotal - subtotal);
-  const freeDeliveryLeft = Math.max(0, FREE_DELIVERY_THRESHOLD - subtotal);
-  const autoDiscountLeft = Math.max(0, AUTO_DISCOUNT_THRESHOLD - subtotal);
-  const freeDeliveryProgress = Math.min(1, subtotal / FREE_DELIVERY_THRESHOLD);
-
-  const handleApplyPromo = (code?: string) => {
-    const value = code ?? promo;
-    if (applyPromo(value)) setPromo('');
-  };
 
   const itemLabel = useMemo(() => {
     if (count === 0) return '0 article';
@@ -262,25 +243,15 @@ function CartScreen() {
   return (
     <Screen>
       <Page style={styles.flex}>
-        <View
-          style={styles.heroBackdrop}
-          onLayout={(e) => setHeroHeight(e.nativeEvent.layout.height)}
-          pointerEvents="none">
-          <TabHero
-            title="Panier"
-            subtitle={
-              count > 0
-                ? `${itemLabel} · Total ${formatFcfa(total)}`
-                : 'Ajoutez des produits pour démarrer votre commande.'
-            }
-            navbar={<View style={styles.navbarSpacer} />}
-          />
-        </View>
-
-        <View style={styles.navbarFloat} pointerEvents="box-none">
-          <SmartNavbar
-            right={
-              <View style={styles.navActions}>
+        <View style={styles.hero} pointerEvents="box-none">
+          <LinearGradient colors={chrome.gradient} style={StyleSheet.absoluteFill} pointerEvents="none" />
+          <View style={[styles.heroBar, { paddingTop: Math.max(8, insets.top + 6) }]}>
+            <View style={styles.heroTitleCol}>
+              <Text style={[styles.heroTitle, { color: chrome.ink }]} numberOfLines={1}>
+                Panier
+              </Text>
+            </View>
+            <View style={styles.navActions}>
                 {count > 0 ? (
                   <PressScale
                     style={[
@@ -316,18 +287,14 @@ function CartScreen() {
                   <Text style={[styles.continueText, { color: chrome.ink }]}>Continuer</Text>
                   <Feather name="chevron-right" size={14} color={colors.gold} />
                 </PressScale>
-              </View>
-            }
-          />
+            </View>
+          </View>
         </View>
 
         {lines.length === 0 ? (
           <ScrollView
             style={styles.scrollLayer}
-            contentContainerStyle={[
-              styles.emptyScroll,
-              { paddingTop: Math.max(0, heroHeight - HERO_OVERLAP) },
-            ]}
+            contentContainerStyle={styles.emptyScroll}
             showsVerticalScrollIndicator={false}>
             <View style={styles.bodySheet}>
               <MotionView preset="up" delay={40} style={styles.emptyHeroCard}>
@@ -439,7 +406,6 @@ function CartScreen() {
               contentContainerStyle={[
                 styles.content,
                 {
-                  paddingTop: Math.max(0, heroHeight - HERO_OVERLAP),
                   paddingBottom: dockBottom + 148,
                 },
               ]}
@@ -451,7 +417,9 @@ function CartScreen() {
                     <Feather name="map-pin" size={17} color={colors.gold} />
                   </View>
                   <View style={styles.deliveryText}>
-                    <Text style={styles.deliveryLabel}>Livraison · {defaultAddress.label}</Text>
+                    <Text style={styles.deliveryLabel}>
+                      {defaultAddress ? `Livraison · ${defaultAddress.label}` : 'Choisir une adresse'}
+                    </Text>
                     <Text style={styles.deliveryEta}>{etaText}</Text>
                   </View>
                   <Feather name="chevron-right" size={18} color={colors.placeholder} />
@@ -463,40 +431,6 @@ function CartScreen() {
                     <Text style={styles.savingsText}>
                       Vous économisez {formatFcfa(savings)} sur cette commande
                     </Text>
-                  </View>
-                ) : null}
-
-                {!promoCode && autoDiscountLeft > 0 ? (
-                  <View style={styles.progressCard}>
-                    <View style={styles.progressHead}>
-                      <Feather name="gift" size={14} color={colors.gold} />
-                      <Text style={styles.progressTitle}>
-                        Plus que {formatFcfa(autoDiscountLeft)} pour −{formatFcfa(2000)}
-                      </Text>
-                    </View>
-                    <View style={styles.progressTrack}>
-                      <View
-                        style={[
-                          styles.progressFill,
-                          { width: `${Math.min(1, subtotal / AUTO_DISCOUNT_THRESHOLD) * 100}%` },
-                        ]}
-                      />
-                    </View>
-                  </View>
-                ) : null}
-
-                {freeDeliveryLeft > 0 ? (
-                  <View style={styles.progressCard}>
-                    <View style={styles.progressHead}>
-                      <Feather name="truck" size={14} color={colors.green} />
-                      <Text style={styles.progressTitle}>
-                        Livraison offerte dès {formatFcfa(FREE_DELIVERY_THRESHOLD)}
-                      </Text>
-                    </View>
-                    <View style={styles.progressTrack}>
-                      <View style={[styles.progressFillGreen, { width: `${freeDeliveryProgress * 100}%` }]} />
-                    </View>
-                    <Text style={styles.progressSub}>Encore {formatFcfa(freeDeliveryLeft)}</Text>
                   </View>
                 ) : null}
 
@@ -519,55 +453,6 @@ function CartScreen() {
                 </View>
 
                 <Text style={styles.swipeHint}>Glissez un article vers la gauche pour le retirer</Text>
-
-                <View style={styles.promoCard}>
-                  <View style={styles.promoHead}>
-                    <View style={styles.promoIcon}>
-                      <Feather name="tag" size={16} color={colors.gold} />
-                    </View>
-                    <Text style={styles.promoTitle}>Code promo</Text>
-                  </View>
-                  <View style={styles.promoRow}>
-                    <TextInput
-                      placeholder="Ex. FRAIS20"
-                      placeholderTextColor={colors.placeholder}
-                      value={promoCode ?? promo}
-                      editable={!promoCode}
-                      onChangeText={setPromo}
-                      onSubmitEditing={() => handleApplyPromo()}
-                      returnKeyType="done"
-                      autoCapitalize="characters"
-                      style={styles.promoInput}
-                    />
-                    {promoCode ? (
-                      <Pressable style={styles.promoClear} onPress={clearPromo}>
-                        <Feather name="x" size={15} color={colors.text} />
-                      </Pressable>
-                    ) : (
-                      <Pressable style={styles.promoApply} onPress={() => handleApplyPromo()}>
-                        <Text style={styles.promoApplyText}>Appliquer</Text>
-                      </Pressable>
-                    )}
-                  </View>
-                  {!promoCode ? (
-                    <View style={styles.promoChips}>
-                      {SUGGESTED_PROMOS.map((code) => (
-                        <Pressable key={code} style={styles.promoChip} onPress={() => handleApplyPromo(code)}>
-                          <Text style={styles.promoChipText}>{code}</Text>
-                        </Pressable>
-                      ))}
-                    </View>
-                  ) : null}
-                  {promoMessage ? <Text style={styles.promoError}>{promoMessage}</Text> : null}
-                  {promoCode ? (
-                    <View style={styles.promoOk}>
-                      <Feather name="check-circle" size={14} color={colors.green} />
-                      <Text style={styles.promoOkText}>
-                        {promoCode} appliqué · −{formatFcfa(discount)}
-                      </Text>
-                    </View>
-                  ) : null}
-                </View>
               </View>
             </ScrollView>
 
@@ -638,28 +523,28 @@ export default memo(CartScreen);
 
 function createStyles(colors: AppColors) {
   return StyleSheet.create({
-  flex: { flex: 1 },
-  heroBackdrop: {
-    position: 'absolute',
-    top: 0,
-    left: 0,
-    right: 0,
-    zIndex: 0 },
-  navbarFloat: {
-    position: 'absolute',
-    top: 0,
-    left: 0,
-    right: 0,
-    zIndex: 10,
-    paddingHorizontal: 20,
-    paddingTop: 8 },
-  navbarSpacer: {
-    minHeight: 42,
-    marginBottom: 16 },
-  navActions: {
+    flex: { flex: 1 },
+    hero: {
+      zIndex: 10,
+      overflow: 'hidden' },
+    heroBar: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'space-between',
+      paddingHorizontal: 16,
+      paddingBottom: 10,
+      gap: 12 },
+    heroTitleCol: { flex: 1, minWidth: 0 },
+    heroTitle: {
+      ...bodyFont('800'),
+      fontSize: 28,
+      lineHeight: 34,
+    },
+    navActions: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 8 },
+    gap: 8,
+    flexShrink: 0 },
   scrollLayer: {
     flex: 1,
     zIndex: 1 },
@@ -684,7 +569,7 @@ function createStyles(colors: AppColors) {
     borderTopLeftRadius: 28,
     borderTopRightRadius: 28,
     paddingHorizontal: 20,
-    paddingTop: 18,
+    paddingTop: 10,
     gap: 12,
     minHeight: Dimensions.get('window').height },
   content: {

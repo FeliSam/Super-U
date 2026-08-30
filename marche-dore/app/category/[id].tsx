@@ -1,4 +1,5 @@
 import { AppImage } from '@/components/AppImage';
+import { goBack } from '@/lib/navigation';
 import { EmptyStateHero } from '@/components/EmptyStateHero';
 import { PressScale } from '@/components/motion';
 import {
@@ -34,7 +35,8 @@ import {
   useWindowDimensions,
   View,
 } from 'react-native';
-import { GestureDetector, GestureHandlerRootView } from 'react-native-gesture-handler';
+import { GestureRoot } from '@/components/GestureRoot';
+import { GestureDetector } from 'react-native-gesture-handler';
 import Animated from 'react-native-reanimated';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
@@ -158,7 +160,8 @@ export default function CategoryScreen() {
   const [sortOpen, setSortOpen] = useState(false);
 
   useEffect(() => {
-    if (typeof filter === 'string' && filters.includes(filter)) setActive(filter);
+    if (typeof filter !== 'string' || !filters.includes(filter)) return;
+    setActive((prev) => (prev === filter ? prev : filter));
   }, [filter, filters]);
 
   const baseList = useMemo(() => {
@@ -178,7 +181,7 @@ export default function CategoryScreen() {
   return (
     <Screen>
       <Page style={styles.flex} edgeToEdge>
-        <GestureHandlerRootView style={styles.flex}>
+        <GestureRoot style={styles.flex}>
           <View style={styles.hero} pointerEvents="box-none">
             {cat?.image ? (
               <AppImage source={cat.image} frameStyle={StyleSheet.absoluteFill} contentFit="cover" />
@@ -196,7 +199,7 @@ export default function CategoryScreen() {
                 name="chevron-left"
                 variant="onPhoto"
                 accessibilityLabel="Retour"
-                onPress={() => router.back()}
+                onPress={() => goBack()}
               />
               <IconCircle
                 name="search"
@@ -337,7 +340,7 @@ export default function CategoryScreen() {
 
             <CartTotalFab bottom={fabBottom} />
           </Animated.View>
-        </GestureHandlerRootView>
+        </GestureRoot>
 
         <Modal
           visible={sortOpen}

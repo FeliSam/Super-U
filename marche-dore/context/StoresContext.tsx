@@ -1,5 +1,7 @@
 import { SUPER_U_STORES, type SuperUStore } from '@/data/superU';
-import AsyncStorage from '@react-native-async-storage/async-storage';
+import { apiGetAccountState, apiPatchAccountState, loadAccountJson, saveAccountJson } from '@/lib/accountSync';
+import { getAuthToken } from '@/lib/api/http';
+import { useAuth } from '@/context/AuthContext';
 import React, { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
 
 const STORAGE_KEY = 'marche-dore.preferred-store.v1';
@@ -20,39 +22,47 @@ function resolveStore(id: string | undefined | null): SuperUStore {
 }
 
 export function StoresProvider({ children }: { children: React.ReactNode }) {
+  const { session, ready: authReady } = useAuth();
+  const accountId = session?.accountId ?? null;
   const [selectedStoreId, setSelectedStoreIdState] = useState(DEFAULT_STORE_ID);
   const [ready, setReady] = useState(false);
   const hydrated = useRef(false);
+  const skipSave = useRef(true);
 
   useEffect(() => {
+    if (!authReady) return;
     let active = true;
+    skipSave.current = true;
+    hydrated.current = false;
     (async () => {
-      try {
-        const raw = await AsyncStorage.getItem(STORAGE_KEY);
-        if (raw && active) {
-          const parsed = JSON.parse(raw) as { selectedStoreId?: string };
-          if (typeof parsed.selectedStoreId === 'string' && resolveStore(parsed.selectedStoreId)) {
-            setSelectedStoreIdState(parsed.selectedStoreId);
-          }
+      let next = DEFAULT_STORE_ID;
+      if (accountId) {
+        const local = await loadAccountJson<{ selectedStoreId?: string }>(STORAGE_KEY, accountId);
+        if (typeof local?.selectedStoreId === 'string' && resolveStore(local.selectedStoreId)) {
+          next = local.selectedStoreId;
         }
-      } catch {
-        // ignore
-      } finally {
-        if (active) {
-          hydrated.current = true;
-          setReady(true);
+        if (getAuthToken()) {
+          const state = await apiGetAccountState();
+          const remote = state?.prefs?.preferredStoreId;
+          if (typeof remote === 'string' && resolveStore(remote)) next = remote;
         }
       }
+      if (!active) return;
+      setSelectedStoreIdState(next);
+      hydrated.current = true;
+      setReady(true);
+      skipSave.current = false;
     })();
     return () => {
       active = false;
     };
-  }, []);
+  }, [authReady, accountId]);
 
   useEffect(() => {
-    if (!hydrated.current) return;
-    AsyncStorage.setItem(STORAGE_KEY, JSON.stringify({ selectedStoreId })).catch(() => undefined);
-  }, [selectedStoreId]);
+    if (!hydrated.current || skipSave.current || !accountId) return;
+    void saveAccountJson(STORAGE_KEY, accountId, { selectedStoreId });
+    apiPatchAccountState({ prefs: { preferredStoreId: selectedStoreId } });
+  }, [selectedStoreId, accountId]);
 
   const setSelectedStoreId = useCallback((id: string) => {
     if (!SUPER_U_STORES.some((s) => s.id === id)) return;

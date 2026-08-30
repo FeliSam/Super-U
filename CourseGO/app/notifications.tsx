@@ -38,6 +38,7 @@ export default function NotificationsScreen() {
             }}>
             <View style={{ flex: 1 }}>
               <Text style={styles.oid}>{n.title}</Text>
+              {n.live_hint ? <Text style={styles.hint}>{n.live_hint}</Text> : null}
               {n.body ? (
                 <Text style={styles.prev} numberOfLines={2}>
                   {n.body}
@@ -76,6 +77,7 @@ const styles = StyleSheet.create({
   },
   unread: { borderColor: colors.teal, backgroundColor: colors.tealSoft },
   oid: { ...displayFont('700'), fontSize: 15 },
+  hint: { ...bodyFont('700'), color: colors.teal, fontSize: 12, marginTop: 4 },
   prev: { ...bodyFont('400'), color: colors.muted, marginTop: 4 },
   when: { ...bodyFont('500'), color: colors.placeholder, fontSize: 11, marginTop: 6 },
   dot: { width: 10, height: 10, borderRadius: 5, backgroundColor: colors.coral },

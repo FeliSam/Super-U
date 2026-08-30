@@ -7,6 +7,8 @@ export type UserProfile = {
   email: string;
   phone: string;
   birthDate: string;
+  /** Data URL or file URI for the account photo. Empty = catalog placeholder. */
+  photoUri: string;
 };
 
 export type DeliveryAddress = {
@@ -29,11 +31,12 @@ export type PaymentMethod = {
 };
 
 export const userProfile: UserProfile = {
-  firstName: 'Amina',
-  lastName: 'Diallo',
-  email: 'amina.diallo@email.com',
+  firstName: 'Merveille',
+  lastName: 'ADJO',
+  email: 'demo@marchedore.bj',
   phone: appLocation.phone,
   birthDate: '12/08/1990',
+  photoUri: '',
 };
 
 export const deliveryAddresses: DeliveryAddress[] = [
@@ -58,8 +61,8 @@ export const deliveryAddresses: DeliveryAddress[] = [
 ];
 
 export const paymentMethods: PaymentMethod[] = [
-  { id: 'om', type: 'Orange Money', detail: '97 *** ** 56', icon: 'smartphone', default: true },
-  { id: 'wave', type: 'MTN MoMo', detail: '97 *** ** 56', icon: 'smartphone', default: false },
+  { id: 'om', type: 'Orange Money', detail: '01 *** ** ** 00', icon: 'smartphone', default: true },
+  { id: 'wave', type: 'MTN MoMo', detail: '01 *** ** ** 00', icon: 'smartphone', default: false },
   { id: 'card', type: 'Carte bancaire', detail: '**** 4242', icon: 'credit-card', default: false },
   { id: 'cod', type: 'Paiement à la livraison', detail: 'Espèces ou mobile money', icon: 'dollar-sign', default: false },
 ];
@@ -89,7 +92,7 @@ export const loyaltyTiers: LoyaltyTier[] = [
 export const loyaltyAccount = {
   clientId: 'MD-8847-2190',
   cardNumber: 'MD · 8847 2190',
-  memberName: 'Amina Diallo',
+  memberName: 'Merveille ADJO',
   points: 450,
   nextRewardAt: 500,
   tierId: 'or',
@@ -99,33 +102,23 @@ export const loyaltyAccount = {
 
 export const loyaltyRewards: LoyaltyReward[] = [
   {
-    id: 'r1',
-    title: 'Livraison offerte',
-    subtitle: 'Valable sur votre prochaine commande',
-    cost: 500,
-    code: 'LIVREOFF',
-    available: false,
-  },
-  {
     id: 'r2',
     title: 'Réduction −2 000 F',
-    subtitle: 'Code à appliquer au panier',
+    subtitle: 'Bientôt disponible au panier',
     cost: 400,
-    code: 'FIDEL2000',
-    available: true,
+    available: false,
   },
   {
     id: 'r3',
     title: '−10% fruits & légumes',
-    subtitle: 'Une fois par semaine',
+    subtitle: 'Bientôt disponible',
     cost: 300,
-    code: 'FRUITS10',
-    available: true,
+    available: false,
   },
 ];
 
 export const loyaltyEarnRules = [
-  { icon: 'shopping-bag' as const, title: '1 pt / 100 F', subtitle: 'Sur chaque commande validée' },
+  { icon: 'shopping-bag' as const, title: '1 pt / 1 000 F', subtitle: 'Sur chaque commande validée' },
   { icon: 'star' as const, title: '+50 pts avis', subtitle: 'Après un avis produit avec photo' },
   { icon: 'user-plus' as const, title: '+100 pts parrainage', subtitle: 'Quand un ami commande' },
 ];

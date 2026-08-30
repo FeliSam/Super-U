@@ -31,7 +31,7 @@ function densify(from: LngLat, to: LngLat): RoadRoute {
   return {
     coordinates,
     distanceMeters,
-    durationSeconds: Math.max(180, distanceMeters / 8.5),
+    durationSeconds: Math.max(180, (distanceMeters / 1000 / 22) * 3600),
     approximated: true,
   };
 }
@@ -39,12 +39,15 @@ function densify(from: LngLat, to: LngLat): RoadRoute {
 /**
  * Voies routières OSRM (réseau motorisé). Plusieurs points = une seule course.
  */
-export async function fetchRoadRoute(waypoints: LngLat[]): Promise<RoadRoute | null> {
+export async function fetchRoadRoute(
+  waypoints: LngLat[],
+  profile: 'driving' | 'cycling' | 'walking' = 'driving',
+): Promise<RoadRoute | null> {
   const pts = waypoints.filter(valid);
   if (pts.length < 2) return null;
   const path = pts.map(([lng, lat]) => `${lng},${lat}`).join(';');
   const url =
-    `https://router.project-osrm.org/route/v1/driving/${path}` +
+    `https://router.project-osrm.org/route/v1/${profile}/${path}` +
     `?overview=full&geometries=geojson&alternatives=false`;
   try {
     const res = await fetch(url, { headers: { Accept: 'application/json' } });

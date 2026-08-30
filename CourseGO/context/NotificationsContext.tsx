@@ -11,6 +11,7 @@ import { AppState, Platform } from 'react-native';
 type Value = {
   items: StaffNotification[];
   unreadCount: number;
+  ready: boolean;
   refresh: () => Promise<void>;
   markRead: (id: string) => Promise<void>;
   markAllRead: () => Promise<void>;
@@ -28,10 +29,12 @@ function isHidden() {
 export function NotificationsProvider({ children }: { children: React.ReactNode }) {
   const { staff } = useStaffAuth();
   const [items, setItems] = useState<StaffNotification[]>([]);
+  const [ready, setReady] = useState(false);
 
   const refresh = useCallback(async () => {
     if (!staff) {
       setItems([]);
+      setReady(true);
       return;
     }
     try {
@@ -39,10 +42,13 @@ export function NotificationsProvider({ children }: { children: React.ReactNode 
       setItems(res.items ?? []);
     } catch {
       /* ignore */
+    } finally {
+      setReady(true);
     }
   }, [staff]);
 
   useEffect(() => {
+    setReady(false);
     void refresh();
     if (!staff) return;
     const tick = () => {
@@ -68,8 +74,8 @@ export function NotificationsProvider({ children }: { children: React.ReactNode 
   const unreadCount = useMemo(() => items.filter((n) => !n.read_at).length, [items]);
 
   const value = useMemo(
-    () => ({ items, unreadCount, refresh, markRead, markAllRead }),
-    [items, unreadCount, refresh, markRead, markAllRead],
+    () => ({ items, unreadCount, ready, refresh, markRead, markAllRead }),
+    [items, unreadCount, ready, refresh, markRead, markAllRead],
   );
 
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>;

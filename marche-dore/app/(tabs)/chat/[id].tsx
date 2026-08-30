@@ -1,15 +1,19 @@
 import { AppImage } from '@/components/AppImage';
 import { IconCircle, Page, Screen } from '@/components/ui';
 import { displayFont, type AppColors } from '@/constants/theme';
+import { useCall } from '@/context/CallContext';
 import { useChat } from '@/context/ChatContext';
 import { useColors } from '@/context/ThemeContext';
-import { quickRepliesByKind } from '@/data/messages';
+import { useProfile } from '@/context/ProfileContext';
+import { useAuth } from '@/context/AuthContext';
+import { formatCallMessage } from '@/lib/api/chat';
+import { profilePhotoSource } from '@/lib/profilePhoto';
+import { userPhotoSource } from '@/lib/userPhoto';
 import { Feather } from '@expo/vector-icons';
 import { Href, router, useLocalSearchParams } from 'expo-router';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   KeyboardAvoidingView,
-  Linking,
   Platform,
   Pressable,
   ScrollView,
@@ -19,11 +23,12 @@ import {
   View,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { quickRepliesByKind } from '@/data/messages';
 
 function resolveConversationId(raw?: string) {
   if (!raw || raw === 'support') return 'support';
-  if (raw === 'MD-2024-0847') return 'courier-moussa';
-  return raw;
+  if (raw.startsWith('courier-')) return raw;
+  return `courier-${raw.replace(/^#/, '')}`;
 }
 
 export default function ChatThreadScreen() {
@@ -38,18 +43,26 @@ export default function ChatThreadScreen() {
     getMessages,
     getConversationById,
     sendMessage,
+    setConversationDisabled,
     markRead,
     clearActiveThread,
   } = useChat();
 
   const conversation = getConversationById(conversationId);
   const messages = getMessages(conversationId);
+  const { profile } = useProfile();
+  const { session } = useAuth();
+  const myPhoto = profile.photoUri?.trim()
+    ? profilePhotoSource(profile.photoUri)
+    : userPhotoSource(session?.accountId);
+  const { startOutgoing, phase } = useCall();
   const [draft, setDraft] = useState('');
   const scrollRef = useRef<ScrollView>(null);
   const quickReplies = useMemo(
     () => (conversation ? quickRepliesByKind[conversation.kind] : []),
     [conversation],
   );
+  const canCall = conversation?.kind === 'courier';
 
   useEffect(() => {
     if (!ready || !conversationId) return;
@@ -62,9 +75,19 @@ export default function ChatThreadScreen() {
     return () => clearTimeout(t);
   }, [messages.length, conversationId]);
 
+  const callPeer = () => {
+    if (!conversation || !canCall || phase !== 'idle') return;
+    startOutgoing(conversation.id, conversation.name);
+  };
+
   const send = (text: string) => {
     const trimmed = text.trim();
-    if (!trimmed || !conversation) return;
+    if (!trimmed || !conversation || conversation.disabled) return;
+    if (trimmed === 'Appelez-moi' && canCall) {
+      callPeer();
+      setDraft('');
+      return;
+    }
     sendMessage(conversation.id, trimmed);
     setDraft('');
   };
@@ -139,8 +162,16 @@ export default function ChatThreadScreen() {
               </View>
             </View>
           </Pressable>
-          {conversation.phone ? (
-            <IconCircle name="phone" onPress={() => Linking.openURL(`tel:${conversation.phone}`)} />
+          {canCall && !conversation.archived ? (
+            <>
+              <IconCircle
+                name={conversation.disabled ? 'bell-off' : 'slash'}
+                onPress={() =>
+                  void setConversationDisabled(conversation.id, !conversation.disabled)
+                }
+              />
+              {conversation.disabled ? null : <IconCircle name="phone" onPress={callPeer} />}
+            </>
           ) : (
             <View style={styles.headerSpacer} />
           )}
@@ -170,15 +201,18 @@ export default function ChatThreadScreen() {
               />
               <Text style={styles.bannerText}>
                 {conversation.kind === 'support'
-                  ? 'Assistance Marché Doré'
-                  : conversation.orderId
-                    ? `Conversation · #${conversation.orderId}`
-                    : conversation.subtitle}
+                    ? 'Assistance Marché Doré'
+                    : conversation.orderId
+                      ? `Conversation · #${conversation.orderId}`
+                      : conversation.subtitle}
               </Text>
             </View>
 
             {messages.map((msg) => {
               const mine = msg.from === 'me';
+              const isCall = msg.kind === 'call';
+              const callLabel =
+                isCall && msg.call ? formatCallMessage(msg.call) : msg.text;
               return (
                 <View
                   key={msg.id}
@@ -200,16 +234,50 @@ export default function ChatThreadScreen() {
                       </View>
                     )
                   ) : null}
-                  <View style={[styles.bubble, mine ? styles.bubbleMe : styles.bubbleThem]}>
-                    <Text style={[styles.bubbleText, mine && styles.bubbleTextMe]}>{msg.text}</Text>
+                  <View
+                    style={[
+                      styles.bubble,
+                      mine ? styles.bubbleMe : styles.bubbleThem,
+                      isCall && styles.bubbleCall,
+                    ]}>
+                    {isCall ? (
+                      <View style={styles.callRow}>
+                        <Feather
+                          name={msg.call?.status === 'ended' ? 'phone' : 'phone-off'}
+                          size={14}
+                          color={mine ? colors.white : colors.gold}
+                        />
+                        <Text style={[styles.bubbleText, mine && styles.bubbleTextMe]}>{callLabel}</Text>
+                      </View>
+                    ) : (
+                      <Text style={[styles.bubbleText, mine && styles.bubbleTextMe]}>{msg.text}</Text>
+                    )}
                     <Text style={[styles.bubbleTime, mine && styles.bubbleTimeMe]}>{msg.time}</Text>
                   </View>
+                  {mine ? <AppImage source={myPhoto} frameStyle={styles.bubbleAvatar} /> : null}
                 </View>
               );
             })}
           </ScrollView>
 
           <View style={[styles.composer, { paddingBottom: Math.max(12, insets.bottom + 8) }]}>
+            {conversation.disabled ? (
+              <View style={styles.disabledBox}>
+                <Text style={styles.disabledTxt}>
+                  {conversation.archived
+                    ? 'Conversation archivée 30 minutes après la livraison. Plus de messages ni d’appels.'
+                    : 'Conversation désactivée. Plus de messages ni d’appels.'}
+                </Text>
+                {conversation.archived ? null : (
+                <Pressable
+                  style={styles.disabledBtn}
+                  onPress={() => void setConversationDisabled(conversation.id, false)}>
+                  <Text style={styles.disabledBtnTxt}>Réactiver</Text>
+                </Pressable>
+                )}
+              </View>
+            ) : (
+              <>
             <ScrollView
               horizontal
               showsHorizontalScrollIndicator={false}
@@ -217,7 +285,9 @@ export default function ChatThreadScreen() {
               keyboardShouldPersistTaps="handled">
               {quickReplies.map((reply) => (
                 <Pressable key={reply} style={styles.quickChip} onPress={() => send(reply)}>
-                  <Text style={styles.quickChipText}>{reply}</Text>
+                  <Text style={styles.quickChipText} numberOfLines={1}>
+                    {reply}
+                  </Text>
                 </Pressable>
               ))}
             </ScrollView>
@@ -242,6 +312,8 @@ export default function ChatThreadScreen() {
                 <Feather name="send" size={18} color={colors.white} />
               </Pressable>
             </View>
+              </>
+            )}
           </View>
         </KeyboardAvoidingView>
       </Page>
@@ -293,8 +365,8 @@ function createStyles(colors: AppColors) {
     },
     bannerText: { color: colors.muted, fontSize: 12, fontWeight: '600' },
     bubbleWrap: { flexDirection: 'row', alignItems: 'flex-end', gap: 8, maxWidth: '92%' },
-    bubbleWrapMe: { alignSelf: 'flex-end' },
-    bubbleWrapThem: { alignSelf: 'flex-start' },
+    bubbleWrapMe: { alignSelf: 'flex-end', flexDirection: 'row', justifyContent: 'flex-end' },
+    bubbleWrapThem: { alignSelf: 'flex-start', flexDirection: 'row', justifyContent: 'flex-start' },
     bubbleAvatar: { width: 28, height: 28, borderRadius: 14 },
     bubbleAvatarFallback: {
       width: 28,
@@ -323,6 +395,8 @@ function createStyles(colors: AppColors) {
     bubbleTextMe: { color: colors.white },
     bubbleTime: { color: colors.placeholder, fontSize: 10, alignSelf: 'flex-end' },
     bubbleTimeMe: { color: 'rgba(255,255,255,0.75)' },
+    bubbleCall: { minWidth: 160 },
+    callRow: { flexDirection: 'row', alignItems: 'center', gap: 8 },
     composer: {
       borderTopWidth: 1,
       borderTopColor: colors.border,
@@ -331,14 +405,25 @@ function createStyles(colors: AppColors) {
       paddingHorizontal: 12,
       gap: 10,
     },
-    quickRow: { gap: 8, paddingHorizontal: 4 },
+    quickRow: { gap: 8, paddingHorizontal: 4, alignItems: 'center', flexDirection: 'row' },
     quickChip: {
+      flexShrink: 0,
       backgroundColor: colors.bg,
       borderRadius: 999,
       paddingHorizontal: 12,
       paddingVertical: 8,
     },
     quickChipText: { color: colors.muted, fontSize: 12, fontWeight: '600' },
+    disabledBox: { gap: 10, paddingVertical: 4 },
+    disabledTxt: { color: colors.muted, fontSize: 13, lineHeight: 18 },
+    disabledBtn: {
+      alignSelf: 'flex-start',
+      backgroundColor: colors.cream,
+      borderRadius: 999,
+      paddingHorizontal: 14,
+      paddingVertical: 8,
+    },
+    disabledBtnTxt: { color: colors.terracotta, fontSize: 13, fontWeight: '700' },
     inputRow: { flexDirection: 'row', alignItems: 'flex-end', gap: 10 },
     input: {
       flex: 1,

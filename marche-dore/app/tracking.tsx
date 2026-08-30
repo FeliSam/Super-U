@@ -1,31 +1,45 @@
 import { AppImage } from '@/components/AppImage';
+import { DeliveryIssueCard } from '@/components/DeliveryIssueCard';
+import { HandoffCodeCard } from '@/components/HandoffCodeCard';
 import { EmptyStateHero } from '@/components/EmptyStateHero';
 import { LibreMap } from '@/components/LibreMap';
+import { CourierTipPicker } from '@/components/CourierTipPicker';
 import { StarRating } from '@/components/StarRating';
 import { CtaButton, IconCircle, Screen } from '@/components/ui';
 import { PressScale } from '@/components/motion';
-import { cotonouMap, courierRouteProgress, demoTimelineMs, mapStyles, type LngLat } from '@/constants/map';
+import { cotonouMap, mapStyles, type LngLat } from '@/constants/map';
 import { displayFont, type AppColors } from '@/constants/theme';
+import { useCall } from '@/context/CallContext';
 import { useCart } from '@/context/CartContext';
 import { useReviews } from '@/context/ReviewsContext';
 import { useColors, useTheme } from '@/context/ThemeContext';
-import { avatar, getProduct } from '@/data/catalog';
+import { getProduct } from '@/data/catalog';
 import {
   formatOrderId,
   statusLabel,
   useOrders,
   canCancelOrder,
-  type Order,
-  type OrderStatus } from '@/context/OrdersContext';
+  type Order } from '@/context/OrdersContext';
 import { SUPER_U_BRAND } from '@/data/superU';
+import { courierThreadId } from '@/lib/api/chat';
+import { staffPhotoSource } from '@/lib/staffPhoto';
+import { formatBeninPhone } from '@/lib/beninPhone';
 import {
   formatDistanceKm,
   formatDurationMin,
-  pointAlongPolyline,
   routeBoundsCenter } from '@/lib/deliveryRouting';
 import { SHEET_OPEN, SHEET_SPRING } from '@/lib/expandableSheet';
-import { formatFcfa } from '@/lib/format';
-import { navigateTab, tabPaths } from '@/lib/navigation';
+import { formatFcfa, formatOrderAddress } from '@/lib/format';
+import {
+  courierMapCoordinate,
+  fulfillmentPhase,
+  isCourierAssigned,
+  isCourseStarted,
+  opsEtaCaption,
+  opsPhaseLabel,
+  opsProgressPercent,
+  remainingEnRouteSeconds } from '@/lib/orderOps';
+import { goBack, navigateTab, tabPaths } from '@/lib/navigation';
 import { softShadow } from '@/lib/shadow';
 import { statusTone } from '@/lib/statusTone';
 import { Feather } from '@expo/vector-icons';
@@ -34,7 +48,6 @@ import { useEffect, useMemo, useState, type ComponentProps } from 'react';
 import {
   Alert,
   Dimensions,
-  Linking,
   Modal,
   Platform,
   Pressable,
@@ -43,7 +56,8 @@ import {
   Text,
   TextInput,
   View } from 'react-native';
-import { Gesture, GestureDetector, GestureHandlerRootView } from 'react-native-gesture-handler';
+import { GestureRoot } from '@/components/GestureRoot';
+import { Gesture, GestureDetector } from 'react-native-gesture-handler';
 import Animated, {
   Easing,
   useAnimatedStyle,
@@ -81,7 +95,12 @@ function formatClock(d: Date) {
 
 function paymentHint(order: Order) {
   const label = (order.paymentLabel || '').trim();
-  if (order.paymentId === 'cod' || /livraison/i.test(label)) return 'Paiement à la livraison';
+  if (order.paymentStatus === 'paid') {
+    return label ? `${label} · payé` : 'Paiement confirmé';
+  }
+  if (order.paymentId === 'cod' || /livraison/i.test(label) || order.paymentStatus === 'cod_pending') {
+    return 'Paiement à la livraison';
+  }
   if (order.paymentDetail) {
     return label ? `${label} · ${order.paymentDetail}` : order.paymentDetail;
   }
@@ -89,95 +108,102 @@ function paymentHint(order: Order) {
   return 'Paiement validé';
 }
 
-function statusRank(status: OrderStatus) {
-  switch (status) {
-    case 'delivered':
-      return 3;
-    case 'shipping':
-      return 2;
-    case 'preparing':
-      return 1;
-    case 'confirmed':
-      return 0;
-    case 'cancelled':
-      return -1;
-    default:
-      return 0;
-  }
-}
-
-function buildSteps(order: Order): TimelineStep[] {
+function buildSteps(order: Order, now: number): TimelineStep[] {
   const t = parseOrderDate(order.createdAt);
-  const timeline = demoTimelineMs(order.routeDurationSeconds);
-  const at = (status: OrderStatus) => {
-    const afterMs =
-      status === 'confirmed'
-        ? 0
-        : status === 'preparing'
-          ? timeline.preparing
-          : status === 'shipping'
-            ? timeline.shipping
-            : timeline.delivered;
-    return new Date(t.getTime() + afterMs);
-  };
+  const pick = order.pickStatus;
+  const del = order.deliveryStatus;
+  const phase = fulfillmentPhase(order);
+  const accepted = phase !== 'wait' && phase !== 'cancelled' && phase !== 'failed';
+  const assembled = pick === 'packed' || isCourseStarted(order);
+  const onRoad = isCourseStarted(order) && del !== 'delivered';
+  const delivered = order.status === 'delivered' || del === 'delivered';
   const store = order.storeName || 'Super U';
+  const who = order.pickerName || order.courierName;
   const roadEta = formatDurationMin(order.routeDurationSeconds || 0);
   const roadDist = formatDistanceKm(order.routeDistanceMeters || 0);
+  const remSec = onRoad ? remainingEnRouteSeconds(order, now) : null;
+  const slot = [order.dayLabel, order.slotLabel].filter(Boolean).join(' · ');
 
   const defs: Omit<TimelineStep, 'state' | 'time'>[] = [
-    { label: 'Commande confirmée', hint: paymentHint(order), icon: 'check' },
+    { label: 'Commande reçue', hint: paymentHint(order), icon: 'check' },
     {
-      label: 'Préparation magasin',
-      hint: `${store} · assemblage du panier`,
-      icon: 'package' },
+      label: 'Acceptée',
+      hint: accepted
+        ? who
+          ? `${who} a pris la commande chez ${store}`
+          : pick === 'picking'
+            ? `${store} · rassemblement du panier`
+            : `${store} · prise en charge`
+        : `${store} · en attente de l’app course`,
+      icon: 'user',
+    },
     {
-      label: 'En livraison',
-      hint: `${roadDist} · ~${roadEta} (itinéraire routier)`,
-      icon: 'truck' },
-    { label: 'Livrée', hint: 'Colis remis à votre adresse', icon: 'home' },
+      label: 'Rassemblée',
+      hint: assembled
+        ? del === 'at_store'
+          ? 'Colis prêt · coursier au magasin'
+          : del === 'assigned'
+            ? 'Colis prêt · course acceptée'
+            : `${store} · panier prêt`
+        : accepted
+          ? `${store} · constitution du panier`
+          : 'Après acceptation par le magasin',
+      icon: 'package',
+    },
+    {
+      label: 'Course',
+      hint: delivered
+        ? 'Course terminée'
+        : del === 'arrived'
+          ? 'Livreur à votre adresse'
+          : onRoad && remSec
+            ? `${roadDist} · encore ~${formatDurationMin(remSec)}`
+            : assembled
+              ? 'En attente du départ en course'
+              : `${roadDist} · ~${roadEta} une fois en route`,
+      icon: 'truck',
+    },
+    {
+      label: 'Livrée',
+      hint: slot ? `Colis remis · ${slot}` : 'Colis remis à votre adresse',
+      icon: 'home',
+    },
   ];
 
-  if (order.status === 'cancelled') {
+  if (order.status === 'cancelled' || del === 'cancelled') {
     return [
       {
         label: 'Commande annulée',
-        hint: 'Annulée avant la préparation',
+        hint: 'Annulée avant la fin de la course',
         icon: 'x',
         time: formatClock(t),
-        state: 'active' as const },
+        state: 'active' as const,
+      },
       ...defs.slice(1).map((d) => ({ ...d, time: '', state: 'pending' as const })),
     ];
   }
 
-  const rank = statusRank(order.status);
+  const acceptState: StepState = assembled || onRoad || delivered ? 'done' : accepted ? 'active' : 'pending';
+  const packState: StepState = onRoad || delivered ? 'done' : assembled ? 'active' : 'pending';
+  const courseState: StepState = delivered ? 'done' : onRoad ? 'active' : 'pending';
+  const doneState: StepState = delivered ? 'done' : 'pending';
   const times = [
-    formatClock(at('confirmed')),
-    rank >= 1 ? formatClock(at('preparing')) : '',
-    rank >= 2 ? formatClock(at('shipping')) : '',
-    rank >= 3 ? formatClock(at('delivered')) : '',
+    formatClock(t),
+    accepted ? formatClock(t) : '',
+    order.packedAt ? formatClock(new Date(order.packedAt)) : '',
+    '',
+    delivered ? formatClock(new Date()) : '',
   ];
 
   return defs.map((d, i) => ({
     ...d,
     time: times[i],
-    state: i < rank ? 'done' : i === rank ? 'active' : 'pending' }));
+    state: i === 0 ? 'done' : i === 1 ? acceptState : i === 2 ? packState : i === 3 ? courseState : doneState,
+  }));
 }
 
-function mapBadgeText(status: OrderStatus) {
-  switch (status) {
-    case 'confirmed':
-      return 'Magasin assigné · confirmation';
-    case 'preparing':
-      return 'Préparation & récupération colis';
-    case 'shipping':
-      return 'Livreur sur l’itinéraire routier';
-    case 'delivered':
-      return 'Livraison terminée';
-    case 'cancelled':
-      return 'Commande annulée';
-    default:
-      return 'Suivi en direct';
-  }
+function mapBadgeText(order: Order) {
+  return opsPhaseLabel(order);
 }
 
 function zoomForRoute(meters: number): number {
@@ -256,7 +282,8 @@ export default function TrackingScreen() {
   const styles = useMemo(() => createStyles(colors), [colors]);
   const insets = useSafeAreaInsets();
   const { id } = useLocalSearchParams<{ id?: string }>();
-  const { getOrder, activeOrder, orders, ready, setStatus } = useOrders();
+  const { getOrder, activeOrder, orders, ready, setStatus, setTrackingFocus } = useOrders();
+  const { startOutgoing, phase } = useCall();
   const { count: cartCount } = useCart();
   const {
     addCourierReview,
@@ -264,46 +291,53 @@ export default function TrackingScreen() {
     hasUserReviewedProduct } = useReviews();
   const orderId = typeof id === 'string' ? id : Array.isArray(id) ? id[0] : undefined;
   const order = (orderId ? getOrder(orderId) : null) ?? activeOrder ?? null;
+  const [now, setNow] = useState(Date.now());
 
   const recentDone = useMemo(
     () => orders.filter((o) => o.status === 'delivered' || o.status === 'cancelled').slice(0, 3),
     [orders],
   );
 
-  const steps = useMemo(() => (order ? buildSteps(order) : []), [order]);
+  const steps = useMemo(() => (order ? buildSteps(order, now) : []), [order, now]);
   const activeStep = steps.findIndex((s) => s.state === 'active');
   const activeIndex =
     activeStep >= 0 ? activeStep : Math.max(0, steps.findIndex((s) => s.state === 'done'));
-  const progress = steps.length > 1 ? ((activeIndex + 0.15) / (steps.length - 1)) * 100 : 0;
   const tone = order ? statusTone(order.status, colors) : statusTone('confirmed', colors);
   const cancellable = order ? canCancelOrder(order.status) : false;
   const delivered = order?.status === 'delivered';
+  const failed = order ? fulfillmentPhase(order) === 'failed' : false;
   const existingCourierReview = order ? courierReviewForOrder(order.id) : undefined;
   const [menuOpen, setMenuOpen] = useState(false);
   const [mapReady, setMapReady] = useState(false);
   const [mapError, setMapError] = useState(false);
-  const [now, setNow] = useState(Date.now());
   const [courierRating, setCourierRating] = useState(5);
   const [courierComment, setCourierComment] = useState('');
+  const [courierTip, setCourierTip] = useState(0);
   const [courierSubmitted, setCourierSubmitted] = useState(false);
 
   const sheetH = useSharedValue(SHEET_MIN);
   const dragStartH = useSharedValue(SHEET_MIN);
 
   useEffect(() => {
-    if (!order || order.status === 'delivered' || order.status === 'cancelled') return;
-    const timer = setInterval(() => setNow(Date.now()), 250);
+    setTrackingFocus(order?.id ?? null);
+    return () => setTrackingFocus(null);
+  }, [order?.id, setTrackingFocus]);
+
+  useEffect(() => {
+    if (!order || order.status === 'delivered' || order.status === 'cancelled' || fulfillmentPhase(order) === 'failed') return;
+    const timer = setInterval(() => setNow(Date.now()), isCourseStarted(order) ? 250 : 2000);
     return () => clearInterval(timer);
   }, [order?.id, order?.status]);
 
   useEffect(() => {
-    if (!delivered) return;
+    if (!delivered && !failed) return;
     sheetH.value = withTiming(SHEET_MAX, SHEET_OPEN);
-  }, [delivered, sheetH]);
+  }, [delivered, failed, sheetH]);
 
   useEffect(() => {
     setCourierRating(5);
     setCourierComment('');
+    setCourierTip(0);
     setCourierSubmitted(false);
   }, [order?.id]);
 
@@ -315,13 +349,16 @@ export default function TrackingScreen() {
       orderId: order.id,
       courierName: order.courierName,
       rating: courierRating,
-      comment: comment || 'Livraison impeccable.' });
+      comment: comment || 'Livraison impeccable.',
+      tipAmount: courierTip,
+    });
     setCourierSubmitted(true);
   };
 
   const sheetPan = useMemo(
     () =>
       Gesture.Pan()
+        .maxPointers(1)
         .activeOffsetY([-8, 8])
         .onStart(() => {
           dragStartH.value = sheetH.value;
@@ -350,26 +387,12 @@ export default function TrackingScreen() {
     const home = order.addressCoordinate ?? cotonouMap.home;
     const poly: LngLat[] =
       order.routeCoordinates?.length >= 2 ? order.routeCoordinates : [store, home];
-    const progressT = courierRouteProgress(
-      order.status,
-      order.createdAt,
-      now,
-      order.routeDurationSeconds,
-    );
-    const courier = pointAlongPolyline(poly, progressT);
-    const followCourier = order.status === 'shipping';
-    const courierLabel =
-      order.status === 'confirmed' || order.status === 'preparing'
-        ? 'Récupération'
-        : order.status === 'shipping'
-          ? 'En route'
-          : order.status === 'delivered'
-            ? 'Livré'
-            : undefined;
+    const courier = courierMapCoordinate(order, poly, store, now);
+    const courierLabel = opsPhaseLabel(order);
 
     return {
-      center: followCourier ? courier : routeBoundsCenter(poly),
-      zoom: followCourier ? 14.8 : zoomForRoute(order.routeDistanceMeters || 3000),
+      center: routeBoundsCenter(poly),
+      zoom: zoomForRoute(order.routeDistanceMeters || 3000),
       route: poly,
       markers: [
         {
@@ -384,13 +407,14 @@ export default function TrackingScreen() {
           kind: 'home' as const,
           label: order.addressLabel || 'Chez vous',
           color: colors.gold },
-        ...(order.status === 'cancelled'
+        ...(order.status === 'cancelled' || !isCourierAssigned(order)
           ? []
           : [
               {
                 id: 'courier',
                 coordinate: courier,
                 kind: 'courier' as const,
+                vehicle: (order.courierVehicle as 'moto' | 'voiture' | 'velo' | 'tricycle' | 'pied') || 'moto',
                 label: courierLabel,
                 color: colors.terracotta },
             ]),
@@ -436,7 +460,7 @@ export default function TrackingScreen() {
       <Screen>
         <View style={[styles.emptyRoot, { paddingTop: Math.max(10, insets.top + 6) }]}>
           <View style={styles.emptyHeader}>
-            <IconCircle name="chevron-left" onPress={() => router.back()} />
+            <IconCircle name="chevron-left" onPress={() => goBack()} />
             <Text style={styles.emptyHeaderTitle}>Suivi de commande</Text>
             <View style={{ width: 40 }} />
           </View>
@@ -509,29 +533,31 @@ export default function TrackingScreen() {
     );
   }
 
-  const progressT = courierRouteProgress(
-    order.status,
-    order.createdAt,
-    now,
-    order.routeDurationSeconds,
-  );
-  const remainingRoadSec = Math.max(
-    0,
-    Math.round((order.routeDurationSeconds || 0) * (1 - progressT)),
-  );
-  const etaPrimary =
-    order.status === 'shipping'
-      ? `~${formatDurationMin(remainingRoadSec)}`
-      : order.status === 'preparing' || order.status === 'confirmed'
-        ? `~${formatDurationMin((order.routeDurationSeconds || 0) + 8 * 60)}`
-        : [order.dayLabel, order.slotLabel].filter(Boolean).join(' · ');
-  const etaLabel = etaPrimary || 'Créneau à confirmer';
-  const addressLine = [order.addressLine, order.addressCity].filter(Boolean).join(', ');
-  const roadMeta = `${formatDistanceKm(order.routeDistanceMeters)} · trajet ${formatDurationMin(order.routeDurationSeconds)} · ${order.storeName || 'Super U'} → vous`;
+  const progress = opsProgressPercent(order);
+  const slotLabel = [order.dayLabel, order.slotLabel].filter(Boolean).join(' · ');
+  const etaCaption = opsEtaCaption(order);
+  const remSec = isCourseStarted(order) ? remainingEnRouteSeconds(order, now) : null;
+  const onRoad = isCourseStarted(order) && order.deliveryStatus !== 'delivered';
+  const etaPrimary = onRoad
+    ? remSec
+      ? `~${formatDurationMin(remSec)}`
+      : opsPhaseLabel(order)
+    : opsPhaseLabel(order);
+  const addressLine = formatOrderAddress(order.addressLine, order.addressCity);
+  const addressPhone = order.addressPhone ? formatBeninPhone(order.addressPhone) : '';
+  const courierPhone = order.courierPhone ? formatBeninPhone(order.courierPhone) : '';
+  const destName = order.addressLabel || 'vous';
+  const storeName = order.storeName || 'Super U';
+  const tripSec = order.routeDurationSeconds || 0;
+  const roadMeta = `${formatDistanceKm(order.routeDistanceMeters || 0)} · trajet ${formatDurationMin(tripSec)} · ${storeName} → ${destName}`;
+  const roadSub = slotLabel
+    ? `${formatDistanceKm(order.routeDistanceMeters || 0)} · ~${formatDurationMin(tripSec)} (itinéraire routier) · ${slotLabel}`
+    : `${formatDistanceKm(order.routeDistanceMeters || 0)} · ~${formatDurationMin(tripSec)} (itinéraire routier)`;
+  const showCourier = isCourierAssigned(order);
 
   return (
     <Screen>
-      <GestureHandlerRootView style={styles.flex}>
+      <GestureRoot style={styles.flex}>
         <View style={styles.root}>
           {/* Full-bleed map */}
           <View style={StyleSheet.absoluteFill}>
@@ -575,10 +601,10 @@ export default function TrackingScreen() {
           <View
             style={[styles.topBar, { paddingTop: Math.max(10, insets.top + 4) }]}
             pointerEvents="box-none">
-            <IconCircle name="chevron-left" onPress={() => router.back()} variant="hero" />
+            <IconCircle name="chevron-left" onPress={() => goBack()} variant="hero" />
             <View style={styles.titlePill}>
               <Text style={styles.titlePillMain}>Suivi · {formatOrderId(order.id)}</Text>
-              <Text style={styles.titlePillSub}>{mapBadgeText(order.status)}</Text>
+              <Text style={styles.titlePillSub}>{mapBadgeText(order)}</Text>
             </View>
             <IconCircle name="more-vertical" onPress={() => setMenuOpen(true)} variant="hero" />
           </View>
@@ -587,7 +613,7 @@ export default function TrackingScreen() {
             style={[styles.livePill, { top: Math.max(96, insets.top + 78) }]}
             pointerEvents="none">
             <PulseDot color={tone.dot} />
-            <Text style={styles.livePillText}>{mapBadgeText(order.status)}</Text>
+            <Text style={styles.livePillText}>{mapBadgeText(order)}</Text>
           </View>
 
           <Modal visible={menuOpen} transparent animationType="fade" onRequestClose={closeMenu}>
@@ -611,10 +637,15 @@ export default function TrackingScreen() {
                   <Feather name="list" size={16} color={colors.text} />
                   <Text style={styles.menuItemText}>Mes commandes</Text>
                 </Pressable>
-                {order.status !== 'cancelled' ? (
+                {order.status !== 'cancelled' && showCourier ? (
                   <Pressable
                     style={styles.menuItem}
-                    onPress={() => runMenu(() => Linking.openURL(`tel:${order.courierPhone}`))}>
+                    onPress={() =>
+                      runMenu(() => {
+                        router.push(`/chat/${courierThreadId(order)}` as Href);
+                        if (phase === 'idle') startOutgoing(courierThreadId(order), order.courierName);
+                      })
+                    }>
                     <Feather name="phone" size={16} color={colors.text} />
                     <Text style={styles.menuItemText}>Appeler le livreur</Text>
                   </Pressable>
@@ -639,25 +670,33 @@ export default function TrackingScreen() {
           </Modal>
 
           {/* Bottom sheet — même logique que l’ajout d’adresse */}
-          <GestureDetector gesture={sheetPan}>
-            <Animated.View
-              style={[
-                styles.sheet,
-                sheetAnimStyle,
-                {
-                  paddingBottom: Math.max(14, insets.bottom + 8),
-                  backgroundColor: colors.bg },
-              ]}>
+          <Animated.View
+            style={[
+              styles.sheet,
+              sheetAnimStyle,
+              {
+                paddingBottom: Math.max(14, insets.bottom + 8),
+                backgroundColor: colors.bg },
+            ]}>
+            <GestureDetector gesture={sheetPan}>
               <View style={styles.sheetHandle}>
                 <View style={[styles.sheetHandleBar, { backgroundColor: colors.grabber }]} />
               </View>
+            </GestureDetector>
               <Text style={[styles.sheetEyebrow, { color: colors.muted }]}>
-                {delivered
-                  ? 'Livraison terminée'
-                  : order.status === 'cancelled'
-                    ? 'Commande annulée'
-                    : 'Livraison en cours'}
+                {failed
+                  ? 'Incident de livraison'
+                  : delivered
+                    ? 'Livraison terminée'
+                    : order.status === 'cancelled'
+                      ? 'Commande annulée'
+                      : opsPhaseLabel(order)}
               </Text>
+              {!delivered && !failed && order.status !== 'cancelled' ? (
+                <View style={{ paddingHorizontal: 20, marginBottom: 8 }}>
+                  <HandoffCodeCard code={order.handoffCode} />
+                </View>
+              ) : null}
 
               <Animated.ScrollView
                 showsVerticalScrollIndicator={false}
@@ -665,7 +704,9 @@ export default function TrackingScreen() {
                 contentContainerStyle={styles.sheetContent}
                 bounces
                 nestedScrollEnabled>
-                {delivered ? (
+                {failed ? (
+                  <DeliveryIssueCard order={order} />
+                ) : delivered ? (
                   <View style={[styles.doneHero, { backgroundColor: colors.successSoft }]}>
                     <View style={[styles.doneIcon, { backgroundColor: colors.green }]}>
                       <Feather name="check" size={22} color={colors.onAccent} />
@@ -679,10 +720,8 @@ export default function TrackingScreen() {
                   <View style={styles.statusBlock}>
                     <View style={styles.etaRow}>
                       <View style={styles.etaTextBlock}>
-                        <Text style={styles.meta}>
-                          {order.status === 'shipping' ? 'Temps restant (route)' : 'Estimation trajet'}
-                        </Text>
-                        <Text style={styles.eta}>{etaLabel}</Text>
+                        <Text style={styles.meta}>{etaCaption}</Text>
+                        <Text style={styles.eta}>{etaPrimary}</Text>
                         <Text style={styles.roadMeta}>{roadMeta}</Text>
                       </View>
                       <View style={[styles.tag, { backgroundColor: tone.bg }]}>
@@ -727,14 +766,17 @@ export default function TrackingScreen() {
                   <Feather name="chevron-right" size={18} color={colors.placeholder} />
                 </PressScale>
 
-                {delivered ? (
+                {delivered && order.courierName ? (
                   <View style={[styles.softCardCol, { backgroundColor: colors.white }]}>
                     <Text style={styles.cardTitle}>Noter le livreur</Text>
                     <View style={styles.courierMini}>
-                      <AppImage source={avatar} frameStyle={styles.avatar} />
+                      <AppImage
+                        source={staffPhotoSource(order.courierHasPhoto ? order.courierId : undefined)}
+                        frameStyle={styles.avatar}
+                      />
                       <View style={styles.courierText}>
                         <Text style={styles.name}>{order.courierName}</Text>
-                        <Text style={styles.meta}>Livreur Marché Doré</Text>
+                        <Text style={styles.meta}>Coursier CourseGO</Text>
                       </View>
                     </View>
                     {existingCourierReview || courierSubmitted ? (
@@ -747,6 +789,9 @@ export default function TrackingScreen() {
                             : courierRating
                               ? ` · ${courierRating}/5`
                               : ''}
+                          {(existingCourierReview?.tipAmount ?? (courierSubmitted ? courierTip : 0)) > 0
+                            ? ` · pourboire ${formatFcfa(existingCourierReview?.tipAmount ?? courierTip)}`
+                            : ''}
                           .
                         </Text>
                       </View>
@@ -761,6 +806,7 @@ export default function TrackingScreen() {
                           />
                           <Text style={styles.draftRatingLabel}>{courierRating}/5</Text>
                         </View>
+                        <CourierTipPicker value={courierTip} onChange={setCourierTip} />
                         <TextInput
                           value={courierComment}
                           onChangeText={setCourierComment}
@@ -793,7 +839,9 @@ export default function TrackingScreen() {
                           <Pressable
                             style={styles.productReviewRow}
                             onPress={() =>
-                              router.push(`/product/reviews/${line.productId}` as Href)
+                              router.push(
+                                `/product/reviews/${encodeURIComponent(line.productId)}?write=1` as Href,
+                              )
                             }>
                             {product?.image ? (
                               <AppImage source={product.image} frameStyle={styles.productThumb} />
@@ -827,20 +875,26 @@ export default function TrackingScreen() {
                     <Text style={styles.cardTitle}>Parcours</Text>
                     <InfoRow
                       icon="shopping-bag"
-                      title={order.storeName || 'Super U'}
-                      lines={['Magasin le plus proche', 'Point de départ livreur']}
+                      title={storeName}
+                      lines={['Magasin de départ', slotLabel ? `Créneau ${slotLabel}` : 'Point de départ livreur']}
                     />
                     <View style={[styles.softHr, { backgroundColor: colors.border }]} />
                     <InfoRow
                       icon="navigation"
                       title="Itinéraire routier"
-                      lines={[roadMeta, 'Profil voiture / moto · plus rapide']}
+                      lines={[
+                        roadMeta,
+                        order.routeProfile === 'motorcycle'
+                          ? 'Profil moto · plus rapide'
+                          : 'Profil voiture / moto · plus rapide',
+                        roadSub,
+                      ]}
                     />
                     <View style={[styles.softHr, { backgroundColor: colors.border }]} />
                     <InfoRow
                       icon="map-pin"
                       title={order.addressLabel || 'Adresse'}
-                      lines={[addressLine, order.addressPhone]}
+                      lines={[addressLine, addressPhone].filter(Boolean)}
                     />
                   </View>
                 ) : null}
@@ -907,22 +961,48 @@ export default function TrackingScreen() {
                       <Text style={styles.cancelledMeta}>Aucun livreur ne sera envoyé.</Text>
                     </View>
                   </View>
-                ) : !delivered ? (
+                ) : !delivered && showCourier ? (
                   <View style={[styles.softCard, { backgroundColor: colors.white }]}>
                     <View style={styles.avatarWrap}>
-                      <AppImage source={avatar} frameStyle={styles.avatar} />
+                      <AppImage
+                        source={staffPhotoSource(order.courierHasPhoto ? order.courierId : undefined)}
+                        frameStyle={styles.avatar}
+                      />
                       <View style={[styles.onlineDot, { borderColor: colors.white }]} />
                     </View>
                     <View style={styles.courierText}>
                       <Text style={styles.name}>{order.courierName}</Text>
-                      <Text style={styles.meta}>Livreur Marché Doré · 4.9 ★</Text>
+                      <Text style={styles.meta}>
+                        {order.sameHandler
+                          ? courierPhone
+                            ? `${courierPhone} · prépare et livre`
+                            : 'Prépare et livre cette commande'
+                          : courierPhone
+                            ? `${courierPhone} · en livraison`
+                            : 'Livreur assigné'}
+                      </Text>
                     </View>
                     <View style={styles.courierActions}>
                       <IconCircle
                         name="message-circle"
-                        onPress={() => router.push('/chat/courier-moussa' as Href)}
+                        onPress={() => router.push(`/chat/${courierThreadId(order)}` as Href)}
                       />
-                      <IconCircle name="phone" onPress={() => Linking.openURL(`tel:${order.courierPhone}`)} />
+                      <IconCircle
+                        name="phone"
+                        onPress={() => {
+                          if (phase === 'idle') startOutgoing(courierThreadId(order), order.courierName);
+                        }}
+                      />
+                    </View>
+                  </View>
+                ) : !delivered ? (
+                  <View style={[styles.softCard, { backgroundColor: colors.white }]}>
+                    <Feather name="package" size={18} color={colors.gold} />
+                    <View style={styles.cancelledText}>
+                      <Text style={styles.cancelledTitle}>En attente du magasin</Text>
+                      <Text style={styles.cancelledMeta}>
+                        Un préparateur rassemble votre panier. Le livreur apparaîtra une fois assigné.
+                      </Text>
                     </View>
                   </View>
                 ) : null}
@@ -933,9 +1013,8 @@ export default function TrackingScreen() {
                 </PressScale>
               </Animated.ScrollView>
             </Animated.View>
-          </GestureDetector>
         </View>
-      </GestureHandlerRootView>
+      </GestureRoot>
     </Screen>
   );
 }

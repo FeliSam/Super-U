@@ -1,7 +1,8 @@
 import { AppImage } from '@/components/AppImage';
 import { IconCircle, Page, Screen } from '@/components/ui';
-import { displayFont, heroChrome, tabBarClearance, type AppColors } from '@/constants/theme';
+import { bodyFont, displayFont, heroChrome, tabBarClearance, type AppColors } from '@/constants/theme';
 import { useChat } from '@/context/ChatContext';
+import { useProfile } from '@/context/ProfileContext';
 import {
   formatOrderId,
   statusLabel,
@@ -11,15 +12,17 @@ import {
 } from '@/context/OrdersContext';
 import { useColors, useTheme } from '@/context/ThemeContext';
 import { type Conversation } from '@/data/messages';
-import { avatar } from '@/data/catalog';
+import { profilePhotoSource } from '@/lib/profilePhoto';
 import { formatFcfa } from '@/lib/format';
+import { opsPhaseLabel } from '@/lib/orderOps';
 import { useExpandableSheet } from '@/lib/expandableSheet';
 import { Feather } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
 import { Href, router } from 'expo-router';
 import { useMemo, memo, useState, type ComponentProps } from 'react';
 import { Platform, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
-import { GestureDetector, GestureHandlerRootView } from 'react-native-gesture-handler';
+import { GestureRoot } from '@/components/GestureRoot';
+import { GestureDetector } from 'react-native-gesture-handler';
 import Animated from 'react-native-reanimated';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
@@ -44,18 +47,9 @@ function orderTimeLabel(iso: string) {
 
 function orderPreview(order: Order) {
   const label = formatOrderId(order.id);
-  switch (order.status) {
-    case 'confirmed':
-      return `${label} confirmée · ${order.itemCount} article${order.itemCount > 1 ? 's' : ''}`;
-    case 'preparing':
-      return `Préparation en cours chez ${order.storeName || 'Super U'}`;
-    case 'shipping':
-      return `${order.courierName || 'Votre livreur'} est en route`;
-    case 'delivered':
-      return `${label} livrée · ${formatFcfa(order.total)}`;
-    case 'cancelled':
-      return `${label} annulée`;
-  }
+  if (order.status === 'delivered') return `${label} livrée · ${formatFcfa(order.total)}`;
+  if (order.status === 'cancelled') return `${label} annulée`;
+  return `${label} · ${opsPhaseLabel(order)}`;
 }
 
 function orderIcon(status: OrderStatus): ComponentProps<typeof Feather>['name'] {
@@ -162,6 +156,7 @@ function ChatInboxScreen() {
   const styles = useMemo(() => createStyles(colors), [colors]);
   const insets = useSafeAreaInsets();
   const { conversations } = useChat();
+  const { profile } = useProfile();
   const { orders } = useOrders();
   const [tab, setTab] = useState<InboxTab>('messages');
 
@@ -194,7 +189,7 @@ function ChatInboxScreen() {
   return (
     <Screen>
       <Page style={styles.flex} edgeToEdge>
-        <GestureHandlerRootView style={styles.flex}>
+        <GestureRoot style={styles.flex}>
           <View style={styles.hero} pointerEvents="box-none">
             <LinearGradient colors={chrome.gradient} style={StyleSheet.absoluteFill} />
             <View
@@ -214,7 +209,6 @@ function ChatInboxScreen() {
 
             <View style={[styles.heroBar, { paddingTop: Math.max(10, insets.top + 6) }]}>
               <View style={styles.heroTitleCol}>
-                <Text style={[styles.heroKicker, { color: chrome.muted }]}>Marché Doré</Text>
                 <Text style={[styles.heroTitle, { color: chrome.ink }]} numberOfLines={1}>
                   {tab === 'messages' ? 'Messages' : 'Suivi'}
                 </Text>
@@ -338,13 +332,13 @@ function ChatInboxScreen() {
                       <Feather name="message-circle" size={22} color={colors.gold} />
                       <Text style={styles.emptyTitle}>Aucun message livreur</Text>
                       <Text style={styles.emptyText}>
-                        Vos livreurs apparaîtront ici dès qu’une commande est en route.
+                        Le chat avec le coursier s’ouvre lorsqu’un livreur CourseGO prend votre course.
                       </Text>
                     </View>
                   )}
 
                   <View style={styles.tip}>
-                    <AppImage source={avatar} frameStyle={styles.tipAvatar} />
+                    <AppImage source={profilePhotoSource(profile.photoUri)} frameStyle={styles.tipAvatar} />
                     <Text style={styles.tipText}>
                       Votre livreur vous contacte ici dès qu’une commande est en préparation ou en
                       route.
@@ -393,7 +387,7 @@ function ChatInboxScreen() {
             </ScrollView>
             </GestureDetector>
           </Animated.View>
-        </GestureHandlerRootView>
+        </GestureRoot>
       </Page>
     </Screen>
   );
@@ -472,18 +466,11 @@ function createStyles(colors: AppColors) {
       paddingHorizontal: 16,
       gap: 12,
     },
-    heroTitleCol: { flex: 1, gap: 2, minWidth: 0 },
-    heroKicker: {
-      fontSize: 11,
-      fontWeight: '700',
-      letterSpacing: 0.8,
-      textTransform: 'uppercase',
-    },
+    heroTitleCol: { flex: 1, minWidth: 0 },
     heroTitle: {
-      ...displayFont('800'),
+      ...bodyFont('800'),
       fontSize: 28,
       lineHeight: 34,
-      letterSpacing: -0.4,
     },
     sheet: {
       position: 'absolute',

@@ -32,7 +32,13 @@ export async function loadBrandFonts() {
   if (Platform.OS === 'web' && typeof document !== 'undefined' && !document.getElementById('coursego-fonts')) {
     const style = document.createElement('style');
     style.id = 'coursego-fonts';
-    style.textContent = `html,body,#root,input,textarea,button{font-family:${fontFamilies.body},system-ui,sans-serif;-webkit-font-smoothing:antialiased}`;
+    style.textContent = `
+@import url('https://fonts.googleapis.com/css2?family=Archivo:wght@600;700;800;900&family=Manrope:wght@400;500;600;700;800&display=swap');
+html,body,#root,input,textarea,button{
+  font-family:${fontFamilies.body},system-ui,sans-serif;
+  -webkit-font-smoothing:antialiased;
+  text-rendering:optimizeLegibility;
+}`;
     document.head.appendChild(style);
   }
   try {

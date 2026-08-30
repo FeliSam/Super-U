@@ -1,8 +1,10 @@
 import { type LngLat } from '@/constants/map';
 import { fetchRoadRoute, roundLngLat, type RoadRoute } from '@/lib/roadRoute';
+import { asVehicleKind, withLiveTravel, type VehicleKind } from '@/lib/vehicleMotion';
 import { useEffect, useMemo, useState } from 'react';
 
-export function useRoadRoute(from: LngLat | null, to: LngLat | null) {
+export function useRoadRoute(from: LngLat | null, to: LngLat | null, vehicle?: VehicleKind | string | null) {
+  const kind = asVehicleKind(vehicle);
   const key = useMemo(() => {
     if (!from || !to) return '';
     const a = roundLngLat(from);
@@ -26,5 +28,5 @@ export function useRoadRoute(from: LngLat | null, to: LngLat | null) {
     };
   }, [key]);
 
-  return route;
+  return useMemo(() => withLiveTravel(route, kind), [route, kind]);
 }

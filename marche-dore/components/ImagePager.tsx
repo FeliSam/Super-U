@@ -2,7 +2,8 @@ import { AppImage } from '@/components/AppImage';
 import { useColors } from '@/context/ThemeContext';
 import { forwardRef, memo, useCallback, useEffect, useImperativeHandle, useRef } from 'react';
 import { type ImageSourcePropType, type StyleProp, type ViewStyle, View } from 'react-native';
-import { Gesture, GestureDetector, GestureHandlerRootView } from 'react-native-gesture-handler';
+import { GestureRoot } from '@/components/GestureRoot';
+import { Gesture, GestureDetector } from 'react-native-gesture-handler';
 import Animated, {
   Easing,
   cancelAnimation,
@@ -196,7 +197,7 @@ export const ImagePager = memo(
 
     if (images.length === 1) {
       return (
-        <GestureHandlerRootView style={[{ width, height, overflow: 'hidden' }, style]}>
+        <GestureRoot style={[{ width, height, overflow: 'hidden' }, style]}>
           <GestureDetector gesture={tap}>
             <Animated.View
               accessible
@@ -206,12 +207,12 @@ export const ImagePager = memo(
               {pages}
             </Animated.View>
           </GestureDetector>
-        </GestureHandlerRootView>
+        </GestureRoot>
       );
     }
 
     return (
-      <GestureHandlerRootView
+      <GestureRoot
         style={[{ width, height, overflow: 'hidden', backgroundColor: colors.border }, style]}>
         <GestureDetector gesture={composed}>
           <Animated.View
@@ -222,7 +223,7 @@ export const ImagePager = memo(
             {pages}
           </Animated.View>
         </GestureDetector>
-      </GestureHandlerRootView>
+      </GestureRoot>
     );
   }),
 );

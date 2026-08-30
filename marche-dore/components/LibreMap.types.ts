@@ -23,4 +23,6 @@ export type LibreMapProps = {
   onPressMap?: (coordinate: LngLat) => void;
   /** Tap / click on a marker (by id). */
   onPressMarker?: (markerId: string, coordinate: LngLat) => void;
+  /** Recentre quand `center` change. Ignoré après un geste utilisateur. */
+  followCamera?: boolean;
 };

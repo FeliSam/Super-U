@@ -11,7 +11,7 @@ import { usePayments } from '@/context/PaymentsContext';
 import { useStores } from '@/context/StoresContext';
 import { useAuth } from '@/context/AuthContext';
 import { useProfile } from '@/context/ProfileContext';
-import { avatar } from '@/data/catalog';
+import { profilePhotoSource } from '@/lib/profilePhoto';
 import { useExpandableSheet } from '@/lib/expandableSheet';
 import { useLiveLoyalty } from '@/lib/loyalty';
 import { navigateTab, tabPaths } from '@/lib/navigation';
@@ -29,7 +29,8 @@ import {
   Text,
   View,
 } from 'react-native';
-import { GestureDetector, GestureHandlerRootView } from 'react-native-gesture-handler';
+import { GestureRoot } from '@/components/GestureRoot';
+import { GestureDetector } from 'react-native-gesture-handler';
 import Animated from 'react-native-reanimated';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
@@ -112,8 +113,8 @@ function ProfileScreen() {
   const loyaltyProgress = Math.min(1, loyalty.points / Math.max(1, loyalty.nextRewardAt || LOYALTY_TARGET));
 
   const confirmSignOut = () => {
-    const run = async () => {
-      await signOut();
+    const run = () => {
+      void signOut();
     };
     if (Platform.OS === 'web') {
       const ok =
@@ -146,7 +147,7 @@ function ProfileScreen() {
         {
           icon: 'map-pin',
           label: 'Adresses de livraison',
-          subtitle: defaultAddress.line,
+          subtitle: defaultAddress?.line ?? 'Ajouter une adresse',
           onPress: () => router.push('/account/addresses'),
         },
         {
@@ -247,7 +248,7 @@ function ProfileScreen() {
         {
           icon: 'phone',
           label: 'Nous contacter',
-          subtitle: '+229 21 00 00 00',
+          subtitle: '+229 02 21 00 00 00',
           onPress: () => router.push('/contact'),
         },
         {
@@ -268,7 +269,7 @@ function ProfileScreen() {
   return (
     <Screen>
       <Page style={styles.flex} edgeToEdge>
-        <GestureHandlerRootView style={styles.flex}>
+        <GestureRoot style={styles.flex}>
           <View style={styles.hero} pointerEvents="box-none">
             <LinearGradient colors={chrome.gradient} style={StyleSheet.absoluteFill} pointerEvents="none" />
             <View style={[styles.heroOrb, { backgroundColor: chrome.orb }]} pointerEvents="none" />
@@ -288,7 +289,7 @@ function ProfileScreen() {
                         borderColor: chrome.surfaceBorder,
                       },
                     ]}>
-                    <Image source={avatar} style={styles.avatarHero} />
+                    <Image source={profilePhotoSource(profile.photoUri)} style={styles.avatarHero} />
                   </View>
                   <Text style={[styles.heroName, { color: chrome.ink }]}>
                     {profile.firstName} {profile.lastName}
@@ -301,7 +302,7 @@ function ProfileScreen() {
                   accessibilityLabel="Adresses de livraison">
                   <Feather name="map-pin" size={13} color={colors.gold} />
                   <Text style={[styles.heroMeta, { color: chrome.muted }]} numberOfLines={1}>
-                    {defaultAddress.line}
+                    {defaultAddress?.line ?? 'Choisir une adresse'}
                   </Text>
                   <Feather name="chevron-down" size={13} color={chrome.muted} />
                 </PressScale>
@@ -493,7 +494,7 @@ function ProfileScreen() {
             </ScrollView>
             </GestureDetector>
           </Animated.View>
-        </GestureHandlerRootView>
+        </GestureRoot>
       </Page>
     </Screen>
   );

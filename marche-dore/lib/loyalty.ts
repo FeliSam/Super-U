@@ -4,15 +4,22 @@ import {
   type LoyaltyTier,
 } from '@/data/account';
 import type { Order } from '@/context/OrdersContext';
+import { useProfile } from '@/context/ProfileContext';
+import { useUiState } from '@/context/UiStateContext';
+
+import { useAuth } from '@/context/AuthContext';
 import { useOrders } from '@/context/OrdersContext';
 import { useMemo } from 'react';
 
-/** 1 pt / 100 F CFA sur commandes non annulées (règle fidélité Marché Doré). */
+export const LOYALTY_FCFA_PER_POINT = 1000;
+export const LOYALTY_RATE_LABEL = '1 pt / 1 000 F';
+
+/** 1 pt / 1 000 F CFA sur commandes non annulées (règle fidélité Marché Doré). */
 export function pointsFromOrders(orders: Order[]): number {
   const spent = orders
     .filter((o) => o.status !== 'cancelled')
     .reduce((sum, o) => sum + (Number(o.total) || 0), 0);
-  return Math.floor(spent / 100);
+  return Math.floor(spent / LOYALTY_FCFA_PER_POINT);
 }
 
 export function lifetimeSavedEstimate(orders: Order[]): number {
@@ -52,13 +59,22 @@ export type LiveLoyalty = {
 
 export function useLiveLoyalty(): LiveLoyalty {
   const { orders } = useOrders();
+  const { profile } = useProfile();
+  const { session } = useAuth();
+  const { loyaltyBonusPts } = useUiState();
 
   return useMemo(() => {
-    const points = pointsFromOrders(orders);
+    const points = Math.max(0, pointsFromOrders(orders) + loyaltyBonusPts);
     const tier = tierForPoints(points);
     const next = nextRewardAt(points);
     const pointsLeft = Math.max(0, next - points);
-    const feminine = /a$/i.test(loyaltyAccount.memberName.split(' ')[0] ?? '') ? 'Cliente' : 'Client';
+    const memberName = `${profile.firstName} ${profile.lastName}`.trim() || loyaltyAccount.memberName;
+    const feminine = /a$/i.test(memberName.split(' ')[0] ?? '') ? 'Cliente' : 'Client';
+    const created = session?.createdAt ? new Date(session.createdAt) : null;
+    const memberSince = created && !Number.isNaN(created.getTime())
+      ? created.toLocaleDateString('fr-FR', { month: 'short', year: 'numeric' })
+      : loyaltyAccount.memberSince;
+    const id = (session?.accountId ?? '0000').replace(/\D/g, '').slice(-4).padStart(4, '0');
     return {
       points,
       tier,
@@ -68,11 +84,11 @@ export function useLiveLoyalty(): LiveLoyalty {
       progress: Math.min(1, points / Math.max(1, next)),
       lifetimeSaved: lifetimeSavedEstimate(orders),
       orderCount: orders.filter((o) => o.status !== 'cancelled').length,
-      memberName: loyaltyAccount.memberName,
-      clientId: loyaltyAccount.clientId,
-      cardNumber: loyaltyAccount.cardNumber,
-      memberSince: loyaltyAccount.memberSince,
+      memberName,
+      clientId: `MD-${id}`,
+      cardNumber: `**** ${id}`,
+      memberSince,
       profileSubtitle: `${feminine} ${tier.name} · ${points} pts`,
     };
-  }, [orders]);
+  }, [orders, loyaltyBonusPts, profile.firstName, profile.lastName, session?.accountId, session?.createdAt]);
 }

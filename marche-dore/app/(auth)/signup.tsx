@@ -7,6 +7,7 @@ import {
   AuthScreen,
 } from '@/components/auth/AuthUI';
 import { MotionView } from '@/components/motion';
+import { goBack } from '@/lib/navigation';
 import { IconCircle } from '@/components/ui';
 import { type AppColors } from '@/constants/theme';
 import { useAuth } from '@/context/AuthContext';
@@ -48,7 +49,7 @@ export default function SignupScreen() {
   return (
     <AuthScreen>
       <View style={styles.topRow}>
-        <IconCircle name="chevron-left" onPress={() => router.back()} accessibilityLabel="Retour" />
+        <IconCircle name="chevron-left" onPress={() => goBack('/(auth)')} accessibilityLabel="Retour" />
       </View>
 
       <AuthBrand
@@ -67,7 +68,7 @@ export default function SignupScreen() {
               onChangeText={setFirstName}
               autoCapitalize="words"
               textContentType="givenName"
-              placeholder="Amina"
+              placeholder="Merveille"
             />
           </View>
           <View style={styles.half}>
@@ -77,7 +78,7 @@ export default function SignupScreen() {
               onChangeText={setLastName}
               autoCapitalize="words"
               textContentType="familyName"
-              placeholder="Diallo"
+              placeholder="ADJO"
             />
           </View>
         </View>
@@ -97,7 +98,7 @@ export default function SignupScreen() {
           onChangeText={(v) => setPhone(formatBeninPhoneInput(v))}
           keyboardType="phone-pad"
           textContentType="telephoneNumber"
-          placeholder="+229 97 00 00 00"
+          placeholder="+229 01 00 00 00 00"
         />
         <AuthField
           label="Mot de passe"

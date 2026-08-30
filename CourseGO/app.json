@@ -10,16 +10,18 @@
     "ios": {
       "supportsTablet": true,
       "infoPlist": {
-        "NSLocationWhenInUseUsageDescription": "CourseGo utilise votre position pendant les livraisons en route."
+        "NSLocationWhenInUseUsageDescription": "CourseGo utilise votre position pendant les livraisons en route.",
+        "NSCameraUsageDescription": "CourseGo scanne les codes-barres et QR des produits en magasin.",
+        "NSMicrophoneUsageDescription": "CourseGo utilise le micro pour les appels avec le client."
       }
     },
     "android": {
       "edgeToEdgeEnabled": true,
       "adaptiveIcon": {
-        "backgroundColor": "#0d9488",
+        "backgroundColor": "#058d81",
         "foregroundImage": "./assets/images/icon.png"
       },
-      "permissions": ["ACCESS_COARSE_LOCATION", "ACCESS_FINE_LOCATION"]
+      "permissions": ["ACCESS_COARSE_LOCATION", "ACCESS_FINE_LOCATION", "CAMERA", "RECORD_AUDIO"]
     },
     "web": {
       "bundler": "metro",
@@ -40,6 +42,13 @@
         "expo-location",
         {
           "locationWhenInUsePermission": "CourseGo utilise votre position pendant les livraisons en route."
+        }
+      ],
+      [
+        "expo-camera",
+        {
+          "cameraPermission": "CourseGo scanne les codes-barres et QR des produits en magasin.",
+          "barcodeScannerEnabled": true
         }
       ]
     ],

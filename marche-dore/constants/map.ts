@@ -10,6 +10,8 @@ export type MapMarker = {
   color?: string;
   /** Feather-like role for pin chrome */
   kind?: 'store' | 'home' | 'courier' | 'pin' | 'superu';
+  vehicle?: 'moto' | 'voiture' | 'velo' | 'tricycle' | 'pied';
+  heading?: number;
 };
 
 /** Free vector styles (OpenFreeMap + OSM) — no API key. */
@@ -101,8 +103,52 @@ export function courierRouteProgress(
   }
 }
 
+function orderCreatedMs(createdAt?: string, now = Date.now()) {
+  if (!createdAt) return now;
+  const t = new Date(createdAt).getTime();
+  return Number.isNaN(t) ? now : t;
+}
+
+/** Temps restant avant l’arrivée simulée (ms). */
+export function remainingUntilDeliveredMs(
+  status: string,
+  createdAt?: string,
+  now = Date.now(),
+  routeDurationSeconds?: number,
+): number {
+  if (status === 'delivered' || status === 'cancelled') return 0;
+  const created = orderCreatedMs(createdAt, now);
+  const { delivered } = demoTimelineMs(routeDurationSeconds);
+  return Math.max(0, created + delivered - now);
+}
+
+/** Temps restant avant le départ livreur (ms). */
+export function remainingUntilShippingMs(
+  status: string,
+  createdAt?: string,
+  now = Date.now(),
+  routeDurationSeconds?: number,
+): number {
+  if (status === 'shipping' || status === 'delivered' || status === 'cancelled') return 0;
+  const created = orderCreatedMs(createdAt, now);
+  const { shipping } = demoTimelineMs(routeDurationSeconds);
+  return Math.max(0, created + shipping - now);
+}
+
 export function deliveryRouteGeoJSON(store: LngLat, home: LngLat) {
   return routeLineGeoJSON([store, home]);
+}
+
+export function offsetBeside(at: LngLat, other?: LngLat | null, meters = 90): LngLat {
+  const fallback: LngLat = other && (other[0] !== at[0] || other[1] !== at[1]) ? other : [at[0] + 0.01, at[1]];
+  const dLng = fallback[0] - at[0];
+  const dLat = fallback[1] - at[1];
+  const len = Math.hypot(dLng, dLat) || 1;
+  const nx = -dLat / len;
+  const ny = dLng / len;
+  const degLat = meters / 111_320;
+  const degLng = meters / (111_320 * Math.max(0.2, Math.cos((at[1] * Math.PI) / 180)));
+  return [at[0] + nx * degLng, at[1] + ny * degLat];
 }
 
 /** Polyligne complète (itinéraire OSRM ou fallback). */

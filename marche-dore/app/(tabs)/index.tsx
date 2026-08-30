@@ -5,9 +5,7 @@ import {
   PromoBanner,
   Screen,
   SearchField,
-  SmartNavbar,
-  Page,
-  TabHero } from '@/components/ui';
+  Page } from '@/components/ui';
 import { warmLibreMap } from '@/components/LibreMap';
 import { MotionView, PressScale } from '@/components/motion';
 import { cotonouMap, mapStyles } from '@/constants/map';
@@ -16,10 +14,12 @@ import { useAddresses } from '@/context/AddressesContext';
 import { useColors, useTheme } from '@/context/ThemeContext';
 import { useCart } from '@/context/CartContext';
 import { formatOrderId, useOrders } from '@/context/OrdersContext';
+import { opsPhaseLabel } from '@/lib/orderOps';
 import { useNotifications } from '@/context/NotificationsContext';
 import { useUiState } from '@/context/UiStateContext';
+import { useProfile } from '@/context/ProfileContext';
+import { profilePhotoSource } from '@/lib/profilePhoto';
 import {
-  avatar,
   chipRoute,
   getProducts,
   homeCategories,
@@ -33,7 +33,11 @@ import {
   type Product } from '@/data/catalog';
 import { navigateTab, tabPaths } from '@/lib/navigation';
 import { openSearchScreen } from '@/lib/searchNav';
+import { findNearestSuperU } from '@/lib/deliveryRouting';
+import { useLiveLoyalty } from '@/lib/loyalty';
+import { etaWindowLabel, useDeliveryEstimate } from '@/lib/useDeliveryEstimate';
 import { Feather } from '@expo/vector-icons';
+import { LinearGradient } from 'expo-linear-gradient';
 import { Href, router } from 'expo-router';
 import { memo, useCallback, useMemo, useRef, useState } from 'react';
 import {
@@ -50,7 +54,6 @@ import Animated, {
   Extrapolation,
   interpolate,
   runOnJS,
-  useAnimatedReaction,
   useAnimatedScrollHandler,
   useAnimatedStyle,
   useSharedValue } from 'react-native-reanimated';
@@ -58,15 +61,22 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 const GRID_IMAGE_HEIGHT = 173;
 const GRID_HEAD_COUNT = 6; // 3 lignes × 2 colonnes
+const HOME_GRID_CARD_WIDTH = '49.7%';
+const HOME_PRODUCT_GRID = {
+  flexDirection: 'row' as const,
+  flexWrap: 'wrap' as const,
+  justifyContent: 'flex-start' as const,
+  columnGap: 2,
+  rowGap: 3,
+};
 const CUISINE_COLS = 3;
-const CUISINE_GAP = 6;
+const CUISINE_COL_GAP = 3;
+const CUISINE_ROW_GAP = 6;
 const CUISINE_ROWS = 2;
 const GLACES_VISIBLE = 3.5;
 const GLACES_GAP = 12;
 const PROMO_WIDTH = Dimensions.get('window').width - 40;
 const homePromo = homePromoBanners[0];
-const LOYALTY_POINTS = 450;
-const HERO_OVERLAP = 36;
 
 function HomeScreen() {
   const { scheme } = useTheme();
@@ -75,15 +85,27 @@ function HomeScreen() {
   const insets = useSafeAreaInsets();
   const styles = useMemo(() => createStyles(colors), [colors]);
   const { width: windowWidth } = useWindowDimensions();
-  const [heroHeight, setHeroHeight] = useState(240);
-  const [navInteractive, setNavInteractive] = useState(true);
   const scrollY = useSharedValue(0);
 
   const { count } = useCart();
-  const { activeOrder } = useOrders();
+  const { activeOrders } = useOrders();
+  const orderCardWidth = useMemo(() => {
+    const frame = Math.min(windowWidth, 430) - 40;
+    return activeOrders.length > 1 ? Math.round(frame * 0.86) : frame;
+  }, [windowWidth, activeOrders.length]);
   const { defaultAddress } = useAddresses();
+  const dest = defaultAddress?.coordinate ?? null;
+  const storeFrom = dest ? findNearestSuperU(dest).store.coordinate : null;
+  const deliveryEta = useDeliveryEstimate(storeFrom, dest ?? null);
+  const etaLabel = deliveryEta.loading
+    ? 'Calcul…'
+    : deliveryEta.unavailable || !deliveryEta.durationSeconds
+      ? 'Livraison locale'
+      : etaWindowLabel(deliveryEta.durationSeconds);
   const { unreadCount } = useNotifications();
-  const { homeActiveChipId, setHomeActiveChipId } = useUiState();
+  const { homeActiveChipId } = useUiState();
+  const { profile } = useProfile();
+  const { points: loyaltyPoints } = useLiveLoyalty();
   const activeChip = homeCategories.find((c) => c.id === homeActiveChipId) ?? homeCategories[0];
   const onSale = useMemo(() => promoProducts(), []);
   const popular = useMemo(() => productsForChip(homeActiveChipId), [homeActiveChipId]);
@@ -94,7 +116,7 @@ function HomeScreen() {
   );
   const cuisineCardWidth = useMemo(() => {
     const contentW = Math.min(windowWidth, 430) - 40;
-    return Math.floor((contentW - CUISINE_GAP * (CUISINE_COLS - 1)) / CUISINE_COLS);
+    return Math.floor((contentW - CUISINE_COL_GAP * (CUISINE_COLS - 1)) / CUISINE_COLS);
   }, [windowWidth]);
   const glaces = useMemo(() => productsInCategory('glaces'), []);
   const glaceCardWidth = useMemo(() => {
@@ -128,11 +150,12 @@ function HomeScreen() {
   const feedTail = useMemo(() => feedItems.slice(GRID_HEAD_COUNT), [feedItems]);
 
   const loadMoreFeed = useCallback(() => {
-    setFeedPages((pages) => Math.min(pages + 1, 3));
+    setFeedPages((pages) => (pages >= 3 ? pages : pages + 1));
   }, []);
 
   const maybeLoadMore = useCallback(
     (y: number, layoutH: number, contentH: number) => {
+      if (contentH < 1 || layoutH < 1) return;
       const nearBottom = layoutH + y >= contentH - 280;
       if (!nearBottom || loadingFeed.current) return;
       loadingFeed.current = true;
@@ -154,13 +177,6 @@ function HomeScreen() {
       );
     } });
 
-  useAnimatedReaction(
-    () => scrollY.value > 88,
-    (collapsed, prev) => {
-      if (collapsed !== prev) runOnJS(setNavInteractive)(!collapsed);
-    },
-  );
-
   const sheetAnimStyle = useAnimatedStyle(() => {
     const y = scrollY.value;
     return {
@@ -176,42 +192,6 @@ function HomeScreen() {
         android: {
           elevation: interpolate(y, [0, 80], [8, 2], Extrapolation.CLAMP) },
         default: {} }) };
-  });
-
-  /** Hero SmartNavbar — fades / lifts as the sheet rises. */
-  const heroNavStyle = useAnimatedStyle(() => {
-    const y = scrollY.value;
-    return {
-      opacity: interpolate(y, [0, 36, 96], [1, 0.72, 0], Extrapolation.CLAMP),
-      transform: [
-        { translateY: interpolate(y, [0, 110], [0, -22], Extrapolation.CLAMP) },
-        { scale: interpolate(y, [0, 110], [1, 0.94], Extrapolation.CLAMP) },
-      ] };
-  });
-
-  const locationAnimStyle = useAnimatedStyle(() => {
-    const y = scrollY.value;
-    return {
-      opacity: interpolate(y, [0, 28, 78], [1, 0.8, 0], Extrapolation.CLAMP),
-      transform: [{ translateX: interpolate(y, [0, 96], [0, -18], Extrapolation.CLAMP) }] };
-  });
-
-  const actionsAnimStyle = useAnimatedStyle(() => {
-    const y = scrollY.value;
-    return {
-      opacity: interpolate(y, [0, 36, 88], [1, 0.75, 0], Extrapolation.CLAMP),
-      transform: [{ translateX: interpolate(y, [0, 96], [0, 18], Extrapolation.CLAMP) }] };
-  });
-
-  /** Compact sticky bar — appears once the sheet covers the hero navbar. */
-  const compactNavStyle = useAnimatedStyle(() => {
-    const y = scrollY.value;
-    return {
-      opacity: interpolate(y, [72, 118], [0, 1], Extrapolation.CLAMP),
-      transform: [
-        { translateY: interpolate(y, [72, 118], [-14, 0], Extrapolation.CLAMP) },
-        { scale: interpolate(y, [72, 118], [0.96, 1], Extrapolation.CLAMP) },
-      ] };
   });
 
   const openPromos = () => {
@@ -230,74 +210,53 @@ function HomeScreen() {
     { icon: 'truck' as const, label: 'Suivi', onPress: () => router.push('/tracking') },
   ];
 
-  const renderLocation = (compact = false) =>
-    compact ? (
-      <PressScale
-        style={styles.compactLocation}
-        onPress={openAddresses}
-        scaleTo={0.98}
-        accessibilityRole="button"
-        accessibilityLabel="Changer l’adresse de livraison">
-        <Feather name="map-pin" size={15} color={colors.gold} />
-        <Text style={[styles.compactCity, { color: chrome.ink }]} numberOfLines={1}>
-          {defaultAddress.line}
-        </Text>
-        <Feather name="chevron-down" size={13} color={chrome.muted} />
-      </PressScale>
-    ) : (
-      <PressScale
-        style={styles.location}
-        onPress={openAddresses}
-        scaleTo={0.98}
-        accessibilityRole="button"
-        accessibilityLabel="Changer l’adresse de livraison">
-        <View
-          style={[styles.pin, { backgroundColor: chrome.iconBg, borderColor: chrome.iconBorder }]}>
-          <Feather name="map-pin" size={17} color={colors.gold} />
-        </View>
-        <View style={styles.locationText}>
-          <Text style={[styles.livrer, { color: chrome.muted }]}>Livrer à</Text>
-          <View style={styles.cityRow}>
-            <Text style={[styles.city, { color: chrome.ink }]} numberOfLines={1}>
-              {defaultAddress.line}
-            </Text>
-            <Feather name="chevron-down" size={14} color={chrome.muted} />
-          </View>
-        </View>
-      </PressScale>
-    );
-
-  const renderActions = () => (
-    <>
-      <IconCircle
-        name="bell"
-        variant="hero"
-        badge={unreadNotifications}
-        accessibilityLabel="Notifications"
-        onPress={() => router.push('/notifications')}
-      />
-      <PressScale
-        style={[styles.avatarWrap, { backgroundColor: chrome.iconBg, borderColor: chrome.iconBorder }]}
-        onPress={() => navigateTab(tabPaths.profile)}
-        scaleTo={0.94}
-        accessibilityRole="button"
-        accessibilityLabel="Ouvrir le profil">
-        <Image source={avatar} style={styles.avatar} />
-      </PressScale>
-    </>
-  );
-
   return (
     <Screen>
       <Page style={styles.flex}>
-        <View
-          style={styles.heroBackdrop}
-          onLayout={(e) => setHeroHeight(e.nativeEvent.layout.height)}
-          pointerEvents="none">
-          <TabHero
-            title="Bonjour, Amina 👋"
-            subtitle="Des produits frais et locaux, livrés chez vous."
-            navbar={<View style={styles.navbarSpacer} />}>
+        <View style={styles.hero} pointerEvents="box-none">
+          <LinearGradient colors={chrome.gradient} style={StyleSheet.absoluteFill} pointerEvents="none" />
+          <View style={[styles.heroBar, { paddingTop: Math.max(8, insets.top + 6) }]}>
+            <View style={styles.heroTitleCol}>
+              <PressScale
+                style={styles.heroLocation}
+                onPress={openAddresses}
+                scaleTo={0.98}
+                accessibilityRole="button"
+                accessibilityLabel="Choisir une adresse de livraison">
+                <Feather name="map-pin" size={14} color={colors.gold} />
+                <Text style={[styles.heroLocationText, { color: chrome.ink }]} numberOfLines={1}>
+                  {defaultAddress?.line ?? 'Choisir une adresse'}
+                </Text>
+                <Feather name="chevron-down" size={13} color={chrome.muted} />
+              </PressScale>
+            </View>
+            <View style={styles.navActionsRow}>
+              <IconCircle
+                name="bell"
+                variant="hero"
+                badge={unreadNotifications}
+                accessibilityLabel="Notifications"
+                onPress={() => router.push('/notifications')}
+              />
+              <PressScale
+                style={[styles.avatarWrap, { backgroundColor: chrome.iconBg, borderColor: chrome.iconBorder }]}
+                onPress={() => navigateTab(tabPaths.profile)}
+                scaleTo={0.94}
+                accessibilityRole="button"
+                accessibilityLabel="Ouvrir le profil">
+                <Image source={profilePhotoSource(profile.photoUri)} style={styles.avatar} />
+              </PressScale>
+            </View>
+          </View>
+        </View>
+
+        <Animated.ScrollView
+          style={styles.scrollLayer}
+          contentContainerStyle={styles.scrollContent}
+          showsVerticalScrollIndicator={false}
+          scrollEventThrottle={16}
+          onScroll={onScroll}>
+          <Animated.View style={[styles.bodySheet, sheetAnimStyle]}>
             <View
               style={[
                 styles.heroStats,
@@ -305,81 +264,60 @@ function HomeScreen() {
               ]}>
               <View style={styles.heroStat}>
                 <Feather name="clock" size={15} color={colors.gold} />
-                <Text style={[styles.heroStatText, { color: chrome.ink }]}>30–45 min</Text>
+                <Text style={[styles.heroStatText, { color: colors.text }]}>{etaLabel}</Text>
               </View>
               <View style={[styles.heroDivider, { backgroundColor: chrome.divider }]} />
               <View style={styles.heroStat}>
                 <Feather name="percent" size={15} color={colors.terracotta} />
-                <Text style={[styles.heroStatText, { color: chrome.ink }]}>Promos actives</Text>
+                <Text style={[styles.heroStatText, { color: colors.text }]}>Promos actives</Text>
               </View>
               <View style={[styles.heroDivider, { backgroundColor: chrome.divider }]} />
               <View style={styles.heroStat}>
                 <Feather name="award" size={15} color={colors.green} />
-                <Text style={[styles.heroStatText, { color: chrome.ink }]}>{LOYALTY_POINTS} pts</Text>
+                <Text style={[styles.heroStatText, { color: colors.text }]}>{loyaltyPoints} pts</Text>
               </View>
             </View>
-          </TabHero>
-        </View>
 
-        {/* Hero SmartNavbar — synced with bottom-sheet scroll */}
-        <Animated.View
-          style={[styles.navbarFloat, heroNavStyle]}
-          pointerEvents={navInteractive ? 'box-none' : 'none'}>
-          <SmartNavbar
-            left={<Animated.View style={locationAnimStyle}>{renderLocation(false)}</Animated.View>}
-            right={
-              <Animated.View style={[styles.navActionsRow, actionsAnimStyle]}>
-                {renderActions()}
-              </Animated.View>
-            }
-          />
-        </Animated.View>
-
-        {/* Compact sticky SmartNavbar when sheet covers the hero */}
-        <Animated.View
-          style={[
-            styles.compactNav,
-            {
-              paddingTop: Math.max(8, insets.top ? 6 : 8),
-              backgroundColor: scheme === 'dark' ? 'rgba(30,26,23,0.92)' : 'rgba(253,240,213,0.92)',
-              borderBottomColor: chrome.surfaceBorder },
-            compactNavStyle,
-          ]}
-          pointerEvents={navInteractive ? 'none' : 'box-none'}>
-          <SmartNavbar left={renderLocation(true)} right={renderActions()} />
-        </Animated.View>
-
-        <Animated.ScrollView
-          style={styles.scrollLayer}
-          contentContainerStyle={[
-            styles.scrollContent,
-            { paddingTop: Math.max(0, heroHeight - HERO_OVERLAP) },
-          ]}
-          showsVerticalScrollIndicator={false}
-          scrollEventThrottle={16}
-          onScroll={onScroll}>
-          <Animated.View style={[styles.bodySheet, sheetAnimStyle]}>
-            <MotionView delay={40} preset="down">
+            <MotionView delay={80} preset="down">
               <SearchField onPress={openSearchScreen} />
             </MotionView>
 
             <MotionView delay={90} preset="down">
-              {activeOrder ? (
-                <PressScale
-                  style={styles.orderBanner}
-                  onPress={() => router.push(`/tracking?id=${activeOrder.id}` as Href)}
-                  scaleTo={0.985}>
-                  <View style={styles.orderIcon}>
-                    <Feather name="package" size={18} color={colors.gold} />
-                  </View>
-                  <View style={styles.orderText}>
-                    <Text style={styles.orderTitle}>Commande en cours</Text>
-                    <Text style={styles.orderSub}>
-                      {formatOrderId(activeOrder.id)} · {activeOrder.dayLabel} {activeOrder.slotLabel}
-                    </Text>
-                  </View>
-                  <Feather name="chevron-right" size={18} color={colors.placeholder} />
-                </PressScale>
+              {activeOrders.length ? (
+                <ScrollView
+                  horizontal
+                  nestedScrollEnabled
+                  showsHorizontalScrollIndicator={false}
+                  decelerationRate="fast"
+                  snapToInterval={orderCardWidth + 10}
+                  snapToAlignment="start"
+                  contentContainerStyle={styles.orderRow}>
+                  {activeOrders.map((order, index) => (
+                    <PressScale
+                      key={order.id}
+                      style={[styles.orderBanner, { width: orderCardWidth }]}
+                      onPress={() => router.push(`/tracking?id=${order.id}` as Href)}
+                      scaleTo={0.985}>
+                      <View style={styles.orderIcon}>
+                        <Feather name="package" size={18} color={colors.gold} />
+                      </View>
+                      <View style={styles.orderText}>
+                        <Text style={styles.orderTitle}>
+                          {activeOrders.length > 1
+                            ? `En cours · ${index + 1}/${activeOrders.length}`
+                            : 'Commande en cours'}
+                        </Text>
+                        <Text style={styles.orderSub} numberOfLines={1}>
+                          {formatOrderId(order.id)} · {order.dayLabel} {order.slotLabel}
+                        </Text>
+                        <Text style={styles.orderPhase} numberOfLines={1}>
+                          {opsPhaseLabel(order)}
+                        </Text>
+                      </View>
+                      <Feather name="chevron-right" size={18} color={colors.placeholder} />
+                    </PressScale>
+                  ))}
+                </ScrollView>
               ) : null}
             </MotionView>
 
@@ -462,10 +400,12 @@ function HomeScreen() {
                   <Text style={styles.seeAll}>Voir tout</Text>
                 </Pressable>
               </View>
-              <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.rowCards}>
-                {onSale.map((p) => (
-                  <ProductCard key={p.id} product={p} width={148} imageHeight={130} compact />
-                ))}
+              <ScrollView horizontal showsHorizontalScrollIndicator={false}>
+                <View style={styles.rowCards}>
+                  {onSale.map((p) => (
+                    <ProductCard key={p.id} product={p} width={148} imageHeight={130} compact />
+                  ))}
+                </View>
               </ScrollView>
             </View>
 
@@ -479,10 +419,12 @@ function HomeScreen() {
                   <Text style={styles.seeAll}>Voir tout</Text>
                 </Pressable>
               </View>
-              <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.rowCards}>
-                {popular.map((p) => (
-                  <ProductCard key={p.id} product={p} width={148} imageHeight={130} compact />
-                ))}
+              <ScrollView horizontal showsHorizontalScrollIndicator={false}>
+                <View style={styles.rowCards}>
+                  {popular.map((p) => (
+                    <ProductCard key={p.id} product={p} width={148} imageHeight={130} compact />
+                  ))}
+                </View>
               </ScrollView>
             </View>
 
@@ -520,12 +462,12 @@ function HomeScreen() {
                 <Text style={styles.sectionTitle}>Recommandés pour vous</Text>
                 <Text style={styles.sectionMeta}>Basé sur vos goûts</Text>
               </View>
-              <View style={styles.grid}>
+              <View style={HOME_PRODUCT_GRID}>
                 {feedHead.map(({ product, key }, i) => (
                   <ProductCard
                     key={key}
                     product={product}
-                    width="47.5%"
+                    width={HOME_GRID_CARD_WIDTH}
                     imageHeight={GRID_IMAGE_HEIGHT}
                     compact
                     index={i}
@@ -545,7 +487,11 @@ function HomeScreen() {
                       <Text style={styles.seeAll}>Voir tout</Text>
                     </Pressable>
                   </View>
-                  <View style={[styles.gridCuisine, { gap: CUISINE_GAP }]}>
+                  <View
+                    style={[
+                      styles.gridCuisine,
+                      { columnGap: CUISINE_COL_GAP, rowGap: CUISINE_ROW_GAP },
+                    ]}>
                     {cuisineReady.map((product, i) => (
                       <ProductCard
                         key={`cuisine-${product.id}`}
@@ -562,12 +508,12 @@ function HomeScreen() {
               ) : null}
 
               {feedTail.length > 0 ? (
-                <View style={styles.grid}>
+                <View style={HOME_PRODUCT_GRID}>
                   {feedTail.map(({ product, key }, i) => (
                     <ProductCard
                       key={key}
                       product={product}
-                      width="47.5%"
+                      width={HOME_GRID_CARD_WIDTH}
                       imageHeight={GRID_IMAGE_HEIGHT}
                       compact
                       index={i}
@@ -591,68 +537,38 @@ export default memo(HomeScreen);
 function createStyles(colors: AppColors) {
   return StyleSheet.create({
     flex: { flex: 1 },
-    heroBackdrop: {
-      position: 'absolute',
-      top: 0,
-      left: 0,
-      right: 0,
-      zIndex: 0 },
-    navbarFloat: {
-      position: 'absolute',
-      top: 0,
-      left: 0,
-      right: 0,
+    hero: {
       zIndex: 10,
-      paddingHorizontal: 20,
-      paddingTop: 8 },
+      overflow: 'hidden' },
+    heroBar: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'space-between',
+      paddingHorizontal: 16,
+      paddingBottom: 10,
+      gap: 12 },
+    heroTitleCol: { flex: 1, minWidth: 0 },
+    heroLocation: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 6,
+      alignSelf: 'flex-start',
+      maxWidth: '100%',
+      minHeight: 38,
+      paddingVertical: 2 },
+    heroLocationText: {
+      flexShrink: 1,
+      fontSize: 16,
+      fontWeight: '800' },
     navActionsRow: {
       flexDirection: 'row',
       alignItems: 'center',
-      gap: 8 },
-    compactNav: {
-      position: 'absolute',
-      top: 0,
-      left: 0,
-      right: 0,
-      zIndex: 12,
-      paddingHorizontal: 16,
-      paddingBottom: 10,
-      borderBottomWidth: StyleSheet.hairlineWidth,
-      ...Platform.select({
-        ios: {
-          shadowColor: '#140f0d',
-          shadowOffset: { width: 0, height: 4 },
-          shadowOpacity: 0.12,
-          shadowRadius: 10 },
-        android: { elevation: 6 },
-        default: {} }) },
-    compactLocation: {
-      flexDirection: 'row',
-      alignItems: 'center',
       gap: 8,
-      minHeight: 38 },
-    compactCity: {
-      flexShrink: 1,
-      fontSize: 14,
-      fontWeight: '800' },
-    navbarSpacer: {
-      minHeight: 42,
-      marginBottom: 16 },
+      flexShrink: 0 },
     scrollLayer: {
       flex: 1,
       zIndex: 1 },
     scrollContent: { paddingBottom: tabBarClearance },
-    location: { flexDirection: 'row', alignItems: 'center', gap: 10 },
-    locationText: { flex: 1, gap: 1, minWidth: 0 },
-    pin: {
-      width: 38,
-      height: 38,
-      borderRadius: 13,
-      alignItems: 'center',
-      justifyContent: 'center' },
-    livrer: { fontSize: 11, fontWeight: '600' },
-    cityRow: { flexDirection: 'row', alignItems: 'center', gap: 2 },
-    city: { fontSize: 15, fontWeight: '800' },
     avatarWrap: {
       padding: 2,
       borderRadius: 999 },
@@ -663,7 +579,7 @@ function createStyles(colors: AppColors) {
       borderRadius: 16,
       paddingVertical: 12,
       paddingHorizontal: 14,
-      marginTop: 18 },
+      borderWidth: StyleSheet.hairlineWidth },
     heroStat: { flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6 },
     heroStatText: { fontSize: 11, fontWeight: '700' },
     heroDivider: { width: 1, height: 24 },
@@ -690,6 +606,8 @@ function createStyles(colors: AppColors) {
       backgroundColor: colors.white,
       borderRadius: 18,
       padding: 14 },
+    orderRow: { gap: 10, paddingRight: 4 },
+    orderPhase: { color: colors.gold, fontSize: 11, fontWeight: '700' },
     orderIcon: {
       width: 42,
       height: 42,
@@ -805,12 +723,7 @@ function createStyles(colors: AppColors) {
     sectionTitle: { color: colors.text, fontSize: 18, ...displayFont('700') },
     sectionMeta: { color: colors.muted, fontSize: 12, fontWeight: '500', marginTop: 2 },
     seeAll: { color: colors.gold, fontSize: 13, fontWeight: '700' },
-    rowCards: { gap: 12, paddingRight: 4 },
-    grid: {
-      flexDirection: 'row',
-      flexWrap: 'wrap',
-      justifyContent: 'space-between',
-      gap: 3 },
+    rowCards: { flexDirection: 'row', columnGap: 1, gap: 1, paddingRight: 4 },
     cuisineBlock: { gap: 12, marginTop: 8 },
     gridCuisine: {
       flexDirection: 'row',

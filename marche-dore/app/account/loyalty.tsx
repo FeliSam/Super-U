@@ -1,15 +1,17 @@
 import { LoyaltyQrCode } from '@/components/LoyaltyQrCode';
 import { CtaButton, IconCircle, Page, Screen } from '@/components/ui';
 import { displayFont, type AppColors } from '@/constants/theme';
+import { useCart } from '@/context/CartContext';
 import { useColors } from '@/context/ThemeContext';
+import { useUiState } from '@/context/UiStateContext';
 import {
   buildLoyaltyQrPayload,
   loyaltyEarnRules,
   loyaltyRewards,
   loyaltyTiers } from '@/data/account';
 import { formatFcfa } from '@/lib/format';
-import { useLiveLoyalty } from '@/lib/loyalty';
-import { navigateTab, tabPaths } from '@/lib/navigation';
+import { LOYALTY_RATE_LABEL, useLiveLoyalty } from '@/lib/loyalty';
+import { goBack, navigateTab, tabPaths } from '@/lib/navigation';
 import { Feather } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
 import { router } from 'expo-router';
@@ -20,6 +22,8 @@ export default function LoyaltyScreen() {
   const colors = useColors();
   const styles = useMemo(() => createStyles(colors), [colors]);
   const loyalty = useLiveLoyalty();
+  const { applyPromo } = useCart();
+  const { redeemedRewardIds, redeemReward } = useUiState();
 
   const [copiedCode, setCopiedCode] = useState<string | null>(null);
   const [qrOpen, setQrOpen] = useState(false);
@@ -52,7 +56,7 @@ export default function LoyaltyScreen() {
     <Screen>
       <Page style={styles.flex}>
         <View style={styles.header}>
-          <IconCircle name="chevron-left" onPress={() => router.back()} />
+          <IconCircle name="chevron-left" onPress={() => goBack()} />
           <Text style={styles.title}>Carte de fidélité</Text>
           <View style={styles.headerSpacer} />
         </View>
@@ -111,8 +115,8 @@ export default function LoyaltyScreen() {
                 <Text style={styles.pointsValue}>{loyalty.points} pts</Text>
                 <Text style={styles.pointsHint}>
                   {loyalty.orderCount > 0
-                    ? `1 pt / 100 F · ${loyalty.orderCount} commande${loyalty.orderCount > 1 ? 's' : ''}`
-                    : '1 pt / 100 F sur vos commandes'}
+                    ? `${LOYALTY_RATE_LABEL} · ${loyalty.orderCount} commande${loyalty.orderCount > 1 ? 's' : ''}`
+                    : `${LOYALTY_RATE_LABEL} sur vos commandes`}
                 </Text>
               </View>
               <View style={styles.savedPill}>
@@ -156,7 +160,8 @@ export default function LoyaltyScreen() {
 
           <Text style={styles.sectionTitle}>Récompenses & réductions</Text>
           {loyaltyRewards.map((reward) => {
-            const canRedeem = loyalty.points >= reward.cost;
+            const used = redeemedRewardIds.includes(reward.id);
+            const canRedeem = !used && loyalty.points >= reward.cost && Boolean(reward.code);
             return (
               <View key={reward.id} style={styles.rewardCard}>
                 <View style={styles.rewardIcon}>
@@ -179,11 +184,13 @@ export default function LoyaltyScreen() {
                   style={[styles.redeemBtn, !canRedeem && styles.redeemBtnOff]}
                   disabled={!canRedeem}
                   onPress={() => {
-                    if (reward.code) copyCode(reward.code);
+                    if (!reward.code || used) return;
+                    if (!applyPromo(reward.code)) return;
+                    redeemReward(reward.id, reward.cost);
                     navigateTab(tabPaths.cart);
                   }}>
                   <Text style={[styles.redeemText, !canRedeem && styles.redeemTextOff]}>
-                    {canRedeem ? 'Utiliser' : 'Bientôt'}
+                    {used ? 'Utilisée' : canRedeem ? 'Utiliser' : 'Bientôt'}
                   </Text>
                 </Pressable>
               </View>

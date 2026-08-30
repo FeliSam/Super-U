@@ -1,43 +1,66 @@
 import { Platform } from 'react-native';
 import type { SQLiteDatabase } from 'expo-sqlite';
 
-/** Bump when adding a migration block below. */
-export const LOCAL_DB_VERSION = 1;
+export const LOCAL_DB_NAME = 'marche-dore.db';
 
-/**
- * Local SQLite (on-device / browser). Postgres stays off this app:
- * you host it yourself later and the server talks to it — not Expo.
- */
+/** Bump when adding a migration block below. */
+export const LOCAL_DB_VERSION = 2;
+
 export async function migrateLocalDb(db: SQLiteDatabase) {
   const row = await db.getFirstAsync<{ user_version: number }>('PRAGMA user_version');
   let version = row?.user_version ?? 0;
-  if (version >= LOCAL_DB_VERSION) return;
 
   if (version === 0) {
     if (Platform.OS !== 'web') {
       await db.execAsync(`PRAGMA journal_mode = WAL;`);
     }
+    version = 1;
+  }
+
+  if (version < 2) {
     await db.execAsync(`
-CREATE TABLE IF NOT EXISTS users (
-  id TEXT PRIMARY KEY NOT NULL,
-  email TEXT,
-  phone TEXT,
-  first_name TEXT,
-  last_name TEXT,
-  created_at TEXT NOT NULL
-);
-CREATE TABLE IF NOT EXISTS cart_lines (
-  product_id TEXT PRIMARY KEY NOT NULL,
-  qty INTEGER NOT NULL DEFAULT 1,
+CREATE TABLE IF NOT EXISTS kv (
+  key TEXT PRIMARY KEY NOT NULL,
+  value TEXT NOT NULL,
   updated_at TEXT NOT NULL
 );
-CREATE TABLE IF NOT EXISTS orders (
+CREATE TABLE IF NOT EXISTS catalog_products (
   id TEXT PRIMARY KEY NOT NULL,
+  category_id TEXT NOT NULL,
+  payload TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS catalog_categories (
+  id TEXT PRIMARY KEY NOT NULL,
+  payload TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS catalog_stores (
+  id TEXT PRIMARY KEY NOT NULL,
+  payload TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS catalog_conversations (
+  id TEXT PRIMARY KEY NOT NULL,
+  payload TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS catalog_thread_messages (
+  conversation_id TEXT NOT NULL,
+  id TEXT NOT NULL,
   payload TEXT NOT NULL,
-  created_at TEXT NOT NULL
+  PRIMARY KEY (conversation_id, id)
+);
+CREATE TABLE IF NOT EXISTS catalog_notifications (
+  id TEXT PRIMARY KEY NOT NULL,
+  payload TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS catalog_banners (
+  id TEXT PRIMARY KEY NOT NULL,
+  payload TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS catalog_chips (
+  id TEXT PRIMARY KEY NOT NULL,
+  payload TEXT NOT NULL
 );
 `);
-    version = 1;
+    version = 2;
   }
 
   await db.execAsync(`PRAGMA user_version = ${LOCAL_DB_VERSION}`);

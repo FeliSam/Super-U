@@ -8,23 +8,26 @@ import { displayFont, type AppColors } from '@/constants/theme';
 import { useColors } from '@/context/ThemeContext';
 import { useCart } from '@/context/CartContext';
 import { useFavorites } from '@/context/FavoritesContext';
+import { useOrders } from '@/context/OrdersContext';
+import { useReviews } from '@/context/ReviewsContext';
 import {
   discoverProducts,
   getProduct,
+  liveReviewStats,
   productGallery,
-  productReviewStats,
   products,
   shuffleProducts,
   similarProducts,
   type Product,
 } from '@/data/catalog';
 import { formatFcfa } from '@/lib/format';
+import { softShadow } from '@/lib/shadow';
 import { useExpandableSheet, SHEET_MIN_RATIO } from '@/lib/expandableSheet';
-import { navigateTab, tabPaths } from '@/lib/navigation';
+import { goBack, navigateTab, tabPaths } from '@/lib/navigation';
 import { Feather } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
 import * as Linking from 'expo-linking';
-import { router, useLocalSearchParams } from 'expo-router';
+import { Href, router, useLocalSearchParams } from 'expo-router';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   Alert,
@@ -39,7 +42,8 @@ import {
   useWindowDimensions,
   View,
 } from 'react-native';
-import { GestureDetector, GestureHandlerRootView } from 'react-native-gesture-handler';
+import { GestureRoot } from '@/components/GestureRoot';
+import { GestureDetector } from 'react-native-gesture-handler';
 import Animated, {
   useAnimatedStyle,
   useSharedValue,
@@ -90,6 +94,8 @@ export default function ProductScreen() {
   const { add, setQty: setCartQty, lines, count: cartCount, subtotal: cartSubtotal, listSubtotal: cartListSubtotal } =
     useCart();
   const { isFavorite, toggle } = useFavorites();
+  const { reviewsForProduct, hasUserReviewedProduct } = useReviews();
+  const { orders } = useOrders();
   const liked = isFavorite(id ?? '');
   const [descOpen, setDescOpen] = useState(true);
   const [nutriOpen, setNutriOpen] = useState(false);
@@ -153,7 +159,7 @@ export default function ProductScreen() {
     [loadMoreDiscover, onSheetScroll],
   );
 
-  const footerPad = Math.max(14, insets.bottom + 8) + 76;
+  const footerPad = Math.max(14, insets.bottom + 8) + 84;
 
   if (!product) {
     return (
@@ -161,7 +167,7 @@ export default function ProductScreen() {
         <Page style={styles.page} edgeToEdge>
           <View style={styles.missing}>
             <Text style={styles.missingTitle}>Produit introuvable</Text>
-            <Pressable onPress={() => router.back()}>
+            <Pressable onPress={() => goBack()}>
               <Text style={styles.missingLink}>Retour</Text>
             </Pressable>
           </View>
@@ -175,7 +181,7 @@ export default function ProductScreen() {
   const listTotal = (product.oldPrice ?? product.price) * activeQty;
   const showCompare = listTotal > total;
   const unitLabel = product.unit.replace(/^\d+(?:[.,]\d+)?\s*/, '') || 'kg';
-  const { rating, reviews } = productReviewStats(product);
+  const { rating, reviews } = liveReviewStats(product, reviewsForProduct(product.id));
   const savings = product.oldPrice ? Math.max(0, product.oldPrice - product.price) : 0;
 
   const bumpQty = (next: number) => {
@@ -243,7 +249,7 @@ export default function ProductScreen() {
   return (
     <Screen>
       <Page style={styles.page} edgeToEdge>
-        <GestureHandlerRootView style={styles.flex}>
+        <GestureRoot style={styles.flex}>
         <View style={[styles.heroBackdrop, { height: heroHeight }]} pointerEvents="box-none">
           <ImagePager
             ref={heroPagerRef}
@@ -279,7 +285,7 @@ export default function ProductScreen() {
                 name="arrow-left"
                 variant="onPhoto"
                 accessibilityLabel="Retour"
-                onPress={() => router.back()}
+                onPress={() => goBack()}
               />
             }
             right={
@@ -407,7 +413,15 @@ export default function ProductScreen() {
 
             <Pressable
               style={styles.ratingCard}
-              onPress={() => router.push(`/product/reviews/${product.id}`)}>
+              onPress={() => {
+                const write =
+                  hasPurchasedProduct(orders, product.id) && !hasUserReviewedProduct(product.id);
+                router.push(
+                  write
+                    ? (`/product/reviews/${product.id}?write=1` as Href)
+                    : (`/product/reviews/${product.id}` as Href),
+                );
+              }}>
               <StarRating rating={rating} size={15} />
               <Text style={styles.ratingText}>
                 {rating.toFixed(1)} · {reviews} avis
@@ -499,6 +513,7 @@ export default function ProductScreen() {
               ) : null}
             </View>
 
+            {product.nutrition ? (
             <View style={styles.accordion}>
               <Pressable style={styles.accHead} onPress={() => setNutriOpen((v) => !v)}>
                 <View style={styles.accLeft}>
@@ -509,13 +524,14 @@ export default function ProductScreen() {
               </Pressable>
               {nutriOpen ? (
                 <View style={styles.nutri}>
-                  <NutriRow label="Énergie" value="239 kcal" />
-                  <NutriRow label="Protéines" value="27 g" />
-                  <NutriRow label="Lipides" value="14 g" />
-                  <NutriRow label="Glucides" value="8 g" />
+                  <NutriRow label="Énergie" value={product.nutrition.energy} />
+                  <NutriRow label="Protéines" value={product.nutrition.protein} />
+                  <NutriRow label="Lipides" value={product.nutrition.fat} />
+                  <NutriRow label="Glucides" value={product.nutrition.carbs} />
                 </View>
               ) : null}
             </View>
+            ) : null}
 
             {similar.length > 0 ? (
               <View style={styles.section}>
@@ -541,7 +557,7 @@ export default function ProductScreen() {
                   <ProductCard
                     key={key}
                     product={p}
-                    width="47.5%"
+                    width="49.6%"
                     imageHeight={GRID_IMAGE_HEIGHT}
                     compact
                     index={i}
@@ -569,6 +585,11 @@ export default function ProductScreen() {
         <View style={[styles.footer, { paddingBottom: Math.max(14, insets.bottom + 8) }]}>
           {inCart ? (
             <View style={styles.footerActions}>
+              <View style={styles.footerLinePrices} accessibilityLabel="Prix de la ligne">
+                <Text style={styles.footerLineNow} numberOfLines={1}>
+                  {formatFcfa(total)}
+                </Text>
+              </View>
               <View style={styles.footerQty}>
                 <Pressable style={styles.footerQtyBtn} onPress={() => bumpQty(cartQty - 1)} hitSlop={8}>
                   <Text style={styles.footerQtySign}>–</Text>
@@ -578,7 +599,7 @@ export default function ProductScreen() {
                   style={[styles.footerQtyBtn, styles.footerQtyPlus]}
                   onPress={() => bumpQty(cartQty + 1)}
                   hitSlop={8}>
-                  <Feather name="plus" size={14} color={colors.onAccent} />
+                  <Feather name="plus" size={16} color={colors.onAccent} />
                 </Pressable>
               </View>
               <PressScale style={styles.cta} onPress={() => navigateTab(tabPaths.cart)} scaleTo={0.97}>
@@ -651,15 +672,16 @@ export default function ProductScreen() {
         </View>
 
         {!inCart ? (
-          <CartTotalFab bottom={Math.max(14, insets.bottom + 8) + 76} />
+          <CartTotalFab bottom={Math.max(14, insets.bottom + 8) + 84} />
         ) : null}
-        </GestureHandlerRootView>
+        </GestureRoot>
       </Page>
     </Screen>
   );
 }
 
 function createStyles(colors: AppColors) {
+  const barH = 50;
   return StyleSheet.create({
   page: { flex: 1, backgroundColor: colors.bg },
   flex: { flex: 1 },
@@ -770,7 +792,7 @@ function createStyles(colors: AppColors) {
   },
   thumbScroll: { marginHorizontal: -4 },
   thumbRow: {
-    gap: 10,
+    gap: 4,
     paddingHorizontal: 4,
     paddingBottom: 2,
     alignItems: 'center' },
@@ -932,12 +954,14 @@ function createStyles(colors: AppColors) {
   sectionHead: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'baseline' },
   sectionTitle: { color: colors.text, fontSize: 18, ...displayFont('700') },
   sectionMeta: { color: colors.muted, fontSize: 12, fontWeight: '600' },
-  similarRow: { gap: 12, paddingRight: 4 },
+  similarRow: { gap: 3.6, paddingRight: 4 },
   grid: {
     flexDirection: 'row',
     flexWrap: 'wrap',
-    justifyContent: 'space-between',
-    gap: 8 },
+    justifyContent: 'flex-start',
+    columnGap: 2.4,
+    rowGap: 8,
+  },
   feedHint: {
     color: colors.placeholder,
     fontSize: 12,
@@ -951,48 +975,82 @@ function createStyles(colors: AppColors) {
     zIndex: 5,
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 12,
-    backgroundColor: 'transparent',
-    paddingHorizontal: 16,
-    paddingTop: 8,
+    gap: 6,
+    backgroundColor: colors.white,
+    borderTopWidth: 1,
+    borderTopColor: colors.border,
+    paddingHorizontal: 14,
+    paddingTop: 10,
     paddingBottom: 14,
+    ...softShadow({ y: -6, blur: 20, opacity: 0.14 }),
+    ...Platform.select({
+      web: { boxShadow: '0 -8px 28px rgba(28,22,19,0.12)' },
+      default: {},
+    }),
   },
   footerActions: {
     flex: 1,
     flexDirection: 'row',
-    alignItems: 'center',
-    gap: 10,
+    alignItems: 'stretch',
+    gap: 6,
     minWidth: 0,
+    height: barH,
   },
-  footerQty: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 2,
-    backgroundColor: colors.bg,
-    borderRadius: 14,
-    padding: 3,
-    flexShrink: 0,
-  },
-  footerQtyBtn: {
-    width: 34,
-    height: 34,
-    borderRadius: 11,
-    backgroundColor: colors.white,
+  footerLinePrices: {
+    flex: 2,
+    flexDirection: 'column',
     alignItems: 'center',
     justifyContent: 'center',
+    minWidth: 0,
+    height: barH,
+    backgroundColor: colors.cream,
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: colors.border,
+    paddingHorizontal: 6,
   },
-  footerQtyPlus: { backgroundColor: colors.gold, borderColor: colors.gold },
-  footerQtySign: { fontSize: 18, fontWeight: '700', color: colors.text, lineHeight: 20 },
-  footerQtyVal: {
-    minWidth: 22,
-    textAlign: 'center',
+  footerLineNow: {
+    color: colors.terracotta,
     fontWeight: '800',
     fontSize: 15,
+    letterSpacing: -0.2,
+    lineHeight: 18,
+  },
+  footerQty: {
+    flex: 3,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    minWidth: 0,
+    height: barH,
+    backgroundColor: colors.white,
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: colors.border,
+    padding: 4,
+  },
+  footerQtyBtn: {
+    width: 38,
+    height: 38,
+    borderRadius: 11,
+    backgroundColor: colors.cream,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 1,
+    borderColor: colors.border,
+  },
+  footerQtyPlus: { backgroundColor: colors.gold, borderColor: colors.gold },
+  footerQtySign: { fontSize: 18, fontWeight: '800', color: colors.text, lineHeight: 20 },
+  footerQtyVal: {
+    flex: 1,
+    textAlign: 'center',
+    fontWeight: '800',
+    fontSize: 16,
     color: colors.text,
   },
-  cta: { flex: 1, borderRadius: 16, overflow: 'hidden', minWidth: 0 },
+  cta: { flex: 5, height: barH, borderRadius: 14, overflow: 'hidden', minWidth: 0 },
   ctaDisabled: { backgroundColor: colors.muted },
-  ctaFill: { flex: 1, borderRadius: 16, overflow: 'hidden' },
+  ctaFill: { flex: 1, height: barH, borderRadius: 14, overflow: 'hidden' },
   ctaGradient: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -1010,19 +1068,21 @@ function createStyles(colors: AppColors) {
     minWidth: 0,
   },
   ctaGradientCart: {
+    flex: 1,
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 10,
-    paddingVertical: 10,
-    paddingLeft: 12,
-    paddingRight: 12,
-    minHeight: 52,
+    gap: 7,
+    paddingVertical: 0,
+    paddingLeft: 10,
+    paddingRight: 10,
+    height: barH,
+    minHeight: barH,
   },
   ctaBagIcon: {
     width: 32,
     height: 32,
     borderRadius: 16,
-    backgroundColor: 'rgba(255,255,255,0.18)',
+    backgroundColor: 'rgba(255,255,255,0.22)',
     alignItems: 'center',
     justifyContent: 'center',
     position: 'relative',
@@ -1048,22 +1108,24 @@ function createStyles(colors: AppColors) {
   },
   ctaBagPrices: {
     flex: 1,
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
+    flexDirection: 'column',
+    alignItems: 'flex-start',
+    justifyContent: 'center',
+    gap: 0,
     minWidth: 0,
   },
   ctaBagTotal: {
     color: '#ffffff',
     fontWeight: '800',
     fontSize: 15,
-    letterSpacing: 0.2,
+    letterSpacing: 0.1,
     flexShrink: 0,
   },
   ctaBagOld: {
-    color: 'rgba(255,255,255,0.55)',
+    color: 'rgba(255,255,255,0.72)',
     fontWeight: '600',
-    fontSize: 12,
+    fontSize: 11,
+    lineHeight: 13,
     textDecorationLine: 'line-through',
     flexShrink: 1,
   },

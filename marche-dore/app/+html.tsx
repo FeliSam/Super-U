@@ -7,7 +7,7 @@ import type { ReactNode } from 'react';
 // do not have access to the DOM or browser APIs.
 export default function Root({ children }: { children: ReactNode }) {
   return (
-    <html lang="en">
+    <html lang="fr">
       <head>
         <meta charSet="utf-8" />
         <meta httpEquiv="X-UA-Compatible" content="IE=edge" />
@@ -40,6 +40,7 @@ export default function Root({ children }: { children: ReactNode }) {
 }
 
 const responsiveBackground = `
+@import url('https://fonts.googleapis.com/css2?family=DM+Sans:ital,opsz,wght@0,9..40,400;0,9..40,500;0,9..40,600;0,9..40,700;1,9..40,400&display=swap');
 html, body, #root {
   height: 100%;
 }
@@ -47,9 +48,9 @@ body {
   background-color: #fdfbf7;
   margin: 0;
   overflow: hidden;
+  font-family: 'DM Sans', system-ui, sans-serif;
   -webkit-font-smoothing: antialiased;
   text-rendering: optimizeLegibility;
-  /* Avoid accidental page zoom gestures around form focus on mobile web */
   touch-action: pan-x pan-y;
 }
 #root {
