@@ -41,6 +41,28 @@ export function isActivePickStatus(status: string | null | undefined) {
   return status === 'assigned' || status === 'picking';
 }
 
+/** Mission ouverte : ramassage et/ou livraison pas encore clos. */
+export function staffOpenMission(
+  staffId: string | undefined,
+  jobs: { pick_status?: string | null; picker_id?: string | null }[],
+  deliveries: { delivery_status?: string | null; courier_id?: string | null }[],
+) {
+  if (!staffId) return { pick: false, delivery: false };
+  return {
+    pick: jobs.some((j) => j.picker_id === staffId && isActivePickStatus(j.pick_status)),
+    delivery: deliveries.some((d) => isDeliveryActive(d) && d.courier_id === staffId),
+  };
+}
+
+export function pauseBlockedMessage(open: { pick: boolean; delivery: boolean }) {
+  if (open.pick && open.delivery) {
+    return 'Terminez d’abord le ramassage et la livraison en cours.';
+  }
+  if (open.pick) return 'Terminez d’abord le ramassage en cours.';
+  if (open.delivery) return 'Terminez d’abord la livraison en cours.';
+  return '';
+}
+
 export function normalizeDeliveryStatus(status: string | null | undefined): DeliveryStatus {
   if (!status || status === 'offered') return 'unassigned';
   return status as DeliveryStatus;

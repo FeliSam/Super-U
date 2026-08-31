@@ -5,63 +5,20 @@ import { fileURLToPath } from 'node:url';
 import { migrate, pool, query } from './db.ts';
 import { hashPassword, newUserId } from './password.ts';
 import { seedOpsStaff } from './ops.ts';
-import { seedAdminStaff, seedProductStock } from './admin.ts';
-
-type CatalogFile = {
-  products: { id: string; categoryId: string; payload: object }[];
-  categories: { id: string; payload: object }[];
-  banners: { id: string; payload: object }[];
-  chips: { id: string; payload: object }[];
-  stores: { id: string; payload: object }[];
-};
+import { seedAdminStaff } from './admin.ts';
+import { importCatalog } from './catalogImport.ts';
 
 export async function seedCatalog() {
-  const existing = await query<{ c: string }>('SELECT COUNT(*)::text AS c FROM products');
-  if (Number(existing.rows[0]?.c ?? 0) > 0) return false;
-
-  const dataPath = join(dirname(fileURLToPath(import.meta.url)), '../data/catalog.json');
-  const data = JSON.parse(readFileSync(dataPath, 'utf8')) as CatalogFile;
-  const client = await pool.connect();
-  try {
-    await client.query('BEGIN');
-    for (const p of data.products) {
-      await client.query(
-        'INSERT INTO products (id, category_id, payload) VALUES ($1, $2, $3::jsonb) ON CONFLICT (id) DO NOTHING',
-        [p.id, p.categoryId, JSON.stringify(p.payload)],
-      );
-    }
-    for (const row of data.categories) {
-      await client.query(
-        'INSERT INTO categories (id, payload) VALUES ($1, $2::jsonb) ON CONFLICT (id) DO NOTHING',
-        [row.id, JSON.stringify(row.payload)],
-      );
-    }
-    for (const row of data.banners) {
-      await client.query(
-        'INSERT INTO banners (id, payload) VALUES ($1, $2::jsonb) ON CONFLICT (id) DO NOTHING',
-        [row.id, JSON.stringify(row.payload)],
-      );
-    }
-    for (const row of data.chips) {
-      await client.query(
-        'INSERT INTO chips (id, payload) VALUES ($1, $2::jsonb) ON CONFLICT (id) DO NOTHING',
-        [row.id, JSON.stringify(row.payload)],
-      );
-    }
-    for (const row of data.stores) {
-      await client.query(
-        'INSERT INTO stores (id, payload) VALUES ($1, $2::jsonb) ON CONFLICT (id) DO NOTHING',
-        [row.id, JSON.stringify(row.payload)],
-      );
-    }
-    await client.query('COMMIT');
-  } catch (error) {
-    await client.query('ROLLBACK');
-    throw error;
-  } finally {
-    client.release();
-  }
-  return true;
+  const count = await query<{ count: string }>('SELECT COUNT(*)::text AS count FROM products');
+  const forced =
+    process.env.CATALOG_SEED_FORCE === '1' ||
+    process.env.CATALOG_SEED_FORCE === 'true' ||
+    process.argv.includes('--catalog');
+  if (Number(count.rows[0]?.count ?? 0) > 0 && !forced) return false;
+  const dataPath = join(dirname(fileURLToPath(import.meta.url)), '../data/catalog-west-africa.json');
+  const data: unknown = JSON.parse(readFileSync(dataPath, 'utf8'));
+  const report = await importCatalog(data, { source: 'seed:catalog-west-africa' });
+  return report.products.inserted > 0 || report.products.updated > 0;
 }
 
 export async function seedDemoUser() {
@@ -102,19 +59,22 @@ export async function resetWorkspaceKeepProfiles() {
   await query(`DELETE FROM cart_lines`);
   await query(`DELETE FROM carts`);
   await query(`UPDATE user_state SET payload = '{}'::jsonb`);
-  await query(`DELETE FROM ops.staff WHERE lower(email) NOT IN ('courier@marchedore.bj', 'admin@marchedore.bj')`);
+  await query(
+    `DELETE FROM ops.staff WHERE lower(email) NOT IN (
+      'courier@marchedore.bj', 'picker@marchedore.bj', 'admin@marchedore.bj', 'rh@marchedore.bj'
+    )`,
+  );
   await query(`DELETE FROM users WHERE lower(email) <> $1`, [demoEmail]);
   const courier = await query(`SELECT id FROM ops.staff WHERE email = 'courier@marchedore.bj'`);
   if (!courier.rowCount) await seedOpsStaff();
   return true;
 }
 
-export async function seedAll() {
-  const catalog = await seedCatalog();
+export async function seedAll(options: { catalog?: boolean } = {}) {
+  const catalog = options.catalog === false ? false : await seedCatalog();
   const demo = await seedDemoUser();
   const ops = await seedOpsStaff();
   const admin = await seedAdminStaff();
-  await seedProductStock();
   return { catalog, demo, ops, admin };
 }
 
@@ -124,6 +84,6 @@ if (isCli) {
   if (process.argv.includes('--reset')) {
     console.log({ reset: await resetWorkspaceKeepProfiles() });
   }
-  console.log(await seedAll());
+  console.log(await seedAll({ catalog: true }));
   await pool.end();
 }

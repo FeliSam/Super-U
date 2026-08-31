@@ -1,7 +1,6 @@
 import * as SQLite from 'expo-sqlite';
 import { LOCAL_DB_NAME, migrateLocalDb } from '@/lib/db/migrate';
 import { seedCatalog } from '@/lib/db/seed';
-import { hydrateCatalogFromDb } from '@/lib/db/hydrateCatalog';
 
 export { LOCAL_DB_NAME, migrateLocalDb, LOCAL_DB_VERSION } from '@/lib/db/migrate';
 
@@ -16,7 +15,6 @@ export async function getLocalDb(): Promise<SQLite.SQLiteDatabase | null> {
         const instance = await SQLite.openDatabaseAsync(LOCAL_DB_NAME);
         await migrateLocalDb(instance);
         await seedCatalog(instance);
-        await hydrateCatalogFromDb(instance);
         db = instance;
         return instance;
       } catch (error) {

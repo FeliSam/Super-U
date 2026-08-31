@@ -6,11 +6,11 @@ import {
   CartTotalFab,
   IconCircle,
   Page,
-  ProductCard,
   Screen,
 } from '@/components/ui';
 import { displayFont, type AppColors } from '@/constants/theme';
 import { useColors } from '@/context/ThemeContext';
+import { useCatalogVersion } from '@/context/CatalogContext';
 import {
   categoryFilters,
   exploreCategories,
@@ -19,22 +19,14 @@ import {
   productsInCategory,
   type Product,
 } from '@/data/catalog';
+import { ProductFlashGrid } from '@/components/ProductFlashGrid';
 import { openSearchScreen } from '@/lib/searchNav';
 import { useExpandableSheet, SHEET_MIN_RATIO } from '@/lib/expandableSheet';
 import { Feather } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
 import { router, useLocalSearchParams } from 'expo-router';
 import { useEffect, useMemo, useState } from 'react';
-import {
-  Modal,
-  Platform,
-  Pressable,
-  ScrollView,
-  StyleSheet,
-  Text,
-  useWindowDimensions,
-  View,
-} from 'react-native';
+import { Modal, Platform, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { GestureRoot } from '@/components/GestureRoot';
 import { GestureDetector } from 'react-native-gesture-handler';
 import Animated from 'react-native-reanimated';
@@ -122,11 +114,10 @@ function sortCategoryList(list: Product[], sort: SortKey) {
 }
 
 export default function CategoryScreen() {
+  const catalogVersion = useCatalogVersion();
   const colors = useColors();
   const styles = useMemo(() => createStyles(colors), [colors]);
   const insets = useSafeAreaInsets();
-  const { width } = useWindowDimensions();
-  const cellWidth = Math.floor((width - 40 - 2) / 2);
 
   const {
     sheetMin,
@@ -140,7 +131,6 @@ export default function CategoryScreen() {
     onSheetScrollBeginDrag,
     onSheetScrollEndDrag,
     onFiltersScroll,
-    onSheetWheel,
   } = useExpandableSheet({
     minRatio: SHEET_MIN_RATIO * 0.7,
     lockCollapseToHandle: true,
@@ -167,7 +157,7 @@ export default function CategoryScreen() {
   const baseList = useMemo(() => {
     const inCat = productsInCategory(id ?? '');
     return inCat.length ? inCat : products;
-  }, [id]);
+  }, [id, catalogVersion]);
 
   const list = useMemo(
     () => sortCategoryList(filterCategoryList(baseList, active), sort),
@@ -184,7 +174,7 @@ export default function CategoryScreen() {
         <GestureRoot style={styles.flex}>
           <View style={styles.hero} pointerEvents="box-none">
             {cat?.image ? (
-              <AppImage source={cat.image} frameStyle={StyleSheet.absoluteFill} contentFit="cover" />
+              <AppImage source={cat.image} frameStyle={StyleSheet.absoluteFill} contentFit="cover" priority="high" />
             ) : (
               <View style={[StyleSheet.absoluteFill, { backgroundColor: colors.cream }]} />
             )}
@@ -282,22 +272,18 @@ export default function CategoryScreen() {
               </View>
             </View>
 
-            <ScrollView
-              ref={sheetScrollRef}
+            <ProductFlashGrid
+              products={list}
+              extraData={`${catalogVersion}-${active}-${sort}`}
+              imageHeight={GRID_IMAGE_H}
+              listRef={sheetScrollRef as never}
               style={styles.sheetScroll}
               contentContainerStyle={[styles.sheetScrollContent, { paddingBottom: fabBottom + 96 }]}
-              showsVerticalScrollIndicator={false}
-              bounces
-              overScrollMode="auto"
-              keyboardShouldPersistTaps="handled"
-              nestedScrollEnabled
               scrollEnabled={listScrollEnabled}
-              scrollEventThrottle={1}
-              onScroll={onSheetScroll}
-              onScrollBeginDrag={onSheetScrollBeginDrag}
-              onScrollEndDrag={onSheetScrollEndDrag}
-              onWheel={onSheetWheel}>
-              {list.length === 0 ? (
+              onScroll={onSheetScroll as (event: unknown) => void}
+              onScrollBeginDrag={onSheetScrollBeginDrag as (event: unknown) => void}
+              onScrollEndDrag={onSheetScrollEndDrag as (event: unknown) => void}
+              empty={
                 <View style={styles.emptyWrap}>
                   <EmptyStateHero
                     icon="package"
@@ -318,23 +304,8 @@ export default function CategoryScreen() {
                     onSecondary={openSearchScreen}
                   />
                 </View>
-              ) : (
-                <View style={styles.grid}>
-                  {list.map((p, i) => (
-                    <View key={p.id} style={[styles.cell, { width: cellWidth }]}>
-                      <ProductCard
-                        product={p}
-                        width="100%"
-                        imageHeight={GRID_IMAGE_H}
-                        compact
-                        index={i}
-                        animate={false}
-                      />
-                    </View>
-                  ))}
-                </View>
-              )}
-            </ScrollView>
+              }
+            />
             </Animated.View>
             </GestureDetector>
 

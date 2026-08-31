@@ -3,6 +3,7 @@ import { IconCircle, Page, ProductCard, Screen } from '@/components/ui';
 import { MotionView, PressScale } from '@/components/motion';
 import { bodyFont, displayFont, floatingAboveTabBar, heroChrome, tabBarClearance, type AppColors } from '@/constants/theme';
 import { useAddresses } from '@/context/AddressesContext';
+import { useCatalogVersion } from '@/context/CatalogContext';
 import { useColors, useTheme } from '@/context/ThemeContext';
 import { CartLine, lineListTotal, lineProduct, lineTotal, useCart } from '@/context/CartContext';
 import { useStores } from '@/context/StoresContext';
@@ -237,7 +238,8 @@ function CartScreen() {
     return `${count} article${count > 1 ? 's' : ''}`;
   }, [count]);
 
-  const emptySuggestions = useMemo(() => getProducts(recommendedIds).slice(0, 6), []);
+  const catalogVersion = useCatalogVersion();
+  const emptySuggestions = useMemo(() => getProducts(recommendedIds).slice(0, 6), [catalogVersion]);
   const emptyCategories = useMemo(() => homeCategories.slice(0, 6), []);
 
   return (

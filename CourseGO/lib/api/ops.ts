@@ -28,6 +28,8 @@ export type Staff = {
   photoUrl?: string | null;
   ratingAvg?: number;
   ratingCount?: number;
+  mustResetPassword?: boolean;
+  onboardStatus?: string;
   profile?: StaffProfile | null;
 };
 
@@ -91,7 +93,46 @@ export type OrderLine = {
   unavailable: boolean | null;
   note: string | null;
   barcode?: string | null;
+  category_id?: string | null;
+  available_qty?: number | null;
+  stock_before?: number | null;
+  stock_after?: number | null;
   image_url?: string | null;
+  image?: ProductImageMetadata | null;
+  lot_number?: string | null;
+  batch_number?: string | null;
+  expiry_date?: string | null;
+  best_before_date?: string | null;
+  lot?: {
+    number?: string | null;
+    batchNumber?: string | null;
+    expiryDate?: string | null;
+    bestBeforeDate?: string | null;
+  } | null;
+};
+
+export type ProductImageMetadata = {
+  checksumSha256?: string | null;
+  attribution?: string | null;
+  licenseName?: string | null;
+  licenseUrl?: string | null;
+  placeholder?: boolean | null;
+  checksum_sha256?: string | null;
+  license_name?: string | null;
+  license_url?: string | null;
+  is_placeholder?: boolean | null;
+};
+
+export type BarcodeProduct = {
+  id: string;
+  categoryId: string | null;
+  payload: Record<string, unknown>;
+  sku: string;
+  barcode: string;
+  availableQty: number;
+  available: boolean;
+  imageUrl: string | null;
+  image?: ProductImageMetadata | null;
 };
 
 export async function opsRegister(body: Record<string, unknown>) {
@@ -110,6 +151,13 @@ export async function opsLogin(identifier: string, password: string) {
 
 export async function opsMe() {
   return apiFetch<{ ok: true; staff: Staff }>('/ops/me');
+}
+
+export async function opsChangePassword(body: { password: string; currentPassword?: string }) {
+  return apiFetch<{ ok: true; staff: Staff }>('/ops/me/password', {
+    method: 'PATCH',
+    body: JSON.stringify(body),
+  });
 }
 
 export async function patchStaffPhoto(photo: string) {
@@ -181,6 +229,13 @@ export async function patchPickLines(
     method: 'PATCH',
     body: JSON.stringify({ lines }),
   });
+}
+
+export async function fetchProductByBarcode(code: string, storeId?: string | null) {
+  const query = storeId ? `?storeId=${encodeURIComponent(storeId)}` : '';
+  return apiFetch<{ ok: true; storeId: string; product: BarcodeProduct }>(
+    `/ops/products/by-barcode/${encodeURIComponent(code.trim())}${query}`,
+  );
 }
 
 export async function packPick(id: string) {

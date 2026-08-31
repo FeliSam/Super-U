@@ -19,6 +19,21 @@ function lineDone(line: OrderLine) {
   return Boolean(line.unavailable) || (line.picked_qty ?? 0) >= line.qty;
 }
 
+function imageCredit(line: OrderLine) {
+  const placeholder = line.image?.placeholder ?? line.image?.is_placeholder;
+  if (placeholder === true) return null;
+  const attribution = line.image?.attribution;
+  const license = line.image?.licenseName ?? line.image?.license_name;
+  return [attribution, license].filter(Boolean).join(' · ') || null;
+}
+
+function lotDetails(line: OrderLine) {
+  const number = line.lot?.number ?? line.lot?.batchNumber ?? line.lot_number ?? line.batch_number;
+  const date = line.lot?.expiryDate ?? line.lot?.bestBeforeDate ?? line.expiry_date ?? line.best_before_date;
+  if (!number && !date) return null;
+  return `${number ? `Lot ${number}` : ''}${number && date ? ' · ' : ''}${date ? `DLC/DDM ${date}` : ''}`;
+}
+
 export default function JobScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
   const pickId = decodeURIComponent(id ?? '');
@@ -219,15 +234,34 @@ export default function JobScreen() {
         {lines.map((line) => {
           const done = lineDone(line);
           const active = !done && !queued;
+          const picked = Math.min(line.picked_qty ?? 0, line.qty);
+          const remaining = Math.max(0, line.qty - picked);
+          const credit = imageCredit(line);
+          const lot = lotDetails(line);
           return (
             <View key={line.product_id} style={[styles.card, active && styles.cardActive]}>
-              <ProductThumb productId={line.product_id} name={line.name} size={56} />
+              <ProductThumb
+                productId={line.product_id}
+                name={line.name}
+                categoryId={line.category_id}
+                imageUrl={line.image_url}
+                size={56}
+              />
               <View style={{ flex: 1 }}>
                 <Text style={styles.prod}>{line.name}</Text>
                 <Text style={styles.qty}>
-                  {Math.min(line.picked_qty ?? 0, line.qty)} / {line.qty} × {line.unit ?? 'u'}
+                  Demandé {line.qty} · Ramassé {picked} · Restant {remaining}
                 </Text>
                 <Text style={styles.code}>{line.barcode || productBarcode(line.product_id)}</Text>
+                <View style={styles.stockRow}>
+                  {line.stock_before != null ? (
+                    <Text style={styles.stock}>Initial / avant vente {line.stock_before}</Text>
+                  ) : null}
+                  {line.stock_after != null ? <Text style={styles.stock}>Après commande {line.stock_after}</Text> : null}
+                  {line.available_qty != null ? <Text style={styles.stock}>Disponible {line.available_qty}</Text> : null}
+                </View>
+                {lot ? <Text style={styles.lot}>{lot}</Text> : null}
+                {credit ? <Text style={styles.credit}>Image : {credit}</Text> : null}
                 {line.unavailable ? (
                   <TextInput
                     style={styles.note}
@@ -309,6 +343,8 @@ export default function JobScreen() {
       </View>
       <ScanSheet
         line={scanLine}
+        lines={lines}
+        storeId={job?.store_id ?? (typeof live?.store_id === 'string' ? live.store_id : null)}
         visible={Boolean(scanLine)}
         onClose={() => setScanLine(null)}
         onScanned={(line) => void onScanned(line)}
@@ -351,6 +387,18 @@ const styles = StyleSheet.create({
   prod: { ...displayFont('700'), fontSize: 15 },
   qty: { ...bodyFont('700'), color: colors.teal, fontSize: 13, marginTop: 2 },
   code: { ...bodyFont('600'), fontSize: 11, color: colors.placeholder, marginTop: 2, letterSpacing: 0.3 },
+  stockRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 4, marginTop: 5 },
+  stock: {
+    ...bodyFont('600'),
+    fontSize: 10,
+    color: colors.muted,
+    backgroundColor: colors.bg,
+    borderRadius: 999,
+    paddingHorizontal: 6,
+    paddingVertical: 3,
+  },
+  lot: { ...bodyFont('600'), fontSize: 10, color: colors.amber, marginTop: 4 },
+  credit: { ...bodyFont('400'), fontSize: 9, color: colors.placeholder, marginTop: 3 },
   note: { ...bodyFont('400'), fontSize: 14, marginTop: 6, borderBottomWidth: 1, borderColor: colors.border },
   badge: { borderRadius: 999, paddingHorizontal: 8, paddingVertical: 4, backgroundColor: colors.bg },
   badgeDone: { backgroundColor: colors.tealSoft },

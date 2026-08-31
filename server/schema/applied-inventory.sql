@@ -1,5 +1,5 @@
 -- Export inventaire Postgres (fallback si pg_dump indisponible)
--- generated_at 2026-08-29T18:22:11.240Z
+-- generated_at 2026-08-30T20:54:34.207Z
 
 -- Tables / vues
 -- [S] comms.call_signals_id_seq
@@ -13,33 +13,110 @@
 -- [r] comms.threads
 -- [v] comms.v_inbox
 -- [S] ops.events_id_seq
+-- [r] ops.client_incident_actions
 -- [r] ops.courier_locations
 -- [r] ops.courses
 -- [r] ops.deliveries
+-- [r] ops.delivery_incidents
 -- [r] ops.delivery_offers
 -- [r] ops.events
+-- [r] ops.order_ratings
 -- [r] ops.pick_jobs
 -- [r] ops.schema_meta
 -- [r] ops.staff
+-- [r] ops.staff_documents
+-- [r] ops.staff_notifications
+-- [r] ops.staff_payouts
+-- [r] ops.staff_profiles
 -- [r] ops.staff_sessions
+-- [r] ops.staff_store_affiliations
 -- [v] ops.v_delivery_board
 -- [v] ops.v_pick_board
+-- [S] public.catalog_audit_id_seq
+-- [S] public.catalog_import_rows_id_seq
+-- [S] public.catalog_import_runs_id_seq
+-- [S] public.catalog_tombstones_revision_seq
+-- [S] public.product_media_id_seq
 -- [r] public.banners
 -- [r] public.cart_lines
 -- [r] public.carts
+-- [r] public.catalog_audit
+-- [r] public.catalog_import_rows
+-- [r] public.catalog_import_runs
+-- [r] public.catalog_settings
+-- [r] public.catalog_tombstones
 -- [r] public.categories
 -- [r] public.chips
 -- [r] public.order_lines
 -- [r] public.orders
 -- [r] public.payments
+-- [r] public.product_media
+-- [r] public.product_stock
 -- [r] public.products
 -- [r] public.sessions
+-- [r] public.stock_moves
 -- [r] public.stores
+-- [r] public.user_notifications
 -- [r] public.user_state
 -- [r] public.users
 -- [v] public.v_order_tracking
 
 -- Fonctions
+CREATE OR REPLACE FUNCTION comms.archive_delivered_courier_threads()
+ RETURNS integer
+ LANGUAGE plpgsql
+AS $function$
+DECLARE
+  n INTEGER := 0;
+BEGIN
+  WITH due AS (
+    SELECT t.id
+    FROM comms.threads t
+    JOIN ops.deliveries d ON d.order_id = t.order_id
+    JOIN comms.thread_members m_s
+      ON m_s.thread_id = t.id AND m_s.actor_kind = 'staff' AND m_s.staff_id = d.courier_id
+    JOIN comms.thread_members m_u
+      ON m_u.thread_id = t.id AND m_u.actor_kind = 'customer'
+    WHERE t.kind = 'courier'
+      AND t.archived_at IS NULL
+      AND d.status = 'delivered'
+      AND d.courier_id IS NOT NULL
+      AND COALESCE(d.delivered_at, d.updated_at) <= NOW() - INTERVAL '30 minutes'
+      AND NOT EXISTS (
+        SELECT 1
+        FROM ops.deliveries d2
+        JOIN orders o2 ON o2.id = d2.order_id
+        WHERE d2.courier_id = m_s.staff_id
+          AND o2.user_id = m_u.user_id
+          AND d2.status NOT IN ('delivered', 'failed', 'cancelled')
+      )
+  ),
+  archived AS (
+    UPDATE comms.threads t
+    SET archived_at = NOW(),
+        disabled_at = COALESCE(t.disabled_at, NOW()),
+        updated_at = NOW()
+    FROM due
+    WHERE t.id = due.id
+    RETURNING t.id
+  )
+  INSERT INTO comms.messages (id, thread_id, sender_kind, kind, body, payload)
+  SELECT
+    'msg-archive-' || archived.id,
+    archived.id,
+    'system',
+    'system',
+    'Conversation archivée 30 minutes après la livraison.',
+    '{"reason":"delivered_timeout"}'::jsonb
+  FROM archived
+  ON CONFLICT (id) DO NOTHING;
+
+  GET DIAGNOSTICS n = ROW_COUNT;
+  RETURN n;
+END;
+$function$
+;
+
 CREATE OR REPLACE FUNCTION comms.ensure_courier_thread(p_order_id text, p_staff_id text)
  RETURNS text
  LANGUAGE plpgsql
@@ -47,6 +124,8 @@ AS $function$
 DECLARE
   tid TEXT;
   uid TEXT;
+  prev_order TEXT;
+  extra TEXT;
 BEGIN
   IF p_order_id IS NULL OR p_staff_id IS NULL THEN
     RETURN NULL;
@@ -55,10 +134,67 @@ BEGIN
   IF uid IS NULL THEN
     RETURN NULL;
   END IF;
-  tid := 'courier-' || replace(p_order_id, '#', '');
+
+  SELECT t.id, t.order_id INTO tid, prev_order
+  FROM comms.threads t
+  JOIN comms.thread_members m_u
+    ON m_u.thread_id = t.id AND m_u.actor_kind = 'customer' AND m_u.user_id = uid
+  JOIN comms.thread_members m_s
+    ON m_s.thread_id = t.id AND m_s.actor_kind = 'staff' AND m_s.staff_id = p_staff_id
+  WHERE t.kind = 'courier'
+  ORDER BY t.created_at ASC
+  LIMIT 1;
+
+  IF tid IS NOT NULL THEN
+    UPDATE comms.threads SET order_id = NULL
+     WHERE kind = 'courier' AND order_id = p_order_id AND id <> tid;
+    FOR extra IN
+      SELECT t.id
+      FROM comms.threads t
+      JOIN comms.thread_members m_u
+        ON m_u.thread_id = t.id AND m_u.actor_kind = 'customer' AND m_u.user_id = uid
+      JOIN comms.thread_members m_s
+        ON m_s.thread_id = t.id AND m_s.actor_kind = 'staff' AND m_s.staff_id = p_staff_id
+      WHERE t.kind = 'courier' AND t.id <> tid
+    LOOP
+      UPDATE comms.messages SET thread_id = tid WHERE thread_id = extra;
+      DELETE FROM comms.threads WHERE id = extra;
+    END LOOP;
+    UPDATE comms.threads SET order_id = p_order_id, updated_at = NOW(),
+           disabled_at = NULL, disabled_by = NULL, archived_at = NULL
+    WHERE id = tid;
+    IF prev_order IS DISTINCT FROM p_order_id THEN
+      INSERT INTO comms.messages (id, thread_id, sender_kind, kind, body, payload)
+      VALUES (
+        'msg-join-' || replace(p_order_id, '#', ''),
+        tid,
+        'system',
+        'system',
+        'Commande ' || p_order_id || ' ajoutée à cette conversation.',
+        jsonb_build_object('orderId', p_order_id)
+      )
+      ON CONFLICT (id) DO NOTHING;
+    END IF;
+    INSERT INTO comms.thread_members (thread_id, actor_kind, user_id)
+    SELECT tid, 'customer', uid
+    WHERE NOT EXISTS (
+      SELECT 1 FROM comms.thread_members m WHERE m.thread_id = tid AND m.user_id = uid
+    );
+    INSERT INTO comms.thread_members (thread_id, actor_kind, staff_id)
+    SELECT tid, 'staff', p_staff_id
+    WHERE NOT EXISTS (
+      SELECT 1 FROM comms.thread_members m WHERE m.thread_id = tid AND m.staff_id = p_staff_id
+    );
+    RETURN tid;
+  END IF;
+
+  tid := 'courier-' || p_staff_id || '-' || uid;
+  UPDATE comms.threads SET order_id = NULL
+   WHERE kind = 'courier' AND order_id = p_order_id AND id <> tid;
   INSERT INTO comms.threads (id, kind, order_id, title)
   VALUES (tid, 'courier', p_order_id, 'Livreur')
-  ON CONFLICT (id) DO UPDATE SET updated_at = NOW();
+  ON CONFLICT (id) DO UPDATE SET order_id = EXCLUDED.order_id, updated_at = NOW(),
+    disabled_at = NULL, archived_at = NULL;
   INSERT INTO comms.thread_members (thread_id, actor_kind, user_id)
   SELECT tid, 'customer', uid
   WHERE NOT EXISTS (
@@ -74,6 +210,30 @@ END;
 $function$
 ;
 
+CREATE OR REPLACE FUNCTION comms.ensure_support_thread(p_user_id text)
+ RETURNS text
+ LANGUAGE plpgsql
+AS $function$
+DECLARE
+  tid TEXT;
+BEGIN
+  IF p_user_id IS NULL THEN
+    RETURN NULL;
+  END IF;
+  tid := 'support-' || p_user_id;
+  INSERT INTO comms.threads (id, kind, title)
+  VALUES (tid, 'support', 'Assistance Marché Doré')
+  ON CONFLICT (id) DO UPDATE SET updated_at = NOW();
+  INSERT INTO comms.thread_members (thread_id, actor_kind, user_id)
+  SELECT tid, 'customer', p_user_id
+  WHERE NOT EXISTS (
+    SELECT 1 FROM comms.thread_members m WHERE m.thread_id = tid AND m.user_id = p_user_id
+  );
+  RETURN tid;
+END;
+$function$
+;
+
 CREATE OR REPLACE FUNCTION comms.notify_call()
  RETURNS trigger
  LANGUAGE plpgsql
@@ -83,27 +243,33 @@ BEGIN
     'comms_call',
     json_build_object('call_id', NEW.id, 'thread_id', NEW.thread_id, 'status', NEW.status)::text
   );
-  IF TG_OP = 'INSERT' OR (TG_OP = 'UPDATE' AND NEW.status IS DISTINCT FROM OLD.status) THEN
+  -- Une pastille par fin d’appel, attribuée à l’APPELANT (pas 'system')
+  -- pour que boutique et CourseGO l’alignent à droite / gauche selon qui a composé.
+  IF TG_OP = 'UPDATE'
+     AND NEW.status IS DISTINCT FROM OLD.status
+     AND NEW.status IN ('rejected', 'canceled', 'missed', 'ended') THEN
     INSERT INTO comms.messages (
       id, thread_id, sender_kind, sender_user_id, sender_staff_id, kind, body, payload
     ) VALUES (
       'callmsg-' || NEW.id || '-' || NEW.status,
       NEW.thread_id,
-      'system',
-      NULL,
-      NULL,
+      NEW.caller_kind,
+      NEW.caller_user_id,
+      NEW.caller_staff_id,
       'call',
       CASE NEW.status
-        WHEN 'initiated' THEN 'Appel en cours'
-        WHEN 'ringing' THEN 'Sonnerie'
-        WHEN 'accepted' THEN 'Appel accepté'
         WHEN 'rejected' THEN 'Appel refusé'
         WHEN 'canceled' THEN 'Appel annulé'
         WHEN 'missed' THEN 'Appel manqué'
         WHEN 'ended' THEN 'Appel terminé'
         ELSE 'Appel'
       END,
-      jsonb_build_object('call_id', NEW.id, 'status', NEW.status, 'media', NEW.media)
+      jsonb_build_object(
+        'call_id', NEW.id,
+        'status', NEW.status,
+        'media', NEW.media,
+        'caller_kind', NEW.caller_kind
+      )
     )
     ON CONFLICT (id) DO NOTHING;
   END IF;
@@ -123,6 +289,25 @@ BEGIN
   );
   RETURN NEW;
 END;
+$function$
+;
+
+CREATE OR REPLACE FUNCTION comms.thread_for_order(p_order_id text)
+ RETURNS text
+ LANGUAGE sql
+ STABLE
+AS $function$
+  SELECT t.id
+  FROM orders o
+  LEFT JOIN ops.deliveries d ON d.order_id = o.id
+  JOIN comms.threads t ON t.kind = 'courier' AND t.archived_at IS NULL
+    AND (t.disabled_at IS NULL OR t.disabled_by IS NULL)
+  JOIN comms.thread_members m_u ON m_u.thread_id = t.id AND m_u.user_id = o.user_id AND m_u.actor_kind = 'customer'
+  LEFT JOIN comms.thread_members m_s ON m_s.thread_id = t.id AND m_s.staff_id = d.courier_id AND m_s.actor_kind = 'staff'
+  WHERE o.id = p_order_id
+    AND (d.courier_id IS NULL OR m_s.staff_id IS NOT NULL)
+  ORDER BY CASE WHEN m_s.staff_id IS NOT NULL THEN 0 ELSE 1 END, t.created_at ASC
+  LIMIT 1
 $function$
 ;
 
@@ -151,6 +336,17 @@ BEGIN
   ) THEN
     PERFORM comms.ensure_courier_thread(NEW.order_id, NEW.courier_id);
   END IF;
+  RETURN NEW;
+END;
+$function$
+;
+
+CREATE OR REPLACE FUNCTION public.catalog_set_updated_at()
+ RETURNS trigger
+ LANGUAGE plpgsql
+AS $function$
+BEGIN
+  NEW.updated_at = NOW();
   RETURN NEW;
 END;
 $function$
@@ -265,7 +461,9 @@ AS $function$
     WHEN del IN ('cancelled') OR pick IN ('cancelled') THEN 'cancelled'
     WHEN del IN ('delivered') THEN 'delivered'
     WHEN del IN ('en_route', 'arrived', 'picked_up') THEN 'shipping'
+    -- Acceptée / rassemblée côté app course, pas encore en trajet client
     WHEN pick IN ('picking', 'assigned', 'packed') OR del IN ('assigned', 'at_store') THEN 'preparing'
+    -- confirmed = en attente de l’app course
     ELSE 'confirmed'
   END;
 $function$
@@ -328,6 +526,21 @@ BEGIN
   NEW.delivery_fee := COALESCE((p->>'delivery')::INT, 0);
   NEW.discount := COALESCE((p->>'discount')::INT, 0);
   NEW.total := COALESCE((p->>'total')::INT, 0);
+  IF COALESCE(NEW.item_count, 0) = 0 THEN
+    SELECT COALESCE(SUM(COALESCE((elem->>'qty')::INT, 0)), 0)
+      INTO NEW.item_count
+    FROM jsonb_array_elements(COALESCE(p->'lines', '[]'::jsonb)) elem;
+  END IF;
+  IF COALESCE(NEW.total, 0) = 0 THEN
+    SELECT COALESCE(SUM(
+      COALESCE((elem->>'qty')::INT, 0) * COALESCE((elem->>'unitPrice')::INT, (elem->>'unit_price')::INT, 0)
+    ), 0)
+      INTO NEW.total
+    FROM jsonb_array_elements(COALESCE(p->'lines', '[]'::jsonb)) elem;
+    IF NEW.total = 0 THEN
+      NEW.total := GREATEST(0, COALESCE(NEW.subtotal, 0) + COALESCE(NEW.delivery_fee, 0) - COALESCE(NEW.discount, 0));
+    END IF;
+  END IF;
   NEW.payment_id := NULLIF(p->>'paymentId', '');
   NEW.payment_label := NULLIF(p->>'paymentLabel', '');
   NEW.payment_status := NULLIF(p->>'paymentStatus', '');
@@ -350,6 +563,13 @@ BEGIN
   IF p->>'managedBy' = 'ops' THEN
     NEW.managed_by := 'ops';
   END IF;
+  IF NEW.handoff_code IS NULL OR btrim(NEW.handoff_code) = '' THEN
+    NEW.handoff_code := COALESCE(
+      NULLIF(btrim(p->>'handoffCode'), ''),
+      lpad((1000 + floor(random() * 9000)::int)::text, 4, '0')
+    );
+  END IF;
+  NEW.payload := COALESCE(NEW.payload, '{}'::jsonb) || jsonb_build_object('handoffCode', NEW.handoff_code);
   NEW.updated_at := NOW();
   RETURN NEW;
 END;

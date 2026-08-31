@@ -65,7 +65,6 @@ export function CallOverlay() {
     toggleMute,
     toggleSpeaker,
     toggleHold,
-    toggleVideo,
     toggleKeypad,
     expand,
     minimize,
@@ -100,7 +99,6 @@ export function CallOverlay() {
     controls.muted ? 'Micro coupé' : null,
     controls.speakerOn ? 'Haut-parleur' : null,
     controls.onHold ? 'En attente' : null,
-    controls.videoOn ? 'Caméra' : null,
   ].filter(Boolean);
 
   const statusLabel =
@@ -154,14 +152,18 @@ export function CallOverlay() {
           {phase === 'outgoing' || phase === 'incoming' ? (
             <Animated.View style={[styles.pulse, ringStyle]} />
           ) : null}
-          <View style={[styles.avatar, controls.videoOn && styles.avatarVideo]}>
-            <Feather name={controls.videoOn ? 'video' : 'phone'} size={32} color={colors.onAccent} />
+          <View style={styles.avatar}>
+            <Feather name="phone" size={32} color={colors.onAccent} />
           </View>
         </View>
         <Text style={styles.name}>{call.peerName}</Text>
         <Text style={styles.status}>{statusLabel}</Text>
         <Text style={styles.hint}>
-          {flags.length ? flags.join(' · ') : 'Appel dans l’app avec votre coursier'}
+          {flags.length
+            ? flags.join(' · ')
+            : phase === 'outgoing'
+              ? 'Le micro s’ouvre quand le coursier décroche'
+              : 'Appel audio dans l’app'}
         </Text>
         {phase === 'active' ? (
           <Pressable style={styles.minimizeBtn} onPress={minimize} accessibilityLabel="Réduire l’appel">
@@ -246,15 +248,6 @@ export function CallOverlay() {
                   styles={styles}
                   colors={colors}
                 />
-                <ControlBtn
-                  icon={controls.videoOn ? 'video' : 'video-off'}
-                  label="Caméra"
-                  active={controls.videoOn}
-                  disabled={phase !== 'active'}
-                  onPress={toggleVideo}
-                  styles={styles}
-                  colors={colors}
-                />
               </View>
             )}
 
@@ -320,7 +313,6 @@ function createStyles(colors: AppColors) {
       alignItems: 'center',
       justifyContent: 'center',
     },
-    avatarVideo: { backgroundColor: colors.gold },
     name: { color: colors.text, fontSize: 22, ...displayFont('700'), textAlign: 'center' },
     status: { color: colors.muted, fontSize: 15, fontWeight: '600' },
     hint: { color: colors.placeholder, fontSize: 12, marginTop: 2, textAlign: 'center' },

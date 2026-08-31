@@ -1,8 +1,9 @@
 import { type AppColors } from '@/constants/theme';
 import { imagePlaceholder } from '@/constants/media';
 import { useColors } from '@/context/ThemeContext';
+import { catalogImageFallback } from '@/data/catalog';
 import { Image, type ImageProps } from 'expo-image';
-import { memo, useMemo } from 'react';
+import { memo, useEffect, useMemo, useState } from 'react';
 import {
   Image as RNImage,
   Platform,
@@ -55,11 +56,18 @@ export const AppImage = memo(function AppImage({
   cachePolicy = 'memory-disk',
   contentFit = 'cover',
   source,
+  onError,
+  priority = 'low',
+  recyclingKey,
   ...rest
 }: Props) {
   const colors = useColors();
   const styles = useMemo(() => createStyles(colors), [colors]);
-  const bundled = isBundledSource(source);
+  const [failed, setFailed] = useState(false);
+  const fallback = catalogImageFallback(source);
+  useEffect(() => setFailed(false), [source]);
+  const resolvedSource = failed && fallback ? fallback : source;
+  const bundled = isBundledSource(resolvedSource);
   const resolvedTransition = transition ?? (bundled || Platform.OS === 'web' ? 0 : 80);
 
   if (bundled) {
@@ -68,11 +76,16 @@ export const AppImage = memo(function AppImage({
     return (
       <View style={[styles.frame, frameStyle]}>
         <RNImage
-          source={source as number}
+          source={resolvedSource as number}
           style={[styles.image, style]}
           resizeMode={resizeMode}
           accessibilityIgnoresInvertColors
-          {...(Platform.OS === 'web' ? ({ loading: 'eager', fetchPriority: 'high' } as object) : null)}
+          {...(Platform.OS === 'web'
+            ? ({
+                loading: priority === 'low' ? 'lazy' : 'eager',
+                fetchPriority: priority === 'low' ? 'low' : 'high',
+              } as object)
+            : null)}
         />
       </View>
     );
@@ -82,14 +95,19 @@ export const AppImage = memo(function AppImage({
     <View style={[styles.frame, frameStyle]}>
       <Image
         {...rest}
-        source={source}
+        source={resolvedSource}
         style={[styles.image, style]}
         placeholder={placeholder}
         placeholderContentFit={placeholderContentFit}
         transition={resolvedTransition}
         cachePolicy={cachePolicy}
         contentFit={contentFit}
-        priority="high"
+        priority={priority}
+        recyclingKey={recyclingKey}
+        onError={(event) => {
+          if (fallback) setFailed(true);
+          onError?.(event);
+        }}
       />
     </View>
   );

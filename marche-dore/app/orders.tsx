@@ -1,6 +1,7 @@
 import { AppImage } from '@/components/AppImage';
 import { EmptyStateHero } from '@/components/EmptyStateHero';
 import { IconCircle, Screen, Page } from '@/components/ui';
+import { PlatformVirtualList } from '@/components/ProductFlashGrid';
 import { MotionView, PressScale } from '@/components/motion';
 import { displayFont, type AppColors } from '@/constants/theme';
 import { useColors } from '@/context/ThemeContext';
@@ -25,7 +26,6 @@ import {
   Animated,
   PanResponder,
   Pressable,
-  ScrollView,
   StyleSheet,
   Text,
   View } from 'react-native';
@@ -150,7 +150,7 @@ function OrderCard({ order, index }: { order: Order; index: number }) {
   const primaryBg = active ? colors.terracotta : colors.gold;
 
   return (
-    <MotionView preset="down" delay={40 + index * 40}>
+    <MotionView preset="down" delay={0}>
       <View style={styles.swipeWrap}>
         <Animated.View style={[styles.leftRail, { opacity: leftProgress }]}>
           <Pressable style={styles.helpBtn} onPress={onHelp}>
@@ -315,10 +315,21 @@ export default function OrdersScreen() {
           </View>
         ) : null}
 
-        <ScrollView
+        <PlatformVirtualList
+          data={!ready || orders.length === 0 || filtered.length === 0 ? [] : filtered}
+          keyExtractor={(order: Order) => order.id}
+          renderItem={({ item, index }: { item: Order; index: number }) => (
+            <View style={styles.listItem}>
+              <OrderCard order={item} index={index} />
+            </View>
+          )}
+          initialNumToRender={6}
+          maxToRenderPerBatch={6}
+          windowSize={6}
           contentContainerStyle={[styles.content, { paddingBottom: Math.max(28, insets.bottom + 16) }]}
-          showsVerticalScrollIndicator={false}>
-          {!ready ? null : orders.length === 0 ? (
+          showsVerticalScrollIndicator={false}
+          ListEmptyComponent={
+            !ready ? null : orders.length === 0 ? (
             <EmptyStateHero
               icon="clock"
               badge="Historique"
@@ -357,14 +368,9 @@ export default function OrdersScreen() {
               secondaryIcon="truck"
               onSecondary={() => router.push('/tracking' as Href)}
             />
-          ) : (
-            <View style={styles.list}>
-              {filtered.map((order, i) => (
-                <OrderCard key={order.id} order={order} index={i} />
-              ))}
-            </View>
-          )}
-        </ScrollView>
+          ) : null
+          }
+        />
       </Page>
     </Screen>
   );
@@ -422,7 +428,7 @@ function createStyles(colors: AppColors) {
   chipCountText: { color: colors.muted, fontSize: 11, fontWeight: '800' },
   chipCountTextOn: { color: colors.onAccent },
   content: { paddingHorizontal: 20, flexGrow: 1 },
-  list: { gap: 12 },
+  listItem: { paddingBottom: 12 },
   swipeWrap: {
     position: 'relative',
     borderRadius: 22,

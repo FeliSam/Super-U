@@ -53,7 +53,7 @@ export type CallControls = {
 
 const IDLE_CONTROLS: CallControls = {
   muted: false,
-  speakerOn: true,
+  speakerOn: false,
   onHold: false,
   videoOn: false,
   keypadOpen: false,
@@ -175,14 +175,14 @@ export function CallProvider({ children }: { children: React.ReactNode }) {
 
   useEffect(() => {
     const id = remote?.id;
-    const live = phase === 'outgoing' || phase === 'incoming' || phase === 'active';
-    if (!id || !live) {
+    if (!id || phase === 'idle') {
       if (mediaFor.current) {
         stopCallMedia();
         mediaFor.current = null;
       }
       return;
     }
+    if (phase !== 'active') return;
     if (mediaFor.current === id) return;
     void startCallMedia({
       callId: id,
@@ -205,9 +205,9 @@ export function CallProvider({ children }: { children: React.ReactNode }) {
       muted: controls.muted,
       held: controls.onHold,
       speakerOn: controls.speakerOn,
-      live: phase !== 'idle',
+      live: phase === 'active',
     });
-    if (phase === 'active' || phase === 'outgoing' || phase === 'incoming') resumeCallPlayback();
+    if (phase === 'active') resumeCallPlayback();
   }, [controls.muted, controls.onHold, controls.speakerOn, phase]);
 
   const startOutgoing = useCallback((conversationId: string, peerNameValue: string) => {
@@ -220,18 +220,8 @@ export function CallProvider({ children }: { children: React.ReactNode }) {
     setPhase('outgoing');
     void (async () => {
       try {
-        const local = await captureLocalMic();
         const res = await startCall(conversationId, 'audio');
-        await startCallMedia({
-          callId: res.call.id,
-          isCaller: true,
-          localStream: local,
-          selfKind: 'customer',
-          postSignal: (type, payload) => postCallSignal(res.call.id, type, payload).then(() => undefined),
-          fetchSignals: async (afterId) => (await fetchCallSignals(res.call.id, afterId)).signals ?? [],
-          onRemoteEnd: () => resetCall(),
-        });
-        mediaFor.current = res.call.id;
+        mediaFor.current = null;
         setRemote(res.call);
         setPhase(res.call.status === 'accepted' ? 'active' : 'outgoing');
         clearMiss();

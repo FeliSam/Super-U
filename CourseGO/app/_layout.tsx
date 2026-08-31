@@ -39,6 +39,10 @@ function Gate() {
       return;
     }
     if (!staff) return;
+    if (staff.mustResetPassword) {
+      if (authPage !== 'reset-password') router.replace('/(auth)/reset-password');
+      return;
+    }
     if (!onboarding.welcomeDone) {
       if (authPage !== 'welcome') router.replace('/(auth)/welcome');
       return;

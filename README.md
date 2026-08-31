@@ -6,7 +6,7 @@ Un dépôt, une API, une base Postgres. Deux apps Expo 57.
 | --- | --- | --- | --- |
 | `marche-dore/` | Boutique client | 8081 | `public.users` — `demo@marchedore.bj` / `marche2024` |
 | `CourseGO/` | Staff picking + livraison | 8082 | `ops.staff` — `picker@marchedore.bj` ou `courier@marchedore.bj` / `marche2024` |
-| `marche-admin/` | Back-office catalogue & stock | 8083 | `ops.staff` admin — `admin@marchedore.bj` / `marche2024` |
+| `marche-admin/` | Back-office catalogue, stock et personnel | 8083 | `ops.staff` — `admin@marchedore.bj` ou `rh@marchedore.bj` / `marche2024` |
 | `server/` | API Hono | 8787 | — |
 
 Les PNG catalogue vivent dans `marche-dore/assets/images/catalog/`. L’API les sert sur `/catalog/media/:id`. CourseGO les `require()` aussi en local (même dossier).
@@ -18,7 +18,7 @@ docker compose up -d          # Postgres :5432
 npm run dev:api               # API
 npm run dev:shop              # boutique
 npm run dev:course            # CourseGO
-npm run dev:admin             # Marché Admin (catalogue)
+npm run dev:admin             # Marché Admin (catalogue + RH)
 ```
 
 Ou dans chaque dossier : `npm install` puis `npm run web` / `npm run dev`.

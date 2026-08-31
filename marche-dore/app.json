@@ -37,6 +37,15 @@
       "favicon": "./assets/images/favicon.png"
     },
     "plugins": [
+      [
+        "expo-font",
+        {
+          "fonts": [
+            "./assets/fonts/Ionicons.ttf",
+            "./assets/fonts/Feather.ttf"
+          ]
+        }
+      ],
       "expo-router",
       [
         "expo-status-bar",

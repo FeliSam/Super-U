@@ -1,10 +1,11 @@
 import { AppImage } from '@/components/AppImage';
 import { goBack } from '@/lib/navigation';
-import { IconCircle, ProductCard, Screen, SearchField, Page, TabHero } from '@/components/ui';
-import { tabBarClearance, type AppColors } from '@/constants/theme';
-import { useColors } from '@/context/ThemeContext';
+import { IconCircle, ProductCard, Screen, SearchField, Page } from '@/components/ui';
+import { bodyFont, heroChrome, tabBarClearance, type AppColors } from '@/constants/theme';
+import { useColors, useTheme } from '@/context/ThemeContext';
 import { useUiState } from '@/context/UiStateContext';
 import { useFavorites } from '@/context/FavoritesContext';
+import { useCatalogVersion } from '@/context/CatalogContext';
 import { useOrders } from '@/context/OrdersContext';
 import {
   popularTermsForAccount,
@@ -14,17 +15,19 @@ import {
   searchProducts,
   searchSuggestions,
   type SearchSort } from '@/data/catalog';
+import { ProductFlashGrid } from '@/components/ProductFlashGrid';
 import { Feather } from '@expo/vector-icons';
+import { LinearGradient } from 'expo-linear-gradient';
 import { router } from 'expo-router';
-import { memo, useMemo, useState } from 'react';
+import { memo, useMemo } from 'react';
 import {
-  Dimensions,
   Platform,
   Pressable,
   ScrollView,
   StyleSheet,
   Text,
   View } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import Animated, {
   Extrapolation,
   interpolate,
@@ -41,12 +44,13 @@ const filters: { key: FilterKey; icon: React.ComponentProps<typeof Feather>['nam
   { key: 'Promo', icon: 'tag' },
 ];
 
-const HERO_OVERLAP = 36;
-
 function SearchScreen() {
+  const catalogVersion = useCatalogVersion();
+  const { scheme } = useTheme();
   const colors = useColors();
+  const chrome = useMemo(() => heroChrome(scheme), [scheme]);
   const styles = useMemo(() => createStyles(colors), [colors]);
-  const [heroHeight, setHeroHeight] = useState(160);
+  const insets = useSafeAreaInsets();
   const scrollY = useSharedValue(0);
 
   const onScroll = useAnimatedScrollHandler({
@@ -70,14 +74,6 @@ function SearchScreen() {
           elevation: interpolate(y, [0, 80], [8, 2], Extrapolation.CLAMP) },
         default: {} }) };
   });
-
-  const handleAnimStyle = useAnimatedStyle(() => ({
-    opacity: interpolate(scrollY.value, [0, 60], [1, 0.7], Extrapolation.CLAMP),
-    backgroundColor: colors.grabber,
-    transform: [
-      {
-        scaleX: interpolate(scrollY.value, [0, 80], [1, 0.7], Extrapolation.CLAMP) },
-    ] }));
 
   const {
     searchQuery,
@@ -111,7 +107,7 @@ function SearchScreen() {
         sort,
         inStockOnly: searchInStockOnly,
         promoOnly: searchPromoOnly }),
-    [searchQuery, sort, searchInStockOnly, searchPromoOnly],
+    [searchQuery, sort, searchInStockOnly, searchPromoOnly, catalogVersion],
   );
 
   const accountPopulars = useMemo(() => {
@@ -122,7 +118,7 @@ function SearchScreen() {
 
   const liveSuggestions = useMemo(
     () => searchSuggestions(searchQuery, searchRecents, accountPopulars),
-    [searchQuery, searchRecents, accountPopulars],
+    [searchQuery, searchRecents, accountPopulars, catalogVersion],
   );
 
   const filteredRecents = useMemo(() => {
@@ -187,44 +183,68 @@ function SearchScreen() {
       ? 'Filtres actifs appliqués'
       : `${products.length} produits disponibles`;
 
+  const continueTerm = searchRecents[0] ?? null;
+  const continueProducts = useMemo(
+    () => (continueTerm ? searchProducts(continueTerm, { inStockOnly: true }).slice(0, 8) : []),
+    [continueTerm, catalogVersion],
+  );
+
   const showDiscovery = !hasQuery;
 
   return (
     <Screen>
       <Page style={styles.flex}>
-        <View
-          style={styles.heroBackdrop}
-          onLayout={(e) => setHeroHeight(e.nativeEvent.layout.height)}
-          pointerEvents="box-none">
-          <TabHero
-            title="Rechercher"
-            subtitle="Trouvez vos produits frais, locaux et en promotion."
-            left={
+        <View style={styles.hero} pointerEvents="box-none">
+          <LinearGradient colors={chrome.gradient} style={StyleSheet.absoluteFill} pointerEvents="none" />
+          <View style={[styles.heroBar, { paddingTop: Math.max(8, insets.top + 6) }]}>
+            <View style={styles.heroTitleCol}>
               <IconCircle
                 name="chevron-left"
                 variant="hero"
                 accessibilityLabel="Retour"
                 onPress={() => goBack()}
               />
-            }
-          />
+              <Text style={[styles.heroTitle, { color: chrome.ink }]} numberOfLines={1}>
+                Rechercher
+              </Text>
+            </View>
+            <View style={styles.heroActions}>
+              <IconCircle
+                name="tag"
+                variant="hero"
+                accessibilityLabel="Promotions"
+                onPress={() => router.push('/promotions')}
+              />
+            </View>
+          </View>
         </View>
 
-        <Animated.ScrollView
+        <ProductFlashGrid
+          products={results}
+          extraData={catalogVersion}
+          imageHeight={160}
           style={styles.scrollLayer}
-          contentContainerStyle={[
-            styles.scrollContent,
-            { paddingTop: Math.max(0, heroHeight - HERO_OVERLAP) },
-          ]}
-          showsVerticalScrollIndicator={false}
+          onScroll={onScroll as (event: unknown) => void}
           keyboardShouldPersistTaps="handled"
-          scrollEventThrottle={16}
-          onScroll={onScroll}>
-          <Animated.View style={[styles.bodySheet, sheetAnimStyle]}>
-            <View style={styles.sheetHandle}>
-              <Animated.View style={[styles.sheetHandleBar, handleAnimStyle]} />
+          contentContainerStyle={styles.scrollContent}
+          empty={
+            <View style={styles.emptyCard}>
+              <View style={styles.emptyIcon}>
+                <Feather name="search" size={28} color={colors.gold} />
+              </View>
+              <Text style={styles.emptyTitle}>Aucun résultat</Text>
+              <Text style={styles.emptyText}>
+                Essayez un autre mot-clé, vérifiez l'orthographe ou retirez un filtre actif.
+              </Text>
+              {hasQuery ? (
+                <Pressable style={styles.emptyBtn} onPress={() => setSearchQuery('')}>
+                  <Text style={styles.emptyBtnText}>Effacer la recherche</Text>
+                </Pressable>
+              ) : null}
             </View>
-
+          }
+          header={
+          <Animated.View style={[styles.bodySheet, sheetAnimStyle]}>
             <SearchField
               value={searchQuery}
               onChangeText={setSearchQuery}
@@ -281,6 +301,27 @@ function SearchScreen() {
 
             {showDiscovery ? (
               <>
+                {continueProducts.length && continueTerm ? (
+                  <View style={styles.section}>
+                    <View style={styles.sectionHead}>
+                      <View>
+                        <Text style={styles.sectionTitle}>Continuer « {continueTerm} »</Text>
+                        <Text style={styles.sectionMeta}>D’après votre recherche</Text>
+                      </View>
+                      <Pressable onPress={() => applySearch(continueTerm)}>
+                        <Text style={styles.clear}>Voir tout</Text>
+                      </Pressable>
+                    </View>
+                    <ScrollView horizontal showsHorizontalScrollIndicator={false} keyboardShouldPersistTaps="handled">
+                      <View style={styles.rowCards}>
+                        {continueProducts.map((p) => (
+                          <ProductCard key={`cont-${p.id}`} product={p} width={148} imageHeight={130} compact animate={false} />
+                        ))}
+                      </View>
+                    </ScrollView>
+                  </View>
+                ) : null}
+
                 {filteredRecents.length > 0 ? (
                   <View style={styles.card}>
                     <View style={styles.sectionHead}>
@@ -316,17 +357,25 @@ function SearchScreen() {
 
                 {filteredTags.length > 0 ? (
                 <View style={styles.card}>
-                  <View style={styles.sectionHeadLeft}>
-                    <Feather name="trending-up" size={15} color={colors.terracotta} />
-                    <Text style={styles.sectionTitle}>Populaires</Text>
+                  <View style={styles.sectionHead}>
+                    <View style={styles.sectionHeadLeft}>
+                      <Feather name="trending-up" size={15} color={colors.terracotta} />
+                      <Text style={styles.sectionTitle}>Populaires</Text>
+                    </View>
                   </View>
-                  <View style={styles.tagWrap}>
-                    {filteredTags.map((s) => (
+                  <ScrollView
+                    horizontal
+                    showsHorizontalScrollIndicator={false}
+                    contentContainerStyle={styles.tagRow}
+                    keyboardShouldPersistTaps="handled">
+                    {filteredTags.slice(0, 10).map((s) => (
                       <Pressable key={s} style={styles.tag} onPress={() => applySearch(s)}>
-                        <Text style={styles.tagText}>{s}</Text>
+                        <Text style={styles.tagText} numberOfLines={1}>
+                          {s}
+                        </Text>
                       </Pressable>
                     ))}
-                  </View>
+                  </ScrollView>
                 </View>
                 ) : null}
 
@@ -366,32 +415,10 @@ function SearchScreen() {
                   </View>
                 ) : null}
               </View>
-
-              {results.length > 0 ? (
-                <View style={styles.grid}>
-                  {results.map((p) => (
-                    <ProductCard key={p.id} product={p} width="49.6%" imageHeight={160} compact />
-                  ))}
-                </View>
-              ) : (
-                <View style={styles.emptyCard}>
-                  <View style={styles.emptyIcon}>
-                    <Feather name="search" size={28} color={colors.gold} />
-                  </View>
-                  <Text style={styles.emptyTitle}>Aucun résultat</Text>
-                  <Text style={styles.emptyText}>
-                    Essayez un autre mot-clé, vérifiez l'orthographe ou retirez un filtre actif.
-                  </Text>
-                  {hasQuery ? (
-                    <Pressable style={styles.emptyBtn} onPress={() => setSearchQuery('')}>
-                      <Text style={styles.emptyBtnText}>Effacer la recherche</Text>
-                    </Pressable>
-                  ) : null}
-                </View>
-              )}
             </View>
           </Animated.View>
-        </Animated.ScrollView>
+          }
+        />
       </Page>
     </Screen>
   );
@@ -402,24 +429,43 @@ export default memo(SearchScreen);
 function createStyles(colors: AppColors) {
   return StyleSheet.create({
     flex: { flex: 1 },
-    heroBackdrop: {
-      position: 'absolute',
-      top: 0,
-      left: 0,
-      right: 0,
-      zIndex: 0 },
+    hero: {
+      zIndex: 10,
+      overflow: 'hidden',
+    },
+    heroBar: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'space-between',
+      paddingHorizontal: 16,
+      paddingBottom: 10,
+      gap: 12,
+    },
+    heroTitleCol: {
+      flex: 1,
+      minWidth: 0,
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 8,
+    },
+    heroTitle: {
+      ...bodyFont('800'),
+      fontSize: 28,
+      lineHeight: 34,
+      flexShrink: 1,
+    },
+    heroActions: { flexDirection: 'row', alignItems: 'center', gap: 8, flexShrink: 0 },
     scrollLayer: {
       flex: 1,
       zIndex: 1 },
-    scrollContent: { paddingBottom: tabBarClearance },
+    scrollContent: { paddingBottom: tabBarClearance, paddingHorizontal: 20 },
     bodySheet: {
       backgroundColor: colors.bg,
       borderTopLeftRadius: 28,
       borderTopRightRadius: 28,
-      paddingHorizontal: 20,
+      paddingHorizontal: 0,
       paddingTop: 8,
       gap: 18,
-      minHeight: Dimensions.get('window').height,
       ...Platform.select({
         ios: {
           shadowColor: '#1c1613',
@@ -428,15 +474,6 @@ function createStyles(colors: AppColors) {
           shadowOpacity: 0.14 },
         android: { elevation: 8 },
         default: {} }) },
-    sheetHandle: {
-      alignItems: 'center',
-      justifyContent: 'center',
-      paddingVertical: 8 },
-    sheetHandleBar: {
-      width: 48,
-      height: 5,
-      borderRadius: 999,
-      backgroundColor: colors.grabber },
     filtersScroll: {
       flexGrow: 0,
       flexShrink: 0,
@@ -505,6 +542,7 @@ function createStyles(colors: AppColors) {
     sectionHeadLeft: { flexDirection: 'row', alignItems: 'center', gap: 8 },
     sectionTitle: { color: colors.text, fontSize: 16, fontWeight: '800' },
     sectionMeta: { color: colors.muted, fontSize: 12, fontWeight: '600' },
+    rowCards: { flexDirection: 'row', gap: 10, paddingRight: 4 },
     clear: { color: colors.gold, fontSize: 13, fontWeight: '700' },
     recent: {
       flexDirection: 'row',
@@ -527,8 +565,9 @@ function createStyles(colors: AppColors) {
       alignItems: 'center',
       justifyContent: 'center' },
     separator: { height: 1, backgroundColor: colors.border, marginLeft: 42 },
-    tagWrap: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
+    tagRow: { gap: 8, paddingRight: 4, alignItems: 'center' },
     tag: {
+      maxWidth: 200,
       backgroundColor: colors.bg,
       borderRadius: 999,
       paddingHorizontal: 14,

@@ -11,6 +11,7 @@ CREATE TABLE IF NOT EXISTS users (
 );
 
 ALTER TABLE users ADD COLUMN IF NOT EXISTS birth_date TEXT NOT NULL DEFAULT '';
+ALTER TABLE users ADD COLUMN IF NOT EXISTS photo_data TEXT;
 
 CREATE TABLE IF NOT EXISTS sessions (
   token TEXT PRIMARY KEY,
@@ -101,7 +102,7 @@ CREATE TABLE IF NOT EXISTS ops.schema_meta (
   value TEXT NOT NULL
 );
 
-INSERT INTO ops.schema_meta (key, value) VALUES ('version', '2')
+INSERT INTO ops.schema_meta (key, value) VALUES ('version', '6')
 ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value;
 
 -- —— Enrichissement commandes boutique (indexables par l’app livreur) ——
@@ -135,6 +136,14 @@ ALTER TABLE orders ADD COLUMN IF NOT EXISTS route_duration_s DOUBLE PRECISION;
 ALTER TABLE orders ADD COLUMN IF NOT EXISTS route_profile TEXT;
 ALTER TABLE orders ADD COLUMN IF NOT EXISTS route_geojson JSONB;
 ALTER TABLE orders ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW();
+ALTER TABLE orders ADD COLUMN IF NOT EXISTS handoff_code TEXT;
+UPDATE orders
+SET handoff_code = lpad((1000 + floor(random() * 9000)::int)::text, 4, '0')
+WHERE handoff_code IS NULL OR btrim(handoff_code) = '';
+UPDATE orders
+SET payload = COALESCE(payload, '{}'::jsonb) || jsonb_build_object('handoffCode', handoff_code)
+WHERE handoff_code IS NOT NULL
+  AND (payload->>'handoffCode' IS NULL OR btrim(payload->>'handoffCode') = '');
 
 DO $$ BEGIN
   ALTER TABLE orders ADD CONSTRAINT orders_status_chk
@@ -208,6 +217,7 @@ ALTER TABLE ops.staff ALTER COLUMN can_pick SET DEFAULT TRUE;
 ALTER TABLE ops.staff ALTER COLUMN can_deliver SET DEFAULT TRUE;
 ALTER TABLE ops.staff ALTER COLUMN can_pick SET NOT NULL;
 ALTER TABLE ops.staff ALTER COLUMN can_deliver SET NOT NULL;
+ALTER TABLE ops.staff ADD COLUMN IF NOT EXISTS photo_data TEXT;
 DO $$
 DECLARE
   r RECORD;
@@ -218,7 +228,6 @@ BEGIN
     WHERE c.conrelid = 'ops.staff'::regclass
       AND c.contype = 'c'
       AND pg_get_constraintdef(c.oid) ILIKE '%role%'
-      AND c.conname <> 'staff_can_act_chk'
   LOOP
     EXECUTE format('ALTER TABLE ops.staff DROP CONSTRAINT %I', r.conname);
   END LOOP;
@@ -296,6 +305,7 @@ CREATE TABLE IF NOT EXISTS ops.deliveries (
   picked_up_at TIMESTAMPTZ,
   delivered_at TIMESTAMPTZ,
   failed_reason TEXT,
+  failed_reason_code TEXT,
   proof_url TEXT,
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
@@ -303,6 +313,8 @@ CREATE TABLE IF NOT EXISTS ops.deliveries (
 
 CREATE INDEX IF NOT EXISTS ops_deliveries_board_idx ON ops.deliveries (status, store_id, created_at);
 CREATE INDEX IF NOT EXISTS ops_deliveries_courier_idx ON ops.deliveries (courier_id, status);
+ALTER TABLE ops.deliveries ADD COLUMN IF NOT EXISTS failed_reason_code TEXT;
+ALTER TABLE ops.deliveries ADD COLUMN IF NOT EXISTS en_route_at TIMESTAMPTZ;
 
 CREATE TABLE IF NOT EXISTS ops.delivery_offers (
   id TEXT PRIMARY KEY,
@@ -367,6 +379,21 @@ BEGIN
   NEW.delivery_fee := COALESCE((p->>'delivery')::INT, 0);
   NEW.discount := COALESCE((p->>'discount')::INT, 0);
   NEW.total := COALESCE((p->>'total')::INT, 0);
+  IF COALESCE(NEW.item_count, 0) = 0 THEN
+    SELECT COALESCE(SUM(COALESCE((elem->>'qty')::INT, 0)), 0)
+      INTO NEW.item_count
+    FROM jsonb_array_elements(COALESCE(p->'lines', '[]'::jsonb)) elem;
+  END IF;
+  IF COALESCE(NEW.total, 0) = 0 THEN
+    SELECT COALESCE(SUM(
+      COALESCE((elem->>'qty')::INT, 0) * COALESCE((elem->>'unitPrice')::INT, (elem->>'unit_price')::INT, 0)
+    ), 0)
+      INTO NEW.total
+    FROM jsonb_array_elements(COALESCE(p->'lines', '[]'::jsonb)) elem;
+    IF NEW.total = 0 THEN
+      NEW.total := GREATEST(0, COALESCE(NEW.subtotal, 0) + COALESCE(NEW.delivery_fee, 0) - COALESCE(NEW.discount, 0));
+    END IF;
+  END IF;
   NEW.payment_id := NULLIF(p->>'paymentId', '');
   NEW.payment_label := NULLIF(p->>'paymentLabel', '');
   NEW.payment_status := NULLIF(p->>'paymentStatus', '');
@@ -389,6 +416,13 @@ BEGIN
   IF p->>'managedBy' = 'ops' THEN
     NEW.managed_by := 'ops';
   END IF;
+  IF NEW.handoff_code IS NULL OR btrim(NEW.handoff_code) = '' THEN
+    NEW.handoff_code := COALESCE(
+      NULLIF(btrim(p->>'handoffCode'), ''),
+      lpad((1000 + floor(random() * 9000)::int)::text, 4, '0')
+    );
+  END IF;
+  NEW.payload := COALESCE(NEW.payload, '{}'::jsonb) || jsonb_build_object('handoffCode', NEW.handoff_code);
   NEW.updated_at := NOW();
   RETURN NEW;
 END;
@@ -535,12 +569,17 @@ LANGUAGE sql IMMUTABLE AS $$
     WHEN del IN ('cancelled') OR pick IN ('cancelled') THEN 'cancelled'
     WHEN del IN ('delivered') THEN 'delivered'
     WHEN del IN ('en_route', 'arrived', 'picked_up') THEN 'shipping'
+    -- Acceptée / rassemblée côté app course, pas encore en trajet client
     WHEN pick IN ('picking', 'assigned', 'packed') OR del IN ('assigned', 'at_store') THEN 'preparing'
+    -- confirmed = en attente de l’app course
     ELSE 'confirmed'
   END;
 $$;
 
 -- Vues partagées (les deux apps lisent la même vérité)
+-- v_pick_board : file ramassage (queued/assigned/picking). packed → handoff deliveries.
+-- v_delivery_board : livraisons actives. CourseGO ne claim que si pick_status = packed.
+-- v_order_tracking : boutique /me/orders/:id/live
 DROP VIEW IF EXISTS public.v_order_tracking;
 DROP VIEW IF EXISTS ops.v_delivery_board;
 DROP VIEW IF EXISTS ops.v_pick_board;
@@ -559,6 +598,7 @@ SELECT
   o.slot_label,
   o.day_label,
   o.address_label,
+  o.store_name,
   o.created_at
 FROM ops.pick_jobs j
 JOIN orders o ON o.id = j.order_id
@@ -580,6 +620,8 @@ SELECT
   d.dropoff_lat,
   d.route_distance_m,
   d.route_duration_s,
+  d.picked_up_at,
+  d.en_route_at,
   o.status AS shop_status,
   o.address_label,
   o.address_line,
@@ -591,6 +633,9 @@ SELECT
   o.total,
   o.item_count,
   o.payment_id,
+  o.comment,
+  u.first_name AS customer_first,
+  u.last_name AS customer_last,
   o.created_at,
   pj.status AS pick_status,
   pj.picker_id,
@@ -598,6 +643,7 @@ SELECT
   (pj.picker_id IS NOT NULL AND d.courier_id IS NOT NULL AND pj.picker_id = d.courier_id) AS same_handler
 FROM ops.deliveries d
 JOIN orders o ON o.id = d.order_id
+LEFT JOIN users u ON u.id = o.user_id
 LEFT JOIN ops.pick_jobs pj ON pj.order_id = d.order_id
 WHERE d.status NOT IN ('delivered', 'failed', 'cancelled');
 
@@ -626,6 +672,7 @@ SELECT
   s.first_name AS courier_first_name,
   s.last_name AS courier_last_name,
   s.phone AS courier_phone,
+  (s.photo_data IS NOT NULL AND length(s.photo_data) > 20) AS courier_has_photo,
   loc.lng AS courier_lng,
   loc.lat AS courier_lat,
   loc.updated_at AS courier_located_at,
@@ -635,6 +682,11 @@ SELECT
   pk.last_name AS picker_last_name,
   pj.packed_at,
   (pj.picker_id IS NOT NULL AND d.courier_id IS NOT NULL AND pj.picker_id = d.courier_id) AS same_handler,
+  d.failed_reason,
+  d.failed_reason_code,
+  s.vehicle AS courier_vehicle,
+  d.picked_up_at,
+  d.en_route_at,
   o.created_at,
   o.updated_at
 FROM orders o
@@ -683,6 +735,217 @@ EXCEPTION WHEN OTHERS THEN
   NULL;
 END $$;
 
+-- Gains staff : ramassage + livraison (la course quitte le board une fois clôturée)
+CREATE TABLE IF NOT EXISTS ops.staff_payouts (
+  id TEXT PRIMARY KEY,
+  staff_id TEXT NOT NULL REFERENCES ops.staff(id) ON DELETE CASCADE,
+  kind TEXT NOT NULL CHECK (kind IN ('pick', 'deliver', 'tip')),
+  order_id TEXT NOT NULL REFERENCES orders(id) ON DELETE CASCADE,
+  ref_id TEXT NOT NULL,
+  amount INT NOT NULL CHECK (amount >= 0),
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  UNIQUE (kind, ref_id)
+);
+
+CREATE INDEX IF NOT EXISTS ops_payouts_staff_idx ON ops.staff_payouts (staff_id, created_at DESC);
+
+INSERT INTO ops.staff_payouts (id, staff_id, kind, order_id, ref_id, amount, created_at)
+SELECT
+  'pay-pick-' || j.id,
+  j.picker_id,
+  'pick',
+  j.order_id,
+  j.id,
+  500,
+  COALESCE(j.packed_at, j.updated_at)
+FROM ops.pick_jobs j
+WHERE j.status = 'packed' AND j.picker_id IS NOT NULL
+ON CONFLICT (kind, ref_id) DO NOTHING;
+
+INSERT INTO ops.staff_payouts (id, staff_id, kind, order_id, ref_id, amount, created_at)
+SELECT
+  'pay-del-' || d.id,
+  d.courier_id,
+  'deliver',
+  d.order_id,
+  d.id,
+  GREATEST(COALESCE(o.delivery_fee, 0), 1500),
+  COALESCE(d.delivered_at, d.updated_at)
+FROM ops.deliveries d
+JOIN orders o ON o.id = d.order_id
+WHERE d.status = 'delivered' AND d.courier_id IS NOT NULL
+ON CONFLICT (kind, ref_id) DO NOTHING;
+
+CREATE TABLE IF NOT EXISTS ops.order_ratings (
+  id TEXT PRIMARY KEY,
+  order_id TEXT NOT NULL REFERENCES orders(id) ON DELETE CASCADE,
+  rater_kind TEXT NOT NULL CHECK (rater_kind IN ('customer', 'staff')),
+  rater_user_id TEXT REFERENCES users(id) ON DELETE SET NULL,
+  rater_staff_id TEXT REFERENCES ops.staff(id) ON DELETE SET NULL,
+  rating INT NOT NULL CHECK (rating BETWEEN 1 AND 5),
+  comment TEXT NOT NULL DEFAULT '',
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  UNIQUE (order_id, rater_kind)
+);
+
+ALTER TABLE ops.order_ratings ADD COLUMN IF NOT EXISTS tip_amount INT NOT NULL DEFAULT 0;
+ALTER TABLE ops.order_ratings DROP CONSTRAINT IF EXISTS order_ratings_tip_amount_check;
+ALTER TABLE ops.order_ratings ADD CONSTRAINT order_ratings_tip_amount_check CHECK (tip_amount >= 0);
+
+DO $$
+DECLARE
+  con TEXT;
+BEGIN
+  SELECT c.conname INTO con
+  FROM pg_constraint c
+  JOIN pg_class t ON t.oid = c.conrelid
+  JOIN pg_namespace n ON n.oid = t.relnamespace
+  WHERE n.nspname = 'ops' AND t.relname = 'staff_payouts' AND c.contype = 'c'
+    AND pg_get_constraintdef(c.oid) ILIKE '%pick%'
+    AND pg_get_constraintdef(c.oid) NOT ILIKE '%tip%';
+  IF con IS NOT NULL THEN
+    EXECUTE format('ALTER TABLE ops.staff_payouts DROP CONSTRAINT %I', con);
+  END IF;
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint c
+    JOIN pg_class t ON t.oid = c.conrelid
+    JOIN pg_namespace n ON n.oid = t.relnamespace
+    WHERE n.nspname = 'ops' AND t.relname = 'staff_payouts' AND c.conname = 'staff_payouts_kind_check'
+  ) THEN
+    ALTER TABLE ops.staff_payouts
+      ADD CONSTRAINT staff_payouts_kind_check CHECK (kind IN ('pick', 'deliver', 'tip'));
+  END IF;
+END $$;
+
+CREATE TABLE IF NOT EXISTS ops.staff_notifications (
+  id TEXT PRIMARY KEY,
+  staff_id TEXT NOT NULL REFERENCES ops.staff(id) ON DELETE CASCADE,
+  kind TEXT NOT NULL DEFAULT 'info',
+  title TEXT NOT NULL,
+  body TEXT NOT NULL DEFAULT '',
+  href TEXT,
+  order_id TEXT,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  read_at TIMESTAMPTZ
+);
+
+CREATE INDEX IF NOT EXISTS ops_staff_notif_idx
+  ON ops.staff_notifications (staff_id, created_at DESC);
+
+CREATE TABLE IF NOT EXISTS public.user_notifications (
+  id TEXT PRIMARY KEY,
+  user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  kind TEXT NOT NULL DEFAULT 'order',
+  title TEXT NOT NULL,
+  body TEXT NOT NULL DEFAULT '',
+  preview TEXT NOT NULL DEFAULT '',
+  href TEXT,
+  order_id TEXT,
+  icon TEXT NOT NULL DEFAULT 'bell',
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  read_at TIMESTAMPTZ
+);
+
+CREATE INDEX IF NOT EXISTS user_notif_idx
+  ON public.user_notifications (user_id, created_at DESC);
+
+ALTER TABLE ops.deliveries ADD COLUMN IF NOT EXISTS failed_reason_code TEXT;
+
+CREATE TABLE IF NOT EXISTS ops.delivery_incidents (
+  id TEXT PRIMARY KEY,
+  order_id TEXT NOT NULL REFERENCES orders(id) ON DELETE CASCADE,
+  delivery_id TEXT NOT NULL REFERENCES ops.deliveries(id) ON DELETE CASCADE,
+  staff_id TEXT REFERENCES ops.staff(id) ON DELETE SET NULL,
+  reason_code TEXT NOT NULL DEFAULT 'other',
+  reason_text TEXT NOT NULL DEFAULT '',
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS ops_incidents_order_idx ON ops.delivery_incidents (order_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS ops_incidents_created_idx ON ops.delivery_incidents (created_at DESC);
+
+CREATE TABLE IF NOT EXISTS ops.client_incident_actions (
+  id TEXT PRIMARY KEY,
+  order_id TEXT NOT NULL REFERENCES orders(id) ON DELETE CASCADE UNIQUE,
+  user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  incident_id TEXT REFERENCES ops.delivery_incidents(id) ON DELETE SET NULL,
+  action TEXT NOT NULL,
+  note TEXT NOT NULL DEFAULT '',
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS ops_client_actions_created_idx
+  ON ops.client_incident_actions (created_at DESC);
+
+DO $$ BEGIN
+  GRANT SELECT ON ops.delivery_incidents TO marche_shop;
+  GRANT SELECT, INSERT, UPDATE ON ops.delivery_incidents TO marche_ops;
+  GRANT SELECT, INSERT, UPDATE ON ops.client_incident_actions TO marche_shop, marche_ops;
+EXCEPTION WHEN OTHERS THEN
+  NULL;
+END $$;
+
+DO $$ BEGIN
+  GRANT SELECT, INSERT, UPDATE, DELETE ON public.user_notifications TO marche_shop;
+EXCEPTION WHEN OTHERS THEN
+  NULL;
+END $$;
+
+DO $$
+DECLARE
+  con TEXT;
+BEGIN
+  SELECT c.conname INTO con
+  FROM pg_constraint c
+  JOIN pg_class t ON t.oid = c.conrelid
+  JOIN pg_namespace n ON n.oid = t.relnamespace
+  WHERE n.nspname = 'ops' AND t.relname = 'staff' AND c.contype = 'c'
+    AND pg_get_constraintdef(c.oid) ILIKE '%vehicle%'
+    AND pg_get_constraintdef(c.oid) NOT ILIKE '%tricycle%';
+  IF con IS NOT NULL THEN
+    EXECUTE format('ALTER TABLE ops.staff DROP CONSTRAINT %I', con);
+  END IF;
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint c
+    JOIN pg_class t ON t.oid = c.conrelid
+    JOIN pg_namespace n ON n.oid = t.relnamespace
+    WHERE n.nspname = 'ops' AND t.relname = 'staff' AND c.conname = 'staff_vehicle_kind_check'
+  ) THEN
+    ALTER TABLE ops.staff
+      ADD CONSTRAINT staff_vehicle_kind_check
+      CHECK (vehicle IS NULL OR vehicle IN ('moto', 'voiture', 'velo', 'tricycle', 'pied'));
+  END IF;
+END $$;
+
+CREATE TABLE IF NOT EXISTS ops.staff_store_affiliations (
+  staff_id TEXT NOT NULL REFERENCES ops.staff(id) ON DELETE CASCADE,
+  store_id TEXT NOT NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  PRIMARY KEY (staff_id, store_id)
+);
+
+CREATE TABLE IF NOT EXISTS ops.staff_profiles (
+  staff_id TEXT PRIMARY KEY REFERENCES ops.staff(id) ON DELETE CASCADE,
+  vehicle_kind TEXT,
+  vehicle_plate TEXT NOT NULL DEFAULT '',
+  owns_vehicle BOOLEAN NOT NULL DEFAULT FALSE,
+  needs_kit BOOLEAN NOT NULL DEFAULT FALSE,
+  vehicle_photo TEXT,
+  id_number TEXT NOT NULL DEFAULT '',
+  id_photo TEXT,
+  license_number TEXT NOT NULL DEFAULT '',
+  has_license BOOLEAN NOT NULL DEFAULT FALSE,
+  license_photo TEXT,
+  selfie_license_photo TEXT,
+  residence_line TEXT NOT NULL DEFAULT '',
+  residence_city TEXT NOT NULL DEFAULT '',
+  insurance_ref TEXT NOT NULL DEFAULT '',
+  has_insurance BOOLEAN NOT NULL DEFAULT FALSE,
+  insurance_photo TEXT,
+  extra JSONB NOT NULL DEFAULT '{}'::jsonb,
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
 -- Rejouer les commandes déjà en base
 SELECT public.ensure_ops_jobs(o) FROM orders o;
 
@@ -709,7 +972,13 @@ CREATE TABLE IF NOT EXISTS comms.threads (
   updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
+DROP INDEX IF EXISTS comms_threads_courier_order_uidx;
 DROP INDEX IF EXISTS comms.comms_threads_courier_order_uidx;
+
+ALTER TABLE comms.threads ADD COLUMN IF NOT EXISTS disabled_at TIMESTAMPTZ;
+ALTER TABLE comms.threads ADD COLUMN IF NOT EXISTS disabled_by TEXT
+  CHECK (disabled_by IS NULL OR disabled_by IN ('customer', 'staff'));
+ALTER TABLE comms.threads ADD COLUMN IF NOT EXISTS archived_at TIMESTAMPTZ;
 
 CREATE INDEX IF NOT EXISTS comms_threads_kind_idx ON comms.threads (kind, updated_at DESC);
 
@@ -820,6 +1089,7 @@ CREATE TABLE IF NOT EXISTS comms.devices (
 CREATE INDEX IF NOT EXISTS comms_devices_user_idx ON comms.devices (user_id) WHERE user_id IS NOT NULL;
 CREATE INDEX IF NOT EXISTS comms_devices_staff_idx ON comms.devices (staff_id) WHERE staff_id IS NOT NULL;
 
+DROP VIEW IF EXISTS comms.v_inbox;
 CREATE OR REPLACE VIEW comms.v_inbox
 WITH (security_invoker = true) AS
 SELECT
@@ -827,6 +1097,9 @@ SELECT
   t.kind,
   t.order_id,
   t.updated_at,
+  t.disabled_at,
+  t.disabled_by,
+  t.archived_at,
   m.body AS last_body,
   m.kind AS last_kind,
   m.created_at AS last_at,
@@ -836,9 +1109,11 @@ LEFT JOIN LATERAL (
   SELECT body, kind, created_at, sender_kind
   FROM comms.messages
   WHERE thread_id = t.id
-  ORDER BY created_at DESC
+  ORDER BY created_at DESC, id DESC
   LIMIT 1
-) m ON TRUE;
+) m ON TRUE
+WHERE t.archived_at IS NULL
+  AND (t.disabled_at IS NULL OR t.disabled_by IS NOT NULL);
 
 CREATE OR REPLACE FUNCTION comms.touch_thread()
 RETURNS trigger
@@ -867,27 +1142,33 @@ BEGIN
     'comms_call',
     json_build_object('call_id', NEW.id, 'thread_id', NEW.thread_id, 'status', NEW.status)::text
   );
-  IF TG_OP = 'INSERT' OR (TG_OP = 'UPDATE' AND NEW.status IS DISTINCT FROM OLD.status) THEN
+  -- Une pastille par fin d’appel, attribuée à l’APPELANT (pas 'system')
+  -- pour que boutique et CourseGO l’alignent à droite / gauche selon qui a composé.
+  IF TG_OP = 'UPDATE'
+     AND NEW.status IS DISTINCT FROM OLD.status
+     AND NEW.status IN ('rejected', 'canceled', 'missed', 'ended') THEN
     INSERT INTO comms.messages (
       id, thread_id, sender_kind, sender_user_id, sender_staff_id, kind, body, payload
     ) VALUES (
       'callmsg-' || NEW.id || '-' || NEW.status,
       NEW.thread_id,
-      'system',
-      NULL,
-      NULL,
+      NEW.caller_kind,
+      NEW.caller_user_id,
+      NEW.caller_staff_id,
       'call',
       CASE NEW.status
-        WHEN 'initiated' THEN 'Appel en cours'
-        WHEN 'ringing' THEN 'Sonnerie'
-        WHEN 'accepted' THEN 'Appel accepté'
         WHEN 'rejected' THEN 'Appel refusé'
         WHEN 'canceled' THEN 'Appel annulé'
         WHEN 'missed' THEN 'Appel manqué'
         WHEN 'ended' THEN 'Appel terminé'
         ELSE 'Appel'
       END,
-      jsonb_build_object('call_id', NEW.id, 'status', NEW.status, 'media', NEW.media)
+      jsonb_build_object(
+        'call_id', NEW.id,
+        'status', NEW.status,
+        'media', NEW.media,
+        'caller_kind', NEW.caller_kind
+      )
     )
     ON CONFLICT (id) DO NOTHING;
   END IF;
@@ -920,12 +1201,15 @@ CREATE TRIGGER comms_signals_notify
   EXECUTE FUNCTION comms.notify_signal();
 
 -- Fil coursier + membres dès qu’un staff est assigné à la livraison
+-- Un fil par couple client ↔ coursier (plusieurs colis = même conversation)
 CREATE OR REPLACE FUNCTION comms.ensure_courier_thread(p_order_id TEXT, p_staff_id TEXT)
 RETURNS TEXT
 LANGUAGE plpgsql AS $fn$
 DECLARE
   tid TEXT;
   uid TEXT;
+  prev_order TEXT;
+  extra TEXT;
 BEGIN
   IF p_order_id IS NULL OR p_staff_id IS NULL THEN
     RETURN NULL;
@@ -934,10 +1218,67 @@ BEGIN
   IF uid IS NULL THEN
     RETURN NULL;
   END IF;
-  tid := 'courier-' || replace(p_order_id, '#', '');
+
+  SELECT t.id, t.order_id INTO tid, prev_order
+  FROM comms.threads t
+  JOIN comms.thread_members m_u
+    ON m_u.thread_id = t.id AND m_u.actor_kind = 'customer' AND m_u.user_id = uid
+  JOIN comms.thread_members m_s
+    ON m_s.thread_id = t.id AND m_s.actor_kind = 'staff' AND m_s.staff_id = p_staff_id
+  WHERE t.kind = 'courier'
+  ORDER BY t.created_at ASC
+  LIMIT 1;
+
+  IF tid IS NOT NULL THEN
+    UPDATE comms.threads SET order_id = NULL
+     WHERE kind = 'courier' AND order_id = p_order_id AND id <> tid;
+    FOR extra IN
+      SELECT t.id
+      FROM comms.threads t
+      JOIN comms.thread_members m_u
+        ON m_u.thread_id = t.id AND m_u.actor_kind = 'customer' AND m_u.user_id = uid
+      JOIN comms.thread_members m_s
+        ON m_s.thread_id = t.id AND m_s.actor_kind = 'staff' AND m_s.staff_id = p_staff_id
+      WHERE t.kind = 'courier' AND t.id <> tid
+    LOOP
+      UPDATE comms.messages SET thread_id = tid WHERE thread_id = extra;
+      DELETE FROM comms.threads WHERE id = extra;
+    END LOOP;
+    UPDATE comms.threads SET order_id = p_order_id, updated_at = NOW(),
+           disabled_at = NULL, disabled_by = NULL, archived_at = NULL
+    WHERE id = tid;
+    IF prev_order IS DISTINCT FROM p_order_id THEN
+      INSERT INTO comms.messages (id, thread_id, sender_kind, kind, body, payload)
+      VALUES (
+        'msg-join-' || replace(p_order_id, '#', ''),
+        tid,
+        'system',
+        'system',
+        'Commande ' || p_order_id || ' ajoutée à cette conversation.',
+        jsonb_build_object('orderId', p_order_id)
+      )
+      ON CONFLICT (id) DO NOTHING;
+    END IF;
+    INSERT INTO comms.thread_members (thread_id, actor_kind, user_id)
+    SELECT tid, 'customer', uid
+    WHERE NOT EXISTS (
+      SELECT 1 FROM comms.thread_members m WHERE m.thread_id = tid AND m.user_id = uid
+    );
+    INSERT INTO comms.thread_members (thread_id, actor_kind, staff_id)
+    SELECT tid, 'staff', p_staff_id
+    WHERE NOT EXISTS (
+      SELECT 1 FROM comms.thread_members m WHERE m.thread_id = tid AND m.staff_id = p_staff_id
+    );
+    RETURN tid;
+  END IF;
+
+  tid := 'courier-' || p_staff_id || '-' || uid;
+  UPDATE comms.threads SET order_id = NULL
+   WHERE kind = 'courier' AND order_id = p_order_id AND id <> tid;
   INSERT INTO comms.threads (id, kind, order_id, title)
   VALUES (tid, 'courier', p_order_id, 'Livreur')
-  ON CONFLICT (id) DO UPDATE SET updated_at = NOW();
+  ON CONFLICT (id) DO UPDATE SET order_id = EXCLUDED.order_id, updated_at = NOW(),
+    disabled_at = NULL, archived_at = NULL;
   INSERT INTO comms.thread_members (thread_id, actor_kind, user_id)
   SELECT tid, 'customer', uid
   WHERE NOT EXISTS (
@@ -947,6 +1288,99 @@ BEGIN
   SELECT tid, 'staff', p_staff_id
   WHERE NOT EXISTS (
     SELECT 1 FROM comms.thread_members m WHERE m.thread_id = tid AND m.staff_id = p_staff_id
+  );
+  RETURN tid;
+END;
+$fn$;
+
+-- Archive le fil coursier 30 min après livraison, sauf si une autre course
+-- est encore active entre le même client et le même livreur.
+CREATE OR REPLACE FUNCTION comms.archive_delivered_courier_threads()
+RETURNS INTEGER
+LANGUAGE plpgsql AS $fn$
+DECLARE
+  n INTEGER := 0;
+BEGIN
+  WITH due AS (
+    SELECT t.id
+    FROM comms.threads t
+    JOIN ops.deliveries d ON d.order_id = t.order_id
+    JOIN comms.thread_members m_s
+      ON m_s.thread_id = t.id AND m_s.actor_kind = 'staff' AND m_s.staff_id = d.courier_id
+    JOIN comms.thread_members m_u
+      ON m_u.thread_id = t.id AND m_u.actor_kind = 'customer'
+    WHERE t.kind = 'courier'
+      AND t.archived_at IS NULL
+      AND d.status = 'delivered'
+      AND d.courier_id IS NOT NULL
+      AND COALESCE(d.delivered_at, d.updated_at) <= NOW() - INTERVAL '30 minutes'
+      AND NOT EXISTS (
+        SELECT 1
+        FROM ops.deliveries d2
+        JOIN orders o2 ON o2.id = d2.order_id
+        WHERE d2.courier_id = m_s.staff_id
+          AND o2.user_id = m_u.user_id
+          AND d2.status NOT IN ('delivered', 'failed', 'cancelled')
+      )
+  ),
+  archived AS (
+    UPDATE comms.threads t
+    SET archived_at = NOW(),
+        disabled_at = COALESCE(t.disabled_at, NOW()),
+        updated_at = NOW()
+    FROM due
+    WHERE t.id = due.id
+    RETURNING t.id
+  )
+  INSERT INTO comms.messages (id, thread_id, sender_kind, kind, body, payload)
+  SELECT
+    'msg-archive-' || archived.id,
+    archived.id,
+    'system',
+    'system',
+    'Conversation archivée 30 minutes après la livraison.',
+    '{"reason":"delivered_timeout"}'::jsonb
+  FROM archived
+  ON CONFLICT (id) DO NOTHING;
+
+  GET DIAGNOSTICS n = ROW_COUNT;
+  RETURN n;
+END;
+$fn$;
+
+CREATE OR REPLACE FUNCTION comms.thread_for_order(p_order_id TEXT)
+RETURNS TEXT
+LANGUAGE sql STABLE AS $$
+  SELECT t.id
+  FROM orders o
+  LEFT JOIN ops.deliveries d ON d.order_id = o.id
+  JOIN comms.threads t ON t.kind = 'courier' AND t.archived_at IS NULL
+    AND (t.disabled_at IS NULL OR t.disabled_by IS NULL)
+  JOIN comms.thread_members m_u ON m_u.thread_id = t.id AND m_u.user_id = o.user_id AND m_u.actor_kind = 'customer'
+  LEFT JOIN comms.thread_members m_s ON m_s.thread_id = t.id AND m_s.staff_id = d.courier_id AND m_s.actor_kind = 'staff'
+  WHERE o.id = p_order_id
+    AND (d.courier_id IS NULL OR m_s.staff_id IS NOT NULL)
+  ORDER BY CASE WHEN m_s.staff_id IS NOT NULL THEN 0 ELSE 1 END, t.created_at ASC
+  LIMIT 1
+$$;
+
+CREATE OR REPLACE FUNCTION comms.ensure_support_thread(p_user_id TEXT)
+RETURNS TEXT
+LANGUAGE plpgsql AS $fn$
+DECLARE
+  tid TEXT;
+BEGIN
+  IF p_user_id IS NULL THEN
+    RETURN NULL;
+  END IF;
+  tid := 'support-' || p_user_id;
+  INSERT INTO comms.threads (id, kind, title)
+  VALUES (tid, 'support', 'Assistance Marché Doré')
+  ON CONFLICT (id) DO UPDATE SET updated_at = NOW();
+  INSERT INTO comms.thread_members (thread_id, actor_kind, user_id)
+  SELECT tid, 'customer', p_user_id
+  WHERE NOT EXISTS (
+    SELECT 1 FROM comms.thread_members m WHERE m.thread_id = tid AND m.user_id = p_user_id
   );
   RETURN tid;
 END;
@@ -983,3 +1417,332 @@ DO $$ BEGIN
 EXCEPTION WHEN OTHERS THEN
   NULL;
 END $$;
+
+
+-- Catalogue admin : merch, audit, stock par magasin (même base public).
+
+CREATE TABLE IF NOT EXISTS catalog_settings (
+  key TEXT PRIMARY KEY,
+  payload JSONB NOT NULL DEFAULT '{}'::jsonb,
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS catalog_audit (
+  id BIGSERIAL PRIMARY KEY,
+  actor_staff_id TEXT,
+  action TEXT NOT NULL,
+  entity TEXT NOT NULL,
+  entity_id TEXT NOT NULL,
+  before JSONB,
+  after JSONB,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS catalog_audit_entity_idx ON catalog_audit (entity, entity_id, created_at DESC);
+
+CREATE TABLE IF NOT EXISTS product_stock (
+  product_id TEXT NOT NULL REFERENCES products(id) ON DELETE CASCADE,
+  store_id TEXT NOT NULL REFERENCES stores(id) ON DELETE CASCADE,
+  qty NUMERIC(12,3) NOT NULL DEFAULT 0,
+  reserved NUMERIC(12,3) NOT NULL DEFAULT 0,
+  min_qty NUMERIC(12,3) NOT NULL DEFAULT 0,
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  PRIMARY KEY (product_id, store_id)
+);
+
+CREATE INDEX IF NOT EXISTS product_stock_store_idx ON product_stock (store_id, qty);
+
+CREATE TABLE IF NOT EXISTS stock_moves (
+  id TEXT PRIMARY KEY,
+  product_id TEXT NOT NULL REFERENCES products(id) ON DELETE CASCADE,
+  store_id TEXT NOT NULL REFERENCES stores(id) ON DELETE CASCADE,
+  delta NUMERIC(12,3) NOT NULL,
+  reason TEXT NOT NULL CHECK (reason IN (
+    'receipt', 'sale', 'adjust', 'shrink', 'pick_unavailable', 'transfer', 'seed'
+  )),
+  ref_type TEXT,
+  ref_id TEXT,
+  actor_staff_id TEXT,
+  note TEXT,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS stock_moves_product_idx ON stock_moves (product_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS stock_moves_store_idx ON stock_moves (store_id, created_at DESC);
+CREATE UNIQUE INDEX IF NOT EXISTS stock_moves_order_product_uidx
+  ON stock_moves (product_id, store_id, ref_id)
+  WHERE ref_type = 'order' AND reason = 'sale';
+
+-- Rattrape une seule fois les commandes créées avant le registre automatique.
+WITH missing_sales AS (
+  SELECT l.product_id,
+         COALESCE(o.store_id, 'su-aeroport') AS store_id,
+         o.id AS order_id,
+         SUM(l.qty)::NUMERIC AS sold
+  FROM order_lines l
+  JOIN orders o ON o.id = l.order_id
+  WHERE o.status <> 'cancelled'
+    AND NOT EXISTS (
+      SELECT 1 FROM stock_moves m
+      WHERE m.product_id = l.product_id
+        AND m.store_id = COALESCE(o.store_id, 'su-aeroport')
+        AND m.ref_type = 'order'
+        AND m.ref_id = o.id
+        AND m.reason = 'sale'
+    )
+  GROUP BY l.product_id, COALESCE(o.store_id, 'su-aeroport'), o.id
+),
+inserted AS (
+  INSERT INTO stock_moves (id, product_id, store_id, delta, reason, ref_type, ref_id, note, created_at)
+  SELECT 'sale-backfill-' || md5(order_id || ':' || product_id || ':' || store_id),
+         product_id, store_id, -sold, 'sale', 'order', order_id,
+         'Commande historique ' || order_id,
+         COALESCE((SELECT created_at FROM orders WHERE id = order_id), NOW())
+  FROM missing_sales
+  ON CONFLICT DO NOTHING
+  RETURNING product_id, store_id, -delta AS sold
+),
+totals AS (
+  SELECT product_id, store_id, SUM(sold) AS sold
+  FROM inserted
+  GROUP BY product_id, store_id
+)
+UPDATE product_stock s
+SET qty = GREATEST(0, s.qty - totals.sold),
+    updated_at = NOW()
+FROM totals
+WHERE s.product_id = totals.product_id
+  AND s.store_id = totals.store_id;
+
+INSERT INTO catalog_settings (key, payload)
+VALUES
+  ('merch', '{
+    "popularIds": ["tomates", "bananes", "gingembre"],
+    "recommendedIds": ["poulet", "miel", "mangues", "lait", "carottes", "ananas", "plantains", "gingembre"],
+    "trendingTerms": ["Glace", "Thon", "Chips", "Bananes", "Poulet"]
+  }'::jsonb)
+ON CONFLICT (key) DO NOTHING;
+
+
+-- RH / personnel : onboarding, documents (même base ops).
+
+ALTER TABLE ops.staff ADD COLUMN IF NOT EXISTS hired_at TIMESTAMPTZ;
+ALTER TABLE ops.staff ADD COLUMN IF NOT EXISTS onboard_status TEXT NOT NULL DEFAULT 'active';
+ALTER TABLE ops.staff ADD COLUMN IF NOT EXISTS created_by TEXT;
+ALTER TABLE ops.staff ADD COLUMN IF NOT EXISTS notes TEXT;
+ALTER TABLE ops.staff ADD COLUMN IF NOT EXISTS must_reset_password BOOLEAN NOT NULL DEFAULT FALSE;
+
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint WHERE conname = 'staff_onboard_status_check' AND conrelid = 'ops.staff'::regclass
+  ) THEN
+    ALTER TABLE ops.staff ADD CONSTRAINT staff_onboard_status_check
+      CHECK (onboard_status IN ('draft', 'invited', 'active', 'suspended'));
+  END IF;
+END $$;
+
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint WHERE conname = 'staff_created_by_fk' AND conrelid = 'ops.staff'::regclass
+  ) THEN
+    ALTER TABLE ops.staff
+      ADD CONSTRAINT staff_created_by_fk
+      FOREIGN KEY (created_by) REFERENCES ops.staff(id) ON DELETE SET NULL;
+  END IF;
+END $$;
+
+CREATE TABLE IF NOT EXISTS ops.staff_documents (
+  id TEXT PRIMARY KEY,
+  staff_id TEXT NOT NULL REFERENCES ops.staff(id) ON DELETE CASCADE,
+  kind TEXT NOT NULL CHECK (kind IN ('cip', 'permis', 'photo', 'contrat', 'autre')),
+  label TEXT,
+  url_or_path TEXT,
+  verified_at TIMESTAMPTZ,
+  verified_by TEXT REFERENCES ops.staff(id) ON DELETE SET NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS ops_staff_documents_staff_idx ON ops.staff_documents (staff_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS ops_staff_onboard_idx ON ops.staff (onboard_status, is_active);
+
+
+-- Noyau catalogue importable. Migration additive et rejouable, sans suppression.
+
+ALTER TABLE products ADD COLUMN IF NOT EXISTS sku TEXT;
+ALTER TABLE products ADD COLUMN IF NOT EXISTS barcode TEXT;
+ALTER TABLE products ADD COLUMN IF NOT EXISTS active BOOLEAN NOT NULL DEFAULT TRUE;
+ALTER TABLE products ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW();
+ALTER TABLE categories ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW();
+ALTER TABLE banners ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW();
+ALTER TABLE chips ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW();
+ALTER TABLE stores ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW();
+
+CREATE UNIQUE INDEX IF NOT EXISTS products_sku_uidx
+  ON products (sku) WHERE sku IS NOT NULL;
+CREATE UNIQUE INDEX IF NOT EXISTS products_barcode_uidx
+  ON products (barcode) WHERE barcode IS NOT NULL;
+CREATE INDEX IF NOT EXISTS products_active_category_idx
+  ON products (category_id, active);
+CREATE INDEX IF NOT EXISTS products_updated_id_idx
+  ON products (updated_at, id);
+
+DO $$
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'products_sku_nonempty_chk') THEN
+    ALTER TABLE products ADD CONSTRAINT products_sku_nonempty_chk
+      CHECK (sku IS NULL OR btrim(sku) <> '') NOT VALID;
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'products_barcode_digits_chk') THEN
+    ALTER TABLE products ADD CONSTRAINT products_barcode_digits_chk
+      CHECK (barcode IS NULL OR barcode ~ '^[0-9]{8,14}$') NOT VALID;
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'products_payload_object_chk') THEN
+    ALTER TABLE products ADD CONSTRAINT products_payload_object_chk
+      CHECK (jsonb_typeof(payload) = 'object') NOT VALID;
+  END IF;
+END
+$$;
+
+CREATE OR REPLACE FUNCTION catalog_set_updated_at()
+RETURNS TRIGGER
+LANGUAGE plpgsql
+AS $$
+BEGIN
+  NEW.updated_at = NOW();
+  RETURN NEW;
+END;
+$$;
+
+DO $$
+DECLARE
+  table_name TEXT;
+BEGIN
+  FOREACH table_name IN ARRAY ARRAY[
+    'products', 'categories', 'banners', 'chips', 'stores',
+    'catalog_settings', 'product_stock'
+  ]
+  LOOP
+    EXECUTE format('DROP TRIGGER IF EXISTS %I ON %I', table_name || '_set_updated_at', table_name);
+    EXECUTE format(
+      'CREATE TRIGGER %I BEFORE UPDATE ON %I FOR EACH ROW EXECUTE FUNCTION catalog_set_updated_at()',
+      table_name || '_set_updated_at',
+      table_name
+    );
+  END LOOP;
+END
+$$;
+
+CREATE TABLE IF NOT EXISTS product_media (
+  id BIGSERIAL PRIMARY KEY,
+  product_id TEXT NOT NULL REFERENCES products(id) ON DELETE CASCADE,
+  kind TEXT NOT NULL DEFAULT 'image',
+  position INTEGER NOT NULL DEFAULT 0,
+  source_url TEXT,
+  local_path TEXT,
+  checksum_sha256 TEXT,
+  license_name TEXT,
+  license_url TEXT,
+  attribution TEXT,
+  is_placeholder BOOLEAN NOT NULL DEFAULT FALSE,
+  metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  CONSTRAINT product_media_kind_chk CHECK (kind IN ('image', 'video')),
+  CONSTRAINT product_media_position_chk CHECK (position >= 0),
+  CONSTRAINT product_media_location_chk CHECK (
+    is_placeholder OR source_url IS NOT NULL OR local_path IS NOT NULL
+  ),
+  CONSTRAINT product_media_checksum_chk CHECK (
+    checksum_sha256 IS NULL OR checksum_sha256 ~ '^[0-9a-f]{64}$'
+  )
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS product_media_product_position_uidx
+  ON product_media (product_id, kind, position);
+CREATE INDEX IF NOT EXISTS product_media_product_idx
+  ON product_media (product_id, position);
+
+DROP TRIGGER IF EXISTS product_media_set_updated_at ON product_media;
+CREATE TRIGGER product_media_set_updated_at
+BEFORE UPDATE ON product_media
+FOR EACH ROW EXECUTE FUNCTION catalog_set_updated_at();
+
+CREATE TABLE IF NOT EXISTS catalog_import_runs (
+  id BIGSERIAL PRIMARY KEY,
+  source TEXT NOT NULL,
+  manifest_version TEXT,
+  manifest_checksum_sha256 TEXT,
+  dry_run BOOLEAN NOT NULL DEFAULT FALSE,
+  status TEXT NOT NULL DEFAULT 'running',
+  report JSONB NOT NULL DEFAULT '{}'::jsonb,
+  started_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  finished_at TIMESTAMPTZ,
+  CONSTRAINT catalog_import_runs_status_chk
+    CHECK (status IN ('running', 'completed', 'failed', 'dry-run'))
+);
+
+CREATE INDEX IF NOT EXISTS catalog_import_runs_started_idx
+  ON catalog_import_runs (started_at DESC);
+CREATE INDEX IF NOT EXISTS catalog_import_runs_checksum_idx
+  ON catalog_import_runs (manifest_checksum_sha256)
+  WHERE manifest_checksum_sha256 IS NOT NULL;
+
+CREATE TABLE IF NOT EXISTS catalog_import_rows (
+  id BIGSERIAL PRIMARY KEY,
+  run_id BIGINT NOT NULL REFERENCES catalog_import_runs(id) ON DELETE CASCADE,
+  row_number INTEGER NOT NULL,
+  requested_id TEXT,
+  resolved_product_id TEXT,
+  sku TEXT,
+  barcode TEXT,
+  action TEXT NOT NULL,
+  errors JSONB NOT NULL DEFAULT '[]'::jsonb,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  CONSTRAINT catalog_import_rows_number_chk CHECK (row_number > 0),
+  CONSTRAINT catalog_import_rows_action_chk
+    CHECK (action IN ('inserted', 'updated', 'unchanged', 'invalid', 'stock-initialized', 'stock-skipped'))
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS catalog_import_rows_run_row_uidx
+  ON catalog_import_rows (run_id, row_number);
+CREATE INDEX IF NOT EXISTS catalog_import_rows_lookup_idx
+  ON catalog_import_rows (sku, barcode);
+
+-- Historique de synchronisation prêt pour les suppressions futures. Aucun produit
+-- existant n'est supprimé ou désactivé par cette migration.
+CREATE TABLE IF NOT EXISTS catalog_tombstones (
+  entity TEXT NOT NULL DEFAULT 'product',
+  entity_id TEXT NOT NULL,
+  deleted_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  revision BIGSERIAL,
+  metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
+  PRIMARY KEY (entity, entity_id)
+);
+CREATE INDEX IF NOT EXISTS catalog_tombstones_deleted_idx
+  ON catalog_tombstones (deleted_at, entity_id);
+
+ALTER TABLE stock_moves ADD COLUMN IF NOT EXISTS qty_before NUMERIC(12,3);
+ALTER TABLE stock_moves ADD COLUMN IF NOT EXISTS qty_after NUMERIC(12,3);
+
+DO $$
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'product_stock_qty_nonnegative_chk') THEN
+    ALTER TABLE product_stock ADD CONSTRAINT product_stock_qty_nonnegative_chk
+      CHECK (qty >= 0) NOT VALID;
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'product_stock_reserved_nonnegative_chk') THEN
+    ALTER TABLE product_stock ADD CONSTRAINT product_stock_reserved_nonnegative_chk
+      CHECK (reserved >= 0) NOT VALID;
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'product_stock_reserved_lte_qty_chk') THEN
+    ALTER TABLE product_stock ADD CONSTRAINT product_stock_reserved_lte_qty_chk
+      CHECK (reserved <= qty) NOT VALID;
+  END IF;
+END
+$$;
+
+CREATE UNIQUE INDEX IF NOT EXISTS stock_moves_order_unavailable_uidx
+  ON stock_moves (product_id, store_id, ref_id)
+  WHERE ref_type = 'order' AND reason = 'pick_unavailable';

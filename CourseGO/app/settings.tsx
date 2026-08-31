@@ -86,7 +86,7 @@ function LinkRow({
 
 export default function SettingsScreen() {
   const { staff, signOut } = useStaffAuth();
-  const { online, setOnline } = useBoard();
+  const { online, canPause, setOnline } = useBoard();
   const { prefs, patchPrefs } = useStaffPrefs();
   const [permBusy, setPermBusy] = useState<string | null>(null);
   const version = Constants.expoConfig?.version ?? '1.0.0';
@@ -134,7 +134,13 @@ export default function SettingsScreen() {
           <ToggleRow
             icon="radio"
             label={online ? 'En ligne' : 'En pause'}
-            hint={online ? 'Vous recevez des courses du magasin.' : 'La file n’apparaît plus sur l’accueil.'}
+            hint={
+              online && !canPause
+                ? 'Terminez le ramassage ou la livraison avant de vous mettre en pause.'
+                : online
+                  ? 'Vous recevez des courses du magasin.'
+                  : 'La file n’apparaît plus sur l’accueil.'
+            }
             value={online}
             onValueChange={setOnline}
           />

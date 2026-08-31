@@ -28,6 +28,8 @@ type StaffRow = {
   vehicle: string | null;
   is_active: boolean;
   photo_data?: string | null;
+  onboard_status?: string;
+  must_reset_password?: boolean;
 };
 
 function publicStaff(row: StaffRow, extra?: { ratingAvg?: number; ratingCount?: number }) {
@@ -45,6 +47,8 @@ function publicStaff(row: StaffRow, extra?: { ratingAvg?: number; ratingCount?: 
     photoUrl: row.photo_data ? `/ops/staff/${row.id}/photo` : null,
     ratingAvg: extra?.ratingAvg ?? 0,
     ratingCount: extra?.ratingCount ?? 0,
+    mustResetPassword: Boolean(row.must_reset_password),
+    onboardStatus: row.onboard_status ?? 'active',
   };
 }
 
@@ -137,8 +141,8 @@ async function patchOrderPayload(
   orderId: string,
   patch: Record<string, unknown>,
   names?: {
-    picker?: { id: string; name: string; phone: string };
-    courier?: { id: string; name: string; phone: string };
+    picker?: { id?: string; name: string; phone: string };
+    courier?: { id?: string; name: string; phone: string };
   },
 ) {
   const found = await query<{ payload: Record<string, unknown> }>(
@@ -165,6 +169,68 @@ async function patchOrderPayload(
     [orderId, JSON.stringify(payload)],
   );
   return payload;
+}
+
+async function restoreUnavailableOrderStock(orderId: string) {
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    const lines = await client.query<{
+      product_id: string;
+      restore_qty: string;
+      store_id: string;
+    }>(
+      `SELECT l.product_id,
+              GREATEST(l.qty - COALESCE(l.picked_qty, 0), 0)::text AS restore_qty,
+              COALESCE(o.store_id, 'su-aeroport') AS store_id
+       FROM order_lines l
+       JOIN orders o ON o.id = l.order_id
+       WHERE l.order_id = $1 AND l.unavailable = TRUE
+         AND GREATEST(l.qty - COALESCE(l.picked_qty, 0), 0) > 0
+       ORDER BY l.product_id`,
+      [orderId],
+    );
+    for (const line of lines.rows) {
+      const stock = await client.query<{ qty: string }>(
+        `SELECT qty::text FROM product_stock
+         WHERE product_id = $1 AND store_id = $2
+         FOR UPDATE`,
+        [line.product_id, line.store_id],
+      );
+      const before = Number(stock.rows[0]?.qty ?? 0);
+      const restore = Number(line.restore_qty);
+      const move = await client.query<{ id: string }>(
+        `INSERT INTO stock_moves (
+           id, product_id, store_id, delta, reason, ref_type, ref_id, note, qty_before, qty_after
+         ) VALUES ($1, $2, $3, $4, 'pick_unavailable', 'order', $5, $6, $7, $8)
+         ON CONFLICT DO NOTHING
+         RETURNING id`,
+        [
+          `unavailable-${orderId.replace(/[^a-zA-Z0-9-]/g, '')}-${line.product_id}`,
+          line.product_id,
+          line.store_id,
+          restore,
+          orderId,
+          `Restitution non livré ${orderId}`,
+          before,
+          before + restore,
+        ],
+      );
+      if (move.rows[0]) {
+        await client.query(
+          `UPDATE product_stock SET qty = qty + $3, updated_at = NOW()
+           WHERE product_id = $1 AND store_id = $2`,
+          [line.product_id, line.store_id, restore],
+        );
+      }
+    }
+    await client.query('COMMIT');
+  } catch (error) {
+    await client.query('ROLLBACK');
+    throw error;
+  } finally {
+    client.release();
+  }
 }
 
 async function mappedShopStatus(orderId: string) {
@@ -894,16 +960,20 @@ export function registerOpsRoutes(app: Hono) {
     const digits = identifier.replace(/\D/g, '').replace(/^229/, '');
     const found = await query<StaffRow>(
       `SELECT * FROM ops.staff
-       WHERE is_active = TRUE AND (
-         email = $1
+       WHERE email = $1
          OR regexp_replace(phone, '\\D', '', 'g') LIKE '%' || $2
-       )
        LIMIT 1`,
       [identifier, digits.length >= 8 ? digits : identifier],
     );
     const staff = found.rows[0];
     if (!staff || !(await verifyPassword(password, staff.password_hash))) {
       return c.json({ ok: false, error: 'Téléphone, e-mail ou mot de passe incorrect.' }, 401);
+    }
+    if (!staff.is_active) {
+      return c.json({ ok: false, error: 'Compte désactivé. Contactez le magasin ou les RH.' }, 403);
+    }
+    if ((staff.onboard_status ?? 'active') !== 'active') {
+      return c.json({ ok: false, error: 'Compte non activé, voir le magasin / RH.' }, 403);
     }
     const token = newToken();
     await query('INSERT INTO ops.staff_sessions (token, staff_id) VALUES ($1, $2)', [token, staff.id]);
@@ -1053,6 +1123,28 @@ export function registerOpsRoutes(app: Hono) {
     return c.json({ ok: true, staff: await staffWithScore(next.rows[0] ?? staff) });
   });
 
+  app.patch('/ops/me/password', async (c) => {
+    const staff = await staffFromToken(bearer(c.req.header('Authorization')));
+    if (!staff) return c.json({ ok: false, error: 'unauthorized' }, 401);
+    const body = await c.req.json().catch(() => null);
+    const nextPassword = String(body?.password ?? '');
+    if (nextPassword.length < 6) {
+      return c.json({ ok: false, error: 'Mot de passe trop court (6 caractères).' }, 400);
+    }
+    if (!staff.must_reset_password) {
+      const current = String(body?.currentPassword ?? '');
+      if (!(await verifyPassword(current, staff.password_hash))) {
+        return c.json({ ok: false, error: 'Mot de passe actuel incorrect.' }, 401);
+      }
+    }
+    await query(`UPDATE ops.staff SET password_hash = $2, must_reset_password = FALSE WHERE id = $1`, [
+      staff.id,
+      await hashPassword(nextPassword),
+    ]);
+    const next = await query<StaffRow>(`SELECT * FROM ops.staff WHERE id = $1`, [staff.id]);
+    return c.json({ ok: true, staff: await staffWithScore(next.rows[0] ?? staff) });
+  });
+
   app.get('/ops/map-stores', async (c) => {
     const staff = await staffFromToken(bearer(c.req.header('Authorization')));
     if (!staff) return c.json({ ok: false, error: 'unauthorized' }, 401);
@@ -1096,6 +1188,72 @@ export function registerOpsRoutes(app: Hono) {
       };
     });
     return c.json({ ok: true, stores });
+  });
+
+  app.get('/ops/products/by-barcode/:code', async (c) => {
+    const staff = await staffFromToken(bearer(c.req.header('Authorization')));
+    if (!staff) return c.json({ ok: false, error: 'unauthorized' }, 401);
+    const code = routeId(c.req.param('code')).trim();
+    if (!/^\d{8}$|^\d{12,14}$/.test(code)) {
+      return c.json({ ok: false, error: 'Code-barres invalide.' }, 400);
+    }
+    const requestedStore = String(c.req.query('storeId') ?? staff.store_id ?? 'su-aeroport');
+    const allowedStores = await staffStoreIds(staff);
+    if (allowedStores.length && !allowedStores.includes(requestedStore)) {
+      return c.json({ ok: false, error: 'Magasin non autorisé.' }, 403);
+    }
+    const found = await query<{
+      id: string;
+      category_id: string;
+      payload: Record<string, unknown>;
+      sku: string | null;
+      barcode: string | null;
+      available_qty: string;
+      checksum_sha256: string | null;
+      attribution: string | null;
+      license_name: string | null;
+      license_url: string | null;
+    }>(
+      `SELECT p.id, p.category_id, p.payload, p.sku, p.barcode,
+              COALESCE(s.qty - s.reserved, 0)::text AS available_qty,
+              m.checksum_sha256, m.attribution, m.license_name, m.license_url
+       FROM products p
+       LEFT JOIN product_stock s ON s.product_id = p.id AND s.store_id = $2
+       LEFT JOIN LATERAL (
+         SELECT checksum_sha256, attribution, license_name, license_url
+         FROM product_media
+         WHERE product_id = p.id AND kind = 'image'
+         ORDER BY (position = 0) DESC, is_placeholder ASC, position
+         LIMIT 1
+       ) m ON TRUE
+       WHERE p.active = TRUE
+         AND (p.barcode = $1 OR (p.barcode IS NULL AND p.payload->>'barcode' = $1))
+       LIMIT 1`,
+      [code, requestedStore],
+    );
+    const row = found.rows[0];
+    if (!row) return c.json({ ok: false, error: 'Produit introuvable.' }, 404);
+    const availableQty = Number(row.available_qty);
+    return c.json({
+      ok: true,
+      storeId: requestedStore,
+      product: {
+        id: row.id,
+        categoryId: row.category_id,
+        payload: row.payload,
+        sku: row.sku ?? row.payload.sku ?? row.id,
+        barcode: row.barcode ?? row.payload.barcode ?? productBarcode(row.id),
+        availableQty,
+        available: availableQty > 0,
+        imageUrl: `/catalog/media/${encodeURIComponent(row.id)}`,
+        image: {
+          checksumSha256: row.checksum_sha256,
+          attribution: row.attribution,
+          licenseName: row.license_name,
+          licenseUrl: row.license_url,
+        },
+      },
+    });
   });
 
   app.get('/ops/pick-jobs', async (c) => {
@@ -1328,6 +1486,7 @@ export function registerOpsRoutes(app: Hono) {
     if (Number(leftover.rows[0]?.n ?? 0) > 0) {
       return c.json({ ok: false, error: 'Scannez tous les produits avant de terminer le ramassage.' }, 409);
     }
+    await restoreUnavailableOrderStock(orderId);
     const updated = await query(
       `UPDATE ops.pick_jobs
        SET status = 'packed', packed_at = NOW(), updated_at = NOW()
@@ -2131,10 +2290,37 @@ export function registerOpsRoutes(app: Hono) {
       unavailable: boolean;
       note: string | null;
       category_id: string | null;
+      barcode: string | null;
+      available_qty: string;
+      stock_before: string | null;
+      stock_after: string | null;
+      image_checksum: string | null;
+      image_attribution: string | null;
+      image_license_name: string | null;
+      image_license_url: string | null;
     }>(
-      `SELECT l.product_id, l.name, l.unit, l.qty, l.unit_price, l.picked_qty, l.unavailable, l.note, p.category_id
+      `SELECT l.product_id, l.name, l.unit, l.qty, l.unit_price, l.picked_qty, l.unavailable, l.note,
+              p.category_id, p.barcode,
+              COALESCE(s.qty - s.reserved, 0)::text AS available_qty,
+              sale.qty_before::text AS stock_before, sale.qty_after::text AS stock_after,
+              m.checksum_sha256 AS image_checksum, m.attribution AS image_attribution,
+              m.license_name AS image_license_name, m.license_url AS image_license_url
        FROM public.order_lines l
+       JOIN orders o ON o.id = l.order_id
        LEFT JOIN products p ON p.id = l.product_id
+       LEFT JOIN product_stock s
+         ON s.product_id = l.product_id AND s.store_id = COALESCE(o.store_id, 'su-aeroport')
+       LEFT JOIN stock_moves sale
+         ON sale.product_id = l.product_id
+        AND sale.store_id = COALESCE(o.store_id, 'su-aeroport')
+        AND sale.ref_type = 'order' AND sale.ref_id = o.id AND sale.reason = 'sale'
+       LEFT JOIN LATERAL (
+         SELECT checksum_sha256, attribution, license_name, license_url
+         FROM product_media
+         WHERE product_id = l.product_id AND kind = 'image'
+         ORDER BY (position = 0) DESC, is_placeholder ASC, position
+         LIMIT 1
+       ) m ON TRUE
        WHERE l.order_id = $1
        ORDER BY l.position`,
       [id],
@@ -2150,8 +2336,18 @@ export function registerOpsRoutes(app: Hono) {
       live: trackingRowToLive(order.rows[0] as Record<string, unknown>, id),
       lines: lines.rows.map((row) => ({
         ...row,
-        barcode: productBarcode(row.product_id),
+        barcode: row.barcode ?? productBarcode(row.product_id),
+        category_id: row.category_id,
+        available_qty: Number(row.available_qty),
+        stock_before: row.stock_before == null ? null : Number(row.stock_before),
+        stock_after: row.stock_after == null ? null : Number(row.stock_after),
         image_url: `/catalog/media/${encodeURIComponent(row.product_id)}`,
+        image: {
+          checksum_sha256: row.image_checksum,
+          attribution: row.image_attribution,
+          license_name: row.image_license_name,
+          license_url: row.image_license_url,
+        },
       })),
       events: events.rows,
     });

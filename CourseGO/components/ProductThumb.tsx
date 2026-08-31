@@ -1,26 +1,32 @@
 import { colors, displayFont } from '@/constants/theme';
-import { productImageSource } from '@/lib/productMedia';
-import { useState } from 'react';
-import { Image, StyleSheet, Text, View, type StyleProp, type ViewStyle } from 'react-native';
+import { productImageFallback, productImageUrl } from '@/lib/productMedia';
+import { Image } from 'expo-image';
+import { useEffect, useState } from 'react';
+import { StyleSheet, Text, View, type ImageStyle, type StyleProp } from 'react-native';
 
 export function ProductThumb({
   productId,
   name,
   categoryId,
+  imageUrl,
   size = 48,
   style,
 }: {
   productId: string;
   name?: string;
   categoryId?: string | null;
+  imageUrl?: string | null;
   size?: number;
-  style?: StyleProp<ViewStyle>;
+  style?: StyleProp<ImageStyle>;
 }) {
   const [failed, setFailed] = useState(false);
-  const source = productImageSource(productId, categoryId);
-  const remote = typeof source === 'object' && source !== null && 'uri' in source;
+  const local = productImageFallback(productId, categoryId);
 
-  if (!productId || failed) {
+  useEffect(() => {
+    setFailed(false);
+  }, [productId, imageUrl]);
+
+  if (!productId || (failed && !local)) {
     return (
       <View style={[styles.fallback, { width: size, height: size, borderRadius: Math.round(size / 6) }, style]}>
         <Text style={styles.letter}>{(name ?? '?')[0]}</Text>
@@ -29,11 +35,14 @@ export function ProductThumb({
   }
   return (
     <Image
-      source={source}
+      source={failed ? local : productImageUrl(productId, imageUrl)}
+      placeholder={local}
+      placeholderContentFit="cover"
+      cachePolicy="memory-disk"
+      contentFit="cover"
+      transition={120}
       style={[styles.img, { width: size, height: size, borderRadius: Math.round(size / 6) }, style]}
-      onError={() => {
-        if (remote) setFailed(true);
-      }}
+      onError={() => setFailed(true)}
     />
   );
 }

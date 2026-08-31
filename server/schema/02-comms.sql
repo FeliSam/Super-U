@@ -20,7 +20,13 @@ CREATE TABLE IF NOT EXISTS comms.threads (
   updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
+DROP INDEX IF EXISTS comms_threads_courier_order_uidx;
 DROP INDEX IF EXISTS comms.comms_threads_courier_order_uidx;
+
+ALTER TABLE comms.threads ADD COLUMN IF NOT EXISTS disabled_at TIMESTAMPTZ;
+ALTER TABLE comms.threads ADD COLUMN IF NOT EXISTS disabled_by TEXT
+  CHECK (disabled_by IS NULL OR disabled_by IN ('customer', 'staff'));
+ALTER TABLE comms.threads ADD COLUMN IF NOT EXISTS archived_at TIMESTAMPTZ;
 
 CREATE INDEX IF NOT EXISTS comms_threads_kind_idx ON comms.threads (kind, updated_at DESC);
 
@@ -131,6 +137,7 @@ CREATE TABLE IF NOT EXISTS comms.devices (
 CREATE INDEX IF NOT EXISTS comms_devices_user_idx ON comms.devices (user_id) WHERE user_id IS NOT NULL;
 CREATE INDEX IF NOT EXISTS comms_devices_staff_idx ON comms.devices (staff_id) WHERE staff_id IS NOT NULL;
 
+DROP VIEW IF EXISTS comms.v_inbox;
 CREATE OR REPLACE VIEW comms.v_inbox
 WITH (security_invoker = true) AS
 SELECT
@@ -138,6 +145,9 @@ SELECT
   t.kind,
   t.order_id,
   t.updated_at,
+  t.disabled_at,
+  t.disabled_by,
+  t.archived_at,
   m.body AS last_body,
   m.kind AS last_kind,
   m.created_at AS last_at,
@@ -147,9 +157,11 @@ LEFT JOIN LATERAL (
   SELECT body, kind, created_at, sender_kind
   FROM comms.messages
   WHERE thread_id = t.id
-  ORDER BY created_at DESC
+  ORDER BY created_at DESC, id DESC
   LIMIT 1
-) m ON TRUE;
+) m ON TRUE
+WHERE t.archived_at IS NULL
+  AND (t.disabled_at IS NULL OR t.disabled_by IS NOT NULL);
 
 CREATE OR REPLACE FUNCTION comms.touch_thread()
 RETURNS trigger
@@ -178,6 +190,8 @@ BEGIN
     'comms_call',
     json_build_object('call_id', NEW.id, 'thread_id', NEW.thread_id, 'status', NEW.status)::text
   );
+  -- Une pastille par fin d’appel, attribuée à l’APPELANT (pas 'system')
+  -- pour que boutique et CourseGO l’alignent à droite / gauche selon qui a composé.
   IF TG_OP = 'UPDATE'
      AND NEW.status IS DISTINCT FROM OLD.status
      AND NEW.status IN ('rejected', 'canceled', 'missed', 'ended') THEN
@@ -235,12 +249,15 @@ CREATE TRIGGER comms_signals_notify
   EXECUTE FUNCTION comms.notify_signal();
 
 -- Fil coursier + membres dès qu’un staff est assigné à la livraison
+-- Un fil par couple client ↔ coursier (plusieurs colis = même conversation)
 CREATE OR REPLACE FUNCTION comms.ensure_courier_thread(p_order_id TEXT, p_staff_id TEXT)
 RETURNS TEXT
 LANGUAGE plpgsql AS $fn$
 DECLARE
   tid TEXT;
   uid TEXT;
+  prev_order TEXT;
+  extra TEXT;
 BEGIN
   IF p_order_id IS NULL OR p_staff_id IS NULL THEN
     RETURN NULL;
@@ -249,10 +266,67 @@ BEGIN
   IF uid IS NULL THEN
     RETURN NULL;
   END IF;
-  tid := 'courier-' || replace(p_order_id, '#', '');
+
+  SELECT t.id, t.order_id INTO tid, prev_order
+  FROM comms.threads t
+  JOIN comms.thread_members m_u
+    ON m_u.thread_id = t.id AND m_u.actor_kind = 'customer' AND m_u.user_id = uid
+  JOIN comms.thread_members m_s
+    ON m_s.thread_id = t.id AND m_s.actor_kind = 'staff' AND m_s.staff_id = p_staff_id
+  WHERE t.kind = 'courier'
+  ORDER BY t.created_at ASC
+  LIMIT 1;
+
+  IF tid IS NOT NULL THEN
+    UPDATE comms.threads SET order_id = NULL
+     WHERE kind = 'courier' AND order_id = p_order_id AND id <> tid;
+    FOR extra IN
+      SELECT t.id
+      FROM comms.threads t
+      JOIN comms.thread_members m_u
+        ON m_u.thread_id = t.id AND m_u.actor_kind = 'customer' AND m_u.user_id = uid
+      JOIN comms.thread_members m_s
+        ON m_s.thread_id = t.id AND m_s.actor_kind = 'staff' AND m_s.staff_id = p_staff_id
+      WHERE t.kind = 'courier' AND t.id <> tid
+    LOOP
+      UPDATE comms.messages SET thread_id = tid WHERE thread_id = extra;
+      DELETE FROM comms.threads WHERE id = extra;
+    END LOOP;
+    UPDATE comms.threads SET order_id = p_order_id, updated_at = NOW(),
+           disabled_at = NULL, disabled_by = NULL, archived_at = NULL
+    WHERE id = tid;
+    IF prev_order IS DISTINCT FROM p_order_id THEN
+      INSERT INTO comms.messages (id, thread_id, sender_kind, kind, body, payload)
+      VALUES (
+        'msg-join-' || replace(p_order_id, '#', ''),
+        tid,
+        'system',
+        'system',
+        'Commande ' || p_order_id || ' ajoutée à cette conversation.',
+        jsonb_build_object('orderId', p_order_id)
+      )
+      ON CONFLICT (id) DO NOTHING;
+    END IF;
+    INSERT INTO comms.thread_members (thread_id, actor_kind, user_id)
+    SELECT tid, 'customer', uid
+    WHERE NOT EXISTS (
+      SELECT 1 FROM comms.thread_members m WHERE m.thread_id = tid AND m.user_id = uid
+    );
+    INSERT INTO comms.thread_members (thread_id, actor_kind, staff_id)
+    SELECT tid, 'staff', p_staff_id
+    WHERE NOT EXISTS (
+      SELECT 1 FROM comms.thread_members m WHERE m.thread_id = tid AND m.staff_id = p_staff_id
+    );
+    RETURN tid;
+  END IF;
+
+  tid := 'courier-' || p_staff_id || '-' || uid;
+  UPDATE comms.threads SET order_id = NULL
+   WHERE kind = 'courier' AND order_id = p_order_id AND id <> tid;
   INSERT INTO comms.threads (id, kind, order_id, title)
   VALUES (tid, 'courier', p_order_id, 'Livreur')
-  ON CONFLICT (id) DO UPDATE SET updated_at = NOW();
+  ON CONFLICT (id) DO UPDATE SET order_id = EXCLUDED.order_id, updated_at = NOW(),
+    disabled_at = NULL, archived_at = NULL;
   INSERT INTO comms.thread_members (thread_id, actor_kind, user_id)
   SELECT tid, 'customer', uid
   WHERE NOT EXISTS (
@@ -262,6 +336,99 @@ BEGIN
   SELECT tid, 'staff', p_staff_id
   WHERE NOT EXISTS (
     SELECT 1 FROM comms.thread_members m WHERE m.thread_id = tid AND m.staff_id = p_staff_id
+  );
+  RETURN tid;
+END;
+$fn$;
+
+-- Archive le fil coursier 30 min après livraison, sauf si une autre course
+-- est encore active entre le même client et le même livreur.
+CREATE OR REPLACE FUNCTION comms.archive_delivered_courier_threads()
+RETURNS INTEGER
+LANGUAGE plpgsql AS $fn$
+DECLARE
+  n INTEGER := 0;
+BEGIN
+  WITH due AS (
+    SELECT t.id
+    FROM comms.threads t
+    JOIN ops.deliveries d ON d.order_id = t.order_id
+    JOIN comms.thread_members m_s
+      ON m_s.thread_id = t.id AND m_s.actor_kind = 'staff' AND m_s.staff_id = d.courier_id
+    JOIN comms.thread_members m_u
+      ON m_u.thread_id = t.id AND m_u.actor_kind = 'customer'
+    WHERE t.kind = 'courier'
+      AND t.archived_at IS NULL
+      AND d.status = 'delivered'
+      AND d.courier_id IS NOT NULL
+      AND COALESCE(d.delivered_at, d.updated_at) <= NOW() - INTERVAL '30 minutes'
+      AND NOT EXISTS (
+        SELECT 1
+        FROM ops.deliveries d2
+        JOIN orders o2 ON o2.id = d2.order_id
+        WHERE d2.courier_id = m_s.staff_id
+          AND o2.user_id = m_u.user_id
+          AND d2.status NOT IN ('delivered', 'failed', 'cancelled')
+      )
+  ),
+  archived AS (
+    UPDATE comms.threads t
+    SET archived_at = NOW(),
+        disabled_at = COALESCE(t.disabled_at, NOW()),
+        updated_at = NOW()
+    FROM due
+    WHERE t.id = due.id
+    RETURNING t.id
+  )
+  INSERT INTO comms.messages (id, thread_id, sender_kind, kind, body, payload)
+  SELECT
+    'msg-archive-' || archived.id,
+    archived.id,
+    'system',
+    'system',
+    'Conversation archivée 30 minutes après la livraison.',
+    '{"reason":"delivered_timeout"}'::jsonb
+  FROM archived
+  ON CONFLICT (id) DO NOTHING;
+
+  GET DIAGNOSTICS n = ROW_COUNT;
+  RETURN n;
+END;
+$fn$;
+
+CREATE OR REPLACE FUNCTION comms.thread_for_order(p_order_id TEXT)
+RETURNS TEXT
+LANGUAGE sql STABLE AS $$
+  SELECT t.id
+  FROM orders o
+  LEFT JOIN ops.deliveries d ON d.order_id = o.id
+  JOIN comms.threads t ON t.kind = 'courier' AND t.archived_at IS NULL
+    AND (t.disabled_at IS NULL OR t.disabled_by IS NULL)
+  JOIN comms.thread_members m_u ON m_u.thread_id = t.id AND m_u.user_id = o.user_id AND m_u.actor_kind = 'customer'
+  LEFT JOIN comms.thread_members m_s ON m_s.thread_id = t.id AND m_s.staff_id = d.courier_id AND m_s.actor_kind = 'staff'
+  WHERE o.id = p_order_id
+    AND (d.courier_id IS NULL OR m_s.staff_id IS NOT NULL)
+  ORDER BY CASE WHEN m_s.staff_id IS NOT NULL THEN 0 ELSE 1 END, t.created_at ASC
+  LIMIT 1
+$$;
+
+CREATE OR REPLACE FUNCTION comms.ensure_support_thread(p_user_id TEXT)
+RETURNS TEXT
+LANGUAGE plpgsql AS $fn$
+DECLARE
+  tid TEXT;
+BEGIN
+  IF p_user_id IS NULL THEN
+    RETURN NULL;
+  END IF;
+  tid := 'support-' || p_user_id;
+  INSERT INTO comms.threads (id, kind, title)
+  VALUES (tid, 'support', 'Assistance Marché Doré')
+  ON CONFLICT (id) DO UPDATE SET updated_at = NOW();
+  INSERT INTO comms.thread_members (thread_id, actor_kind, user_id)
+  SELECT tid, 'customer', p_user_id
+  WHERE NOT EXISTS (
+    SELECT 1 FROM comms.thread_members m WHERE m.thread_id = tid AND m.user_id = p_user_id
   );
   RETURN tid;
 END;

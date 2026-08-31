@@ -11,6 +11,8 @@ export type Staff = {
   canEditPrices: boolean;
   canCreateProducts: boolean;
   canEditStock: boolean;
+  canHr: boolean;
+  canReadHr: boolean;
 };
 
 export const loginAdmin = createAsyncThunk(

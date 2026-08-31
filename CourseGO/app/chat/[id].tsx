@@ -7,7 +7,6 @@ import {
   fetchThread,
   markRead,
   sendMessage,
-  setThreadDisabled,
   type CommsMessage,
 } from '@/lib/api/comms';
 import { formatChatClock } from '@/lib/format';
@@ -39,7 +38,6 @@ export default function ChatScreen() {
   const insets = useSafeAreaInsets();
   const [peer, setPeer] = useState('Client');
   const [peerUserId, setPeerUserId] = useState<string | null>(null);
-  const [disabled, setDisabled] = useState(false);
   const [archived, setArchived] = useState(false);
   const [messages, setMessages] = useState<CommsMessage[]>([]);
   const [draft, setDraft] = useState('');
@@ -53,7 +51,6 @@ export default function ChatScreen() {
       const name = [customer?.user_first, customer?.user_last].filter(Boolean).join(' ');
       if (name) setPeer(name);
       if (customer?.user_id) setPeerUserId(customer.user_id);
-      setDisabled(Boolean(th.thread?.disabled_at || th.thread?.archived_at));
       setArchived(Boolean(th.thread?.archived_at));
       const list = [...(msgs.messages ?? [])].sort((a, b) => {
         const ta = new Date(a.created_at).getTime();
@@ -82,14 +79,9 @@ export default function ChatScreen() {
 
   const send = async (text: string) => {
     const body = text.trim();
-    if (!body || disabled) return;
+    if (!body || archived) return;
     setDraft('');
     await sendMessage(threadId, body);
-    await load();
-  };
-
-  const toggleDisabled = async () => {
-    await setThreadDisabled(threadId, !disabled);
     await load();
   };
 
@@ -101,18 +93,9 @@ export default function ChatScreen() {
           <Image source={userPhotoSource(peerUserId)} style={styles.headerAvatar} />
           <View style={{ flex: 1 }}>
             <Text style={styles.name}>{peer}</Text>
-            <Text style={styles.online}>{archived ? 'Archivée' : disabled ? 'Désactivée' : 'En ligne'}</Text>
+            <Text style={styles.online}>{archived ? 'Archivée' : 'En ligne'}</Text>
           </View>
           {archived ? null : (
-          <Pressable
-            accessibilityRole="button"
-            accessibilityLabel={disabled ? 'Réactiver la conversation' : 'Désactiver la conversation'}
-            style={styles.call}
-            onPress={() => void toggleDisabled()}>
-            <Feather name={disabled ? 'message-circle' : 'slash'} size={16} color={colors.teal} />
-          </Pressable>
-          )}
-          {disabled ? null : (
           <Pressable
             style={styles.call}
             onPress={() => void startOutgoing(threadId, peer)}>
@@ -154,18 +137,11 @@ export default function ChatScreen() {
           })}
         </ScrollView>
         <View style={[styles.composer, { paddingBottom: Math.max(12, insets.bottom + 8) }]}>
-          {disabled ? (
+          {archived ? (
             <View style={styles.disabledBox}>
               <Text style={styles.disabledTxt}>
-                {archived
-                  ? 'Conversation archivée 30 minutes après la livraison. Plus de messages ni d’appels.'
-                  : 'Conversation désactivée. Plus de messages ni d’appels.'}
+                Conversation archivée 30 minutes après la livraison. Plus de messages ni d’appels.
               </Text>
-              {archived ? null : (
-              <Pressable style={styles.disabledBtn} onPress={() => void toggleDisabled()}>
-                <Text style={styles.disabledBtnTxt}>Réactiver</Text>
-              </Pressable>
-              )}
             </View>
           ) : (
             <>
@@ -290,14 +266,6 @@ const styles = StyleSheet.create({
   },
   disabledBox: { gap: 10, paddingVertical: 4 },
   disabledTxt: { ...bodyFont('400'), fontSize: 13, color: colors.muted, lineHeight: 18 },
-  disabledBtn: {
-    alignSelf: 'flex-start',
-    backgroundColor: colors.tealSoft,
-    borderRadius: 999,
-    paddingHorizontal: 14,
-    paddingVertical: 8,
-  },
-  disabledBtnTxt: { ...displayFont('800'), fontSize: 13, color: colors.teal },
   inputBar: { flexDirection: 'row', alignItems: 'flex-end', gap: 10 },
   input: {
     flex: 1,

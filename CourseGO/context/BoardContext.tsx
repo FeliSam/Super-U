@@ -10,6 +10,8 @@ import {
   type PickJob,
   type TourHop,
 } from '@/lib/api/ops';
+import { pauseBlockedMessage, staffOpenMission } from '@/lib/opsModel';
+import { showToast } from '@/lib/toastBus';
 import React, { createContext, useCallback, useContext, useEffect, useMemo, useState } from 'react';
 import { AppState, Platform } from 'react-native';
 
@@ -19,6 +21,7 @@ type BoardValue = {
   tourHop: TourHop | null;
   mapStores: MapStore[];
   online: boolean;
+  canPause: boolean;
   setOnline: (v: boolean) => void;
   refreshing: boolean;
   lastError: string | null;
@@ -43,7 +46,25 @@ export function BoardProvider({ children }: { children: React.ReactNode }) {
   const [tourHop, setTourHop] = useState<TourHop | null>(null);
   const [mapStores, setMapStores] = useState<MapStore[]>([]);
   const online = prefs.online;
-  const setOnline = useCallback((v: boolean) => patchPrefs({ online: v }), [patchPrefs]);
+  const openMission = useMemo(
+    () => staffOpenMission(staff?.id, jobs, deliveries),
+    [staff?.id, jobs, deliveries],
+  );
+  const canPause = !openMission.pick && !openMission.delivery;
+  const setOnline = useCallback(
+    (v: boolean) => {
+      if (!v && !canPause) {
+        showToast({
+          title: 'Pause impossible',
+          body: pauseBlockedMessage(openMission),
+          tone: 'error',
+        });
+        return;
+      }
+      patchPrefs({ online: v });
+    },
+    [canPause, openMission, patchPrefs],
+  );
   const [refreshing, setRefreshing] = useState(false);
   const [lastError, setLastError] = useState<string | null>(null);
   const [lastOkAt, setLastOkAt] = useState<number | null>(null);
@@ -113,8 +134,20 @@ export function BoardProvider({ children }: { children: React.ReactNode }) {
   }, [staff, refresh]);
 
   const value = useMemo(
-    () => ({ jobs, deliveries, tourHop, mapStores, online, setOnline, refreshing, lastError, lastOkAt, refresh }),
-    [jobs, deliveries, tourHop, mapStores, online, setOnline, refreshing, lastError, lastOkAt, refresh],
+    () => ({
+      jobs,
+      deliveries,
+      tourHop,
+      mapStores,
+      online,
+      canPause,
+      setOnline,
+      refreshing,
+      lastError,
+      lastOkAt,
+      refresh,
+    }),
+    [jobs, deliveries, tourHop, mapStores, online, canPause, setOnline, refreshing, lastError, lastOkAt, refresh],
   );
 
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>;

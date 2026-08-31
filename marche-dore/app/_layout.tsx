@@ -11,6 +11,7 @@ import { AddressesProvider } from '@/context/AddressesContext';
 import { AuthProvider } from '@/context/AuthContext';
 import { CallProvider } from '@/context/CallContext';
 import { CartProvider } from '@/context/CartContext';
+import { CatalogProvider } from '@/context/CatalogContext';
 import { ChatProvider } from '@/context/ChatContext';
 import { CheckoutPaymentProvider } from '@/context/CheckoutPaymentContext';
 import { FavoritesProvider } from '@/context/FavoritesContext';
@@ -63,8 +64,9 @@ function ThemedAppShell({ children }: { children: React.ReactNode }) {
     () => ({
       headerShown: false,
       contentStyle: { backgroundColor: colors.bg },
-      animation: Platform.OS === 'web' ? ('none' as const) : Platform.OS === 'ios' ? ('default' as const) : ('fade' as const),
-      freezeOnBlur: Platform.OS !== 'web',
+      animation: 'none' as const,
+      animationDuration: 0,
+      freezeOnBlur: false,
       detachPreviousScreen: false,
       statusBarHidden: true }),
     [colors.bg],
@@ -73,10 +75,11 @@ function ThemedAppShell({ children }: { children: React.ReactNode }) {
   return (
     <NavigationThemeProvider value={navigationTheme}>
       <AuthProvider>
-        <CartProvider>
-          <ProfileProvider>
-            <AddressesProvider>
-              <StoresProvider>
+        <StoresProvider>
+          <CatalogProvider>
+            <CartProvider>
+              <ProfileProvider>
+                <AddressesProvider>
                 <OrdersProvider>
                   <PaymentsProvider>
                     <CheckoutPaymentProvider>
@@ -105,10 +108,11 @@ function ThemedAppShell({ children }: { children: React.ReactNode }) {
                     </CheckoutPaymentProvider>
                   </PaymentsProvider>
                 </OrdersProvider>
-              </StoresProvider>
-            </AddressesProvider>
-          </ProfileProvider>
-        </CartProvider>
+                </AddressesProvider>
+              </ProfileProvider>
+            </CartProvider>
+          </CatalogProvider>
+        </StoresProvider>
       </AuthProvider>
     </NavigationThemeProvider>
   );
@@ -159,12 +163,11 @@ export default function RootLayout() {
               <Stack.Screen
                 name="search"
                 options={{
-                  animation: 'slide_from_bottom',
-                  animationDuration: 420,
-                  gestureDirection: 'vertical',
+                  animation: 'none',
+                  animationDuration: 0,
                   presentation: 'card' }}
               />
-              <Stack.Screen name="promotions" />
+              <Stack.Screen name="promotions" options={{ animation: 'none', animationDuration: 0 }} />
               <Stack.Screen name="help" />
               <Stack.Screen name="contact" />
               <Stack.Screen name="legal" />
@@ -181,9 +184,9 @@ export default function RootLayout() {
               <Stack.Screen name="checkout" />
               <Stack.Screen name="order-success" options={{ gestureEnabled: false }} />
               <Stack.Screen name="payment-setup/[id]" />
-              <Stack.Screen name="tracking" />
-              <Stack.Screen name="orders" />
-              <Stack.Screen name="order/[id]" />
+              <Stack.Screen name="tracking" options={{ animation: 'none', animationDuration: 0 }} />
+              <Stack.Screen name="orders" options={{ animation: 'none', animationDuration: 0 }} />
+              <Stack.Screen name="order/[id]" options={{ animation: 'none', animationDuration: 0 }} />
               <Stack.Screen name="notifications/index" />
               <Stack.Screen name="notifications/[id]" />
               <Stack.Screen name="account/personal-info" />
@@ -191,7 +194,7 @@ export default function RootLayout() {
               <Stack.Screen name="account/payment-methods" />
               <Stack.Screen name="account/loyalty" />
               <Stack.Screen name="account/settings" />
-              <Stack.Screen name="account/favorites" />
+              <Stack.Screen name="account/favorites" options={{ animation: 'none', animationDuration: 0 }} />
             </ThemedAppShell>
             {!splashDone ? (
               <AnimatedSplash

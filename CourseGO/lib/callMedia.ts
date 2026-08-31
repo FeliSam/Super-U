@@ -261,6 +261,39 @@ export function resumeCallPlayback() {
   void audioContext()?.resume().catch(() => undefined);
 }
 
+function applyCallOutput(speakerOn: boolean) {
+  const el = session?.remoteEl ?? (typeof document !== 'undefined' ? ensureAudioEl() : null);
+  if (!el) return;
+  el.volume = 1;
+  const setSink = (el as HTMLAudioElement & { setSinkId?: (id: string) => Promise<void> }).setSinkId;
+  if (typeof setSink !== 'function') return;
+  void (async () => {
+    try {
+      if (speakerOn) {
+        await setSink.call(el, '');
+        return;
+      }
+      let sink = 'communications';
+      if (navigator.mediaDevices?.enumerateDevices) {
+        const devices = await navigator.mediaDevices.enumerateDevices();
+        const ear = devices.find(
+          (d) =>
+            d.kind === 'audiooutput' &&
+            /earpiece|écouteur|ecouteur|receiver|handset|headset|headphone|écouteurs|communications/i.test(d.label),
+        );
+        if (ear?.deviceId) sink = ear.deviceId;
+      }
+      await setSink.call(el, sink);
+    } catch {
+      try {
+        await setSink.call(el, speakerOn ? '' : 'communications');
+      } catch {
+        /* navigateur sans routage écouteur / HP */
+      }
+    }
+  })();
+}
+
 export function updateCallMedia(opts: {
   muted?: boolean;
   held?: boolean;
@@ -270,8 +303,8 @@ export function updateCallMedia(opts: {
   if (!session) return;
   const send = opts.live !== false && !opts.muted && !opts.held;
   for (const track of session.local.getAudioTracks()) track.enabled = send;
-  session.remoteEl.muted = Boolean(opts.held);
-  session.remoteEl.volume = opts.speakerOn === false ? 0.45 : 1;
+  session.remoteEl.muted = Boolean(opts.held) || opts.live === false;
+  applyCallOutput(Boolean(opts.speakerOn));
   void session.remoteEl.play().catch(() => undefined);
   void audioContext()?.resume().catch(() => undefined);
 }
@@ -360,6 +393,7 @@ export async function startCallMedia(opts: StartOpts) {
     })(),
   };
   session = s;
+  applyCallOutput(false);
 
   const kickPlay = () => {
     if (s.closed) return;

@@ -1,32 +1,35 @@
 import { AppImage } from '@/components/AppImage';
 import { CartTotalFab, CategoryTile, IconCircle, ProductCard, PromoBanner, Screen, SearchField, Page } from '@/components/ui';
-import { MotionView, PressScale } from '@/components/motion';
+import { PressScale } from '@/components/motion';
 import { bodyFont, displayFont, heroChrome, tabBarClearance, type AppColors } from '@/constants/theme';
 import { useColors, useTheme } from '@/context/ThemeContext';
 import { useUiState } from '@/context/UiStateContext';
+import { useCatalogVersion } from '@/context/CatalogContext';
 import {
+  categoryProductCounts,
   exploreCategories,
   getProducts,
+  bannerIsLive,
   homePromoBanners,
   popularIds,
   products,
-  productsInCategory,
   promoProducts,
   searchCategories,
   searchCategoryRoute,
   trendingSearches } from '@/data/catalog';
 import { openSearchScreen } from '@/lib/searchNav';
+import { PlatformVirtualList } from '@/components/ProductFlashGrid';
 import { Feather } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
 import { router } from 'expo-router';
 import { memo, useEffect, useMemo, useState } from 'react';
 import {
-  Dimensions,
   Platform,
   Pressable,
   ScrollView,
   StyleSheet,
   Text,
+  useWindowDimensions,
   View } from 'react-native';
 import Animated, {
   Extrapolation,
@@ -36,41 +39,69 @@ import Animated, {
   useSharedValue } from 'react-native-reanimated';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
-const PROMO_WIDTH = Dimensions.get('window').width - 40;
 const EXPLORE_PRODUCT_ROW = {
   flexDirection: 'row' as const,
   columnGap: 3.6,
   gap: 3.6,
   paddingRight: 4,
 };
-const explorePromo = homePromoBanners[1];
 const TREND_LIMIT = 5;
 /** Same height on every rayon tile; bento is width (`flex`) only. */
 const RAYON_TILE_H = 140;
 
-function ExploreScreen() {
-  const { scheme } = useTheme();
+const TrendTags = memo(function TrendTags({
+  onSearch,
+}: {
+  onSearch: (term: string) => void;
+}) {
+  const catalogVersion = useCatalogVersion();
   const colors = useColors();
-  const chrome = useMemo(() => heroChrome(scheme), [scheme]);
   const styles = useMemo(() => createStyles(colors), [colors]);
-  const insets = useSafeAreaInsets();
+  const { searchRecents } = useUiState();
   const [trendTick, setTrendTick] = useState(() => Math.floor(Date.now() / 12_000));
-  const scrollY = useSharedValue(0);
-
-  const { setSearchQuery, searchRecents } = useUiState();
 
   useEffect(() => {
     const id = setInterval(() => {
       setTrendTick(Math.floor(Date.now() / 12_000));
-    }, 4000);
+    }, 12_000);
     return () => clearInterval(id);
   }, []);
 
   const trends = useMemo(
     () => trendingSearches({ recents: searchRecents, limit: TREND_LIMIT, tick: trendTick }),
-    [searchRecents, trendTick],
+    [searchRecents, trendTick, catalogVersion],
   );
 
+  return (
+    <View style={styles.tagWrap}>
+      {trends.map((item) => (
+        <PressScale
+          key={`${item.rank}-${item.term}`}
+          style={styles.tag}
+          onPress={() => onSearch(item.term)}
+          scaleTo={0.96}
+          accessibilityLabel={`Rechercher ${item.term}`}>
+          <Text style={styles.tagText}>{item.term}</Text>
+        </PressScale>
+      ))}
+    </View>
+  );
+});
+
+function ExploreScreen() {
+  const catalogVersion = useCatalogVersion();
+  const { scheme } = useTheme();
+  const colors = useColors();
+  const chrome = useMemo(() => heroChrome(scheme), [scheme]);
+  const styles = useMemo(() => createStyles(colors), [colors]);
+  const insets = useSafeAreaInsets();
+  const { width: windowWidth } = useWindowDimensions();
+  const promoWidth = Math.min(windowWidth, 430) - 40;
+  const scrollY = useSharedValue(0);
+
+  const { setSearchQuery } = useUiState();
+
+  const counts = useMemo(() => categoryProductCounts(), [catalogVersion]);
   const rows = useMemo(() => {
     const result: (typeof exploreCategories)[] = [];
     for (let i = 0; i < exploreCategories.length; i += 2) {
@@ -79,8 +110,12 @@ function ExploreScreen() {
     return result;
   }, []);
 
-  const trending = useMemo(() => promoProducts().slice(0, 6), []);
-  const popular = useMemo(() => getProducts(popularIds), []);
+  const explorePromo = useMemo(() => {
+    const slot = homePromoBanners.find((b) => b.id === 'rentree') ?? homePromoBanners[1];
+    return slot && bannerIsLive(slot) ? slot : null;
+  }, [catalogVersion]);
+  const trending = useMemo(() => promoProducts().slice(0, 6), [catalogVersion]);
+  const popular = useMemo(() => getProducts(popularIds).slice(0, 8), [catalogVersion]);
 
   const openSearch = (term?: string) => {
     if (term) setSearchQuery(term);
@@ -141,12 +176,20 @@ function ExploreScreen() {
           </View>
         </View>
 
-        <Animated.ScrollView
+        <PlatformVirtualList
+          data={rows}
+          extraData={catalogVersion}
+          keyExtractor={(_: unknown, index: number) => `rayon-${index}`}
+          initialNumToRender={4}
+          maxToRenderPerBatch={4}
+          windowSize={5}
+          removeClippedSubviews
           style={styles.scrollLayer}
           contentContainerStyle={styles.scrollContent}
           showsVerticalScrollIndicator={false}
+          onScroll={onScroll}
           scrollEventThrottle={16}
-          onScroll={onScroll}>
+          ListHeaderComponent={
           <Animated.View style={[styles.bodySheet, sheetAnimStyle]}>
             <View
               style={[
@@ -173,11 +216,9 @@ function ExploreScreen() {
               </View>
             </View>
 
-            <MotionView delay={40} preset="up">
-              <SearchField onPress={() => openSearch()} />
-            </MotionView>
+            <SearchField onPress={() => openSearch()} />
 
-            <MotionView delay={80} preset="up" style={styles.section}>
+            <View style={styles.section}>
               <View style={styles.sectionHead}>
                 <Text style={styles.sectionTitle}>Accès rapide</Text>
                 <Pressable onPress={() => openSearch()} accessibilityRole="button" accessibilityLabel="Voir la sélection">
@@ -189,7 +230,7 @@ function ExploreScreen() {
                 showsHorizontalScrollIndicator={false}
                 contentContainerStyle={styles.quickRow}>
                 {searchCategories.map((cat) => {
-                  const count = productsInCategory(cat.id).length;
+                  const count = counts[cat.id] ?? 0;
                   return (
                     <PressScale
                       key={cat.label}
@@ -207,20 +248,22 @@ function ExploreScreen() {
                   );
                 })}
               </ScrollView>
-            </MotionView>
+            </View>
 
-            <MotionView delay={110} preset="up">
-              <PromoBanner
-                title={explorePromo.title}
-                subtitle={explorePromo.subtitle}
-                cta={explorePromo.cta}
-                image={explorePromo.image}
-                width={PROMO_WIDTH}
-                onPress={() => router.push(explorePromo.href)}
-              />
-            </MotionView>
+            {explorePromo ? (
+              <View style={{ width: promoWidth, maxWidth: '100%', alignSelf: 'center' }}>
+                <PromoBanner
+                  title={explorePromo.title}
+                  subtitle={explorePromo.subtitle}
+                  cta={explorePromo.cta}
+                  image={explorePromo.image}
+                  width={promoWidth}
+                  onPress={() => router.push(explorePromo.href)}
+                />
+              </View>
+            ) : null}
 
-            <MotionView delay={140} preset="up" style={styles.section}>
+            <View style={styles.section}>
               <View style={styles.sectionHead}>
                 <Text style={styles.sectionTitle}>En promotion</Text>
                 <Pressable onPress={openPromos}>
@@ -230,13 +273,13 @@ function ExploreScreen() {
               <ScrollView horizontal showsHorizontalScrollIndicator={false}>
                 <View style={EXPLORE_PRODUCT_ROW}>
                   {trending.map((product) => (
-                    <ProductCard key={product.id} product={product} width={148} imageHeight={130} compact />
+                    <ProductCard key={product.id} product={product} width={148} imageHeight={130} compact animate={false} />
                   ))}
                 </View>
               </ScrollView>
-            </MotionView>
+            </View>
 
-            <MotionView delay={170} preset="up" style={styles.section}>
+            <View style={styles.section}>
               <View style={styles.sectionHead}>
                 <Text style={styles.sectionTitle}>Populaires</Text>
                 <Text style={styles.sectionMeta}>Les plus commandés</Text>
@@ -244,13 +287,13 @@ function ExploreScreen() {
               <ScrollView horizontal showsHorizontalScrollIndicator={false}>
                 <View style={EXPLORE_PRODUCT_ROW}>
                   {popular.map((product) => (
-                    <ProductCard key={product.id} product={product} width={148} imageHeight={130} compact />
+                    <ProductCard key={product.id} product={product} width={148} imageHeight={130} compact animate={false} />
                   ))}
                 </View>
               </ScrollView>
-            </MotionView>
+            </View>
 
-            <MotionView delay={200} preset="up">
+            <View>
               <View style={styles.suggestCard}>
                 <View style={styles.suggestHead}>
                   <View style={styles.suggestHeadLeft}>
@@ -262,22 +305,11 @@ function ExploreScreen() {
                     <Text style={styles.trendMeta}>En direct</Text>
                   </View>
                 </View>
-                <View style={styles.tagWrap}>
-                  {trends.map((item) => (
-                    <PressScale
-                      key={`${item.rank}-${item.term}`}
-                      style={styles.tag}
-                      onPress={() => openSearch(item.term)}
-                      scaleTo={0.96}
-                      accessibilityLabel={`Rechercher ${item.term}`}>
-                      <Text style={styles.tagText}>{item.term}</Text>
-                    </PressScale>
-                  ))}
-                </View>
+                <TrendTags onSearch={openSearch} />
               </View>
-            </MotionView>
+            </View>
 
-            <MotionView delay={230} preset="up" style={styles.rayonsSection}>
+            <View style={styles.rayonsSection}>
               <View style={styles.rayonsHead}>
                 <View style={styles.rayonsHeadText}>
                   <Text style={styles.sectionTitle}>Tous les rayons</Text>
@@ -287,30 +319,28 @@ function ExploreScreen() {
                   <Text style={styles.rayonsCountText}>{exploreCategories.length}</Text>
                 </View>
               </View>
-              <View style={styles.grid}>
-                {rows.map((row, idx) => (
-                  <View key={idx} style={styles.gridRow}>
-                    {row.map((cat) => {
-                      const count = productsInCategory(cat.id).length;
-                      return (
-                        <CategoryTile
-                          key={cat.id}
-                          title={cat.title}
-                          image={cat.image}
-                          height={RAYON_TILE_H}
-                          flex={cat.flex}
-                          count={count || undefined}
-                          index={idx}
-                          onPress={() => router.push(`/category/${cat.id}`)}
-                        />
-                      );
-                    })}
-                  </View>
-                ))}
-              </View>
-            </MotionView>
+            </View>
           </Animated.View>
-        </Animated.ScrollView>
+          }
+          renderItem={({ item: row }: { item: (typeof exploreCategories)[number][] }) => (
+            <View style={[styles.gridRow, { paddingHorizontal: 20 }]}>
+              {row.map((cat) => {
+                const count = counts[cat.id] ?? 0;
+                return (
+                  <CategoryTile
+                    key={cat.id}
+                    title={cat.title}
+                    image={cat.image}
+                    height={RAYON_TILE_H}
+                    flex={cat.flex}
+                    count={count || undefined}
+                    onPress={() => router.push(`/category/${cat.id}`)}
+                  />
+                );
+              })}
+            </View>
+          )}
+        />
         <CartTotalFab aboveTabs />
       </Page>
     </Screen>
@@ -365,7 +395,6 @@ function createStyles(colors: AppColors) {
       paddingHorizontal: 20,
       paddingTop: 8,
       gap: 22,
-      minHeight: Dimensions.get('window').height,
       ...Platform.select({
         ios: {
           shadowColor: '#1c1613',

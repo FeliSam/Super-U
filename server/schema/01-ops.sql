@@ -9,7 +9,7 @@ CREATE TABLE IF NOT EXISTS ops.schema_meta (
   value TEXT NOT NULL
 );
 
-INSERT INTO ops.schema_meta (key, value) VALUES ('version', '2')
+INSERT INTO ops.schema_meta (key, value) VALUES ('version', '6')
 ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value;
 
 -- —— Enrichissement commandes boutique (indexables par l’app livreur) ——
@@ -43,6 +43,14 @@ ALTER TABLE orders ADD COLUMN IF NOT EXISTS route_duration_s DOUBLE PRECISION;
 ALTER TABLE orders ADD COLUMN IF NOT EXISTS route_profile TEXT;
 ALTER TABLE orders ADD COLUMN IF NOT EXISTS route_geojson JSONB;
 ALTER TABLE orders ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW();
+ALTER TABLE orders ADD COLUMN IF NOT EXISTS handoff_code TEXT;
+UPDATE orders
+SET handoff_code = lpad((1000 + floor(random() * 9000)::int)::text, 4, '0')
+WHERE handoff_code IS NULL OR btrim(handoff_code) = '';
+UPDATE orders
+SET payload = COALESCE(payload, '{}'::jsonb) || jsonb_build_object('handoffCode', handoff_code)
+WHERE handoff_code IS NOT NULL
+  AND (payload->>'handoffCode' IS NULL OR btrim(payload->>'handoffCode') = '');
 
 DO $$ BEGIN
   ALTER TABLE orders ADD CONSTRAINT orders_status_chk
@@ -116,6 +124,7 @@ ALTER TABLE ops.staff ALTER COLUMN can_pick SET DEFAULT TRUE;
 ALTER TABLE ops.staff ALTER COLUMN can_deliver SET DEFAULT TRUE;
 ALTER TABLE ops.staff ALTER COLUMN can_pick SET NOT NULL;
 ALTER TABLE ops.staff ALTER COLUMN can_deliver SET NOT NULL;
+ALTER TABLE ops.staff ADD COLUMN IF NOT EXISTS photo_data TEXT;
 DO $$
 DECLARE
   r RECORD;
@@ -203,6 +212,7 @@ CREATE TABLE IF NOT EXISTS ops.deliveries (
   picked_up_at TIMESTAMPTZ,
   delivered_at TIMESTAMPTZ,
   failed_reason TEXT,
+  failed_reason_code TEXT,
   proof_url TEXT,
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
@@ -210,6 +220,8 @@ CREATE TABLE IF NOT EXISTS ops.deliveries (
 
 CREATE INDEX IF NOT EXISTS ops_deliveries_board_idx ON ops.deliveries (status, store_id, created_at);
 CREATE INDEX IF NOT EXISTS ops_deliveries_courier_idx ON ops.deliveries (courier_id, status);
+ALTER TABLE ops.deliveries ADD COLUMN IF NOT EXISTS failed_reason_code TEXT;
+ALTER TABLE ops.deliveries ADD COLUMN IF NOT EXISTS en_route_at TIMESTAMPTZ;
 
 CREATE TABLE IF NOT EXISTS ops.delivery_offers (
   id TEXT PRIMARY KEY,
@@ -311,6 +323,13 @@ BEGIN
   IF p->>'managedBy' = 'ops' THEN
     NEW.managed_by := 'ops';
   END IF;
+  IF NEW.handoff_code IS NULL OR btrim(NEW.handoff_code) = '' THEN
+    NEW.handoff_code := COALESCE(
+      NULLIF(btrim(p->>'handoffCode'), ''),
+      lpad((1000 + floor(random() * 9000)::int)::text, 4, '0')
+    );
+  END IF;
+  NEW.payload := COALESCE(NEW.payload, '{}'::jsonb) || jsonb_build_object('handoffCode', NEW.handoff_code);
   NEW.updated_at := NOW();
   RETURN NEW;
 END;
@@ -457,12 +476,17 @@ LANGUAGE sql IMMUTABLE AS $$
     WHEN del IN ('cancelled') OR pick IN ('cancelled') THEN 'cancelled'
     WHEN del IN ('delivered') THEN 'delivered'
     WHEN del IN ('en_route', 'arrived', 'picked_up') THEN 'shipping'
+    -- Acceptée / rassemblée côté app course, pas encore en trajet client
     WHEN pick IN ('picking', 'assigned', 'packed') OR del IN ('assigned', 'at_store') THEN 'preparing'
+    -- confirmed = en attente de l’app course
     ELSE 'confirmed'
   END;
 $$;
 
 -- Vues partagées (les deux apps lisent la même vérité)
+-- v_pick_board : file ramassage (queued/assigned/picking). packed → handoff deliveries.
+-- v_delivery_board : livraisons actives. CourseGO ne claim que si pick_status = packed.
+-- v_order_tracking : boutique /me/orders/:id/live
 DROP VIEW IF EXISTS public.v_order_tracking;
 DROP VIEW IF EXISTS ops.v_delivery_board;
 DROP VIEW IF EXISTS ops.v_pick_board;
@@ -481,6 +505,7 @@ SELECT
   o.slot_label,
   o.day_label,
   o.address_label,
+  o.store_name,
   o.created_at
 FROM ops.pick_jobs j
 JOIN orders o ON o.id = j.order_id
@@ -502,6 +527,8 @@ SELECT
   d.dropoff_lat,
   d.route_distance_m,
   d.route_duration_s,
+  d.picked_up_at,
+  d.en_route_at,
   o.status AS shop_status,
   o.address_label,
   o.address_line,
@@ -513,6 +540,9 @@ SELECT
   o.total,
   o.item_count,
   o.payment_id,
+  o.comment,
+  u.first_name AS customer_first,
+  u.last_name AS customer_last,
   o.created_at,
   pj.status AS pick_status,
   pj.picker_id,
@@ -520,6 +550,7 @@ SELECT
   (pj.picker_id IS NOT NULL AND d.courier_id IS NOT NULL AND pj.picker_id = d.courier_id) AS same_handler
 FROM ops.deliveries d
 JOIN orders o ON o.id = d.order_id
+LEFT JOIN users u ON u.id = o.user_id
 LEFT JOIN ops.pick_jobs pj ON pj.order_id = d.order_id
 WHERE d.status NOT IN ('delivered', 'failed', 'cancelled');
 
@@ -548,6 +579,7 @@ SELECT
   s.first_name AS courier_first_name,
   s.last_name AS courier_last_name,
   s.phone AS courier_phone,
+  (s.photo_data IS NOT NULL AND length(s.photo_data) > 20) AS courier_has_photo,
   loc.lng AS courier_lng,
   loc.lat AS courier_lat,
   loc.updated_at AS courier_located_at,
@@ -557,6 +589,11 @@ SELECT
   pk.last_name AS picker_last_name,
   pj.packed_at,
   (pj.picker_id IS NOT NULL AND d.courier_id IS NOT NULL AND pj.picker_id = d.courier_id) AS same_handler,
+  d.failed_reason,
+  d.failed_reason_code,
+  s.vehicle AS courier_vehicle,
+  d.picked_up_at,
+  d.en_route_at,
   o.created_at,
   o.updated_at
 FROM orders o
@@ -604,6 +641,217 @@ DO $$ BEGIN
 EXCEPTION WHEN OTHERS THEN
   NULL;
 END $$;
+
+-- Gains staff : ramassage + livraison (la course quitte le board une fois clôturée)
+CREATE TABLE IF NOT EXISTS ops.staff_payouts (
+  id TEXT PRIMARY KEY,
+  staff_id TEXT NOT NULL REFERENCES ops.staff(id) ON DELETE CASCADE,
+  kind TEXT NOT NULL CHECK (kind IN ('pick', 'deliver', 'tip')),
+  order_id TEXT NOT NULL REFERENCES orders(id) ON DELETE CASCADE,
+  ref_id TEXT NOT NULL,
+  amount INT NOT NULL CHECK (amount >= 0),
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  UNIQUE (kind, ref_id)
+);
+
+CREATE INDEX IF NOT EXISTS ops_payouts_staff_idx ON ops.staff_payouts (staff_id, created_at DESC);
+
+INSERT INTO ops.staff_payouts (id, staff_id, kind, order_id, ref_id, amount, created_at)
+SELECT
+  'pay-pick-' || j.id,
+  j.picker_id,
+  'pick',
+  j.order_id,
+  j.id,
+  500,
+  COALESCE(j.packed_at, j.updated_at)
+FROM ops.pick_jobs j
+WHERE j.status = 'packed' AND j.picker_id IS NOT NULL
+ON CONFLICT (kind, ref_id) DO NOTHING;
+
+INSERT INTO ops.staff_payouts (id, staff_id, kind, order_id, ref_id, amount, created_at)
+SELECT
+  'pay-del-' || d.id,
+  d.courier_id,
+  'deliver',
+  d.order_id,
+  d.id,
+  GREATEST(COALESCE(o.delivery_fee, 0), 1500),
+  COALESCE(d.delivered_at, d.updated_at)
+FROM ops.deliveries d
+JOIN orders o ON o.id = d.order_id
+WHERE d.status = 'delivered' AND d.courier_id IS NOT NULL
+ON CONFLICT (kind, ref_id) DO NOTHING;
+
+CREATE TABLE IF NOT EXISTS ops.order_ratings (
+  id TEXT PRIMARY KEY,
+  order_id TEXT NOT NULL REFERENCES orders(id) ON DELETE CASCADE,
+  rater_kind TEXT NOT NULL CHECK (rater_kind IN ('customer', 'staff')),
+  rater_user_id TEXT REFERENCES users(id) ON DELETE SET NULL,
+  rater_staff_id TEXT REFERENCES ops.staff(id) ON DELETE SET NULL,
+  rating INT NOT NULL CHECK (rating BETWEEN 1 AND 5),
+  comment TEXT NOT NULL DEFAULT '',
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  UNIQUE (order_id, rater_kind)
+);
+
+ALTER TABLE ops.order_ratings ADD COLUMN IF NOT EXISTS tip_amount INT NOT NULL DEFAULT 0;
+ALTER TABLE ops.order_ratings DROP CONSTRAINT IF EXISTS order_ratings_tip_amount_check;
+ALTER TABLE ops.order_ratings ADD CONSTRAINT order_ratings_tip_amount_check CHECK (tip_amount >= 0);
+
+DO $$
+DECLARE
+  con TEXT;
+BEGIN
+  SELECT c.conname INTO con
+  FROM pg_constraint c
+  JOIN pg_class t ON t.oid = c.conrelid
+  JOIN pg_namespace n ON n.oid = t.relnamespace
+  WHERE n.nspname = 'ops' AND t.relname = 'staff_payouts' AND c.contype = 'c'
+    AND pg_get_constraintdef(c.oid) ILIKE '%pick%'
+    AND pg_get_constraintdef(c.oid) NOT ILIKE '%tip%';
+  IF con IS NOT NULL THEN
+    EXECUTE format('ALTER TABLE ops.staff_payouts DROP CONSTRAINT %I', con);
+  END IF;
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint c
+    JOIN pg_class t ON t.oid = c.conrelid
+    JOIN pg_namespace n ON n.oid = t.relnamespace
+    WHERE n.nspname = 'ops' AND t.relname = 'staff_payouts' AND c.conname = 'staff_payouts_kind_check'
+  ) THEN
+    ALTER TABLE ops.staff_payouts
+      ADD CONSTRAINT staff_payouts_kind_check CHECK (kind IN ('pick', 'deliver', 'tip'));
+  END IF;
+END $$;
+
+CREATE TABLE IF NOT EXISTS ops.staff_notifications (
+  id TEXT PRIMARY KEY,
+  staff_id TEXT NOT NULL REFERENCES ops.staff(id) ON DELETE CASCADE,
+  kind TEXT NOT NULL DEFAULT 'info',
+  title TEXT NOT NULL,
+  body TEXT NOT NULL DEFAULT '',
+  href TEXT,
+  order_id TEXT,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  read_at TIMESTAMPTZ
+);
+
+CREATE INDEX IF NOT EXISTS ops_staff_notif_idx
+  ON ops.staff_notifications (staff_id, created_at DESC);
+
+CREATE TABLE IF NOT EXISTS public.user_notifications (
+  id TEXT PRIMARY KEY,
+  user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  kind TEXT NOT NULL DEFAULT 'order',
+  title TEXT NOT NULL,
+  body TEXT NOT NULL DEFAULT '',
+  preview TEXT NOT NULL DEFAULT '',
+  href TEXT,
+  order_id TEXT,
+  icon TEXT NOT NULL DEFAULT 'bell',
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  read_at TIMESTAMPTZ
+);
+
+CREATE INDEX IF NOT EXISTS user_notif_idx
+  ON public.user_notifications (user_id, created_at DESC);
+
+ALTER TABLE ops.deliveries ADD COLUMN IF NOT EXISTS failed_reason_code TEXT;
+
+CREATE TABLE IF NOT EXISTS ops.delivery_incidents (
+  id TEXT PRIMARY KEY,
+  order_id TEXT NOT NULL REFERENCES orders(id) ON DELETE CASCADE,
+  delivery_id TEXT NOT NULL REFERENCES ops.deliveries(id) ON DELETE CASCADE,
+  staff_id TEXT REFERENCES ops.staff(id) ON DELETE SET NULL,
+  reason_code TEXT NOT NULL DEFAULT 'other',
+  reason_text TEXT NOT NULL DEFAULT '',
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS ops_incidents_order_idx ON ops.delivery_incidents (order_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS ops_incidents_created_idx ON ops.delivery_incidents (created_at DESC);
+
+CREATE TABLE IF NOT EXISTS ops.client_incident_actions (
+  id TEXT PRIMARY KEY,
+  order_id TEXT NOT NULL REFERENCES orders(id) ON DELETE CASCADE UNIQUE,
+  user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  incident_id TEXT REFERENCES ops.delivery_incidents(id) ON DELETE SET NULL,
+  action TEXT NOT NULL,
+  note TEXT NOT NULL DEFAULT '',
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS ops_client_actions_created_idx
+  ON ops.client_incident_actions (created_at DESC);
+
+DO $$ BEGIN
+  GRANT SELECT ON ops.delivery_incidents TO marche_shop;
+  GRANT SELECT, INSERT, UPDATE ON ops.delivery_incidents TO marche_ops;
+  GRANT SELECT, INSERT, UPDATE ON ops.client_incident_actions TO marche_shop, marche_ops;
+EXCEPTION WHEN OTHERS THEN
+  NULL;
+END $$;
+
+DO $$ BEGIN
+  GRANT SELECT, INSERT, UPDATE, DELETE ON public.user_notifications TO marche_shop;
+EXCEPTION WHEN OTHERS THEN
+  NULL;
+END $$;
+
+DO $$
+DECLARE
+  con TEXT;
+BEGIN
+  SELECT c.conname INTO con
+  FROM pg_constraint c
+  JOIN pg_class t ON t.oid = c.conrelid
+  JOIN pg_namespace n ON n.oid = t.relnamespace
+  WHERE n.nspname = 'ops' AND t.relname = 'staff' AND c.contype = 'c'
+    AND pg_get_constraintdef(c.oid) ILIKE '%vehicle%'
+    AND pg_get_constraintdef(c.oid) NOT ILIKE '%tricycle%';
+  IF con IS NOT NULL THEN
+    EXECUTE format('ALTER TABLE ops.staff DROP CONSTRAINT %I', con);
+  END IF;
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint c
+    JOIN pg_class t ON t.oid = c.conrelid
+    JOIN pg_namespace n ON n.oid = t.relnamespace
+    WHERE n.nspname = 'ops' AND t.relname = 'staff' AND c.conname = 'staff_vehicle_kind_check'
+  ) THEN
+    ALTER TABLE ops.staff
+      ADD CONSTRAINT staff_vehicle_kind_check
+      CHECK (vehicle IS NULL OR vehicle IN ('moto', 'voiture', 'velo', 'tricycle', 'pied'));
+  END IF;
+END $$;
+
+CREATE TABLE IF NOT EXISTS ops.staff_store_affiliations (
+  staff_id TEXT NOT NULL REFERENCES ops.staff(id) ON DELETE CASCADE,
+  store_id TEXT NOT NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  PRIMARY KEY (staff_id, store_id)
+);
+
+CREATE TABLE IF NOT EXISTS ops.staff_profiles (
+  staff_id TEXT PRIMARY KEY REFERENCES ops.staff(id) ON DELETE CASCADE,
+  vehicle_kind TEXT,
+  vehicle_plate TEXT NOT NULL DEFAULT '',
+  owns_vehicle BOOLEAN NOT NULL DEFAULT FALSE,
+  needs_kit BOOLEAN NOT NULL DEFAULT FALSE,
+  vehicle_photo TEXT,
+  id_number TEXT NOT NULL DEFAULT '',
+  id_photo TEXT,
+  license_number TEXT NOT NULL DEFAULT '',
+  has_license BOOLEAN NOT NULL DEFAULT FALSE,
+  license_photo TEXT,
+  selfie_license_photo TEXT,
+  residence_line TEXT NOT NULL DEFAULT '',
+  residence_city TEXT NOT NULL DEFAULT '',
+  insurance_ref TEXT NOT NULL DEFAULT '',
+  has_insurance BOOLEAN NOT NULL DEFAULT FALSE,
+  insurance_photo TEXT,
+  extra JSONB NOT NULL DEFAULT '{}'::jsonb,
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
 
 -- Rejouer les commandes déjà en base
 SELECT public.ensure_ops_jobs(o) FROM orders o;

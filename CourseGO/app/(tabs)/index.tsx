@@ -46,7 +46,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 export default function HomeScreen() {
   const { staff } = useStaffAuth();
   const { unreadCount } = useStaffNotifications();
-  const { jobs, deliveries, tourHop, mapStores, online, setOnline, refresh, refreshing, lastError } = useBoard();
+  const { jobs, deliveries, tourHop, mapStores, online, canPause, setOnline, refresh, refreshing, lastError } = useBoard();
   const { mapPosition } = useLocation();
 
   useFocusEffect(
@@ -271,7 +271,13 @@ export default function HomeScreen() {
         </View>
         <Pressable
           accessibilityRole="button"
-          accessibilityLabel={online ? 'Passer en pause' : 'Passer en ligne'}
+          accessibilityLabel={
+            online
+              ? canPause
+                ? 'Passer en pause'
+                : 'Pause impossible, terminez d’abord la mission en cours'
+              : 'Passer en ligne'
+          }
           onPress={() => setOnline(!online)}
           style={[styles.statusChip, !online && styles.statusOff]}>
           <View style={[styles.dot, !online && styles.dotOff]} />

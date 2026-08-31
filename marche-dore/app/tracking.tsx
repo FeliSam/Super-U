@@ -44,17 +44,20 @@ import { softShadow } from '@/lib/shadow';
 import { statusTone } from '@/lib/statusTone';
 import { Feather } from '@expo/vector-icons';
 import { Href, router, useLocalSearchParams } from 'expo-router';
-import { useEffect, useMemo, useState, type ComponentProps } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type ComponentProps } from 'react';
 import {
   Alert,
   Dimensions,
   Modal,
+  NativeScrollEvent,
+  NativeSyntheticEvent,
   Platform,
   Pressable,
   ScrollView,
   StyleSheet,
   Text,
   TextInput,
+  useWindowDimensions,
   View } from 'react-native';
 import { GestureRoot } from '@/components/GestureRoot';
 import { Gesture, GestureDetector } from 'react-native-gesture-handler';
@@ -276,73 +279,56 @@ function InfoRow({
   );
 }
 
-export default function TrackingScreen() {
-  const { scheme } = useTheme();
-  const colors = useColors();
-  const styles = useMemo(() => createStyles(colors), [colors]);
-  const insets = useSafeAreaInsets();
-  const { id } = useLocalSearchParams<{ id?: string }>();
-  const { getOrder, activeOrder, orders, ready, setStatus, setTrackingFocus } = useOrders();
+function TrackingOrderPane({
+  order,
+  now,
+  styles,
+  colors,
+}: {
+  order: Order;
+  now: number;
+  styles: ReturnType<typeof createStyles>;
+  colors: AppColors;
+}) {
   const { startOutgoing, phase } = useCall();
-  const { count: cartCount } = useCart();
-  const {
-    addCourierReview,
-    courierReviewForOrder,
-    hasUserReviewedProduct } = useReviews();
-  const orderId = typeof id === 'string' ? id : Array.isArray(id) ? id[0] : undefined;
-  const order = (orderId ? getOrder(orderId) : null) ?? activeOrder ?? null;
-  const [now, setNow] = useState(Date.now());
-
-  const recentDone = useMemo(
-    () => orders.filter((o) => o.status === 'delivered' || o.status === 'cancelled').slice(0, 3),
-    [orders],
-  );
-
-  const steps = useMemo(() => (order ? buildSteps(order, now) : []), [order, now]);
-  const activeStep = steps.findIndex((s) => s.state === 'active');
-  const activeIndex =
-    activeStep >= 0 ? activeStep : Math.max(0, steps.findIndex((s) => s.state === 'done'));
-  const tone = order ? statusTone(order.status, colors) : statusTone('confirmed', colors);
-  const cancellable = order ? canCancelOrder(order.status) : false;
-  const delivered = order?.status === 'delivered';
-  const failed = order ? fulfillmentPhase(order) === 'failed' : false;
-  const existingCourierReview = order ? courierReviewForOrder(order.id) : undefined;
-  const [menuOpen, setMenuOpen] = useState(false);
-  const [mapReady, setMapReady] = useState(false);
-  const [mapError, setMapError] = useState(false);
+  const { addCourierReview, courierReviewForOrder, hasUserReviewedProduct } = useReviews();
+  const existingCourierReview = courierReviewForOrder(order.id);
   const [courierRating, setCourierRating] = useState(5);
   const [courierComment, setCourierComment] = useState('');
   const [courierTip, setCourierTip] = useState(0);
   const [courierSubmitted, setCourierSubmitted] = useState(false);
 
-  const sheetH = useSharedValue(SHEET_MIN);
-  const dragStartH = useSharedValue(SHEET_MIN);
-
-  useEffect(() => {
-    setTrackingFocus(order?.id ?? null);
-    return () => setTrackingFocus(null);
-  }, [order?.id, setTrackingFocus]);
-
-  useEffect(() => {
-    if (!order || order.status === 'delivered' || order.status === 'cancelled' || fulfillmentPhase(order) === 'failed') return;
-    const timer = setInterval(() => setNow(Date.now()), isCourseStarted(order) ? 250 : 2000);
-    return () => clearInterval(timer);
-  }, [order?.id, order?.status]);
-
-  useEffect(() => {
-    if (!delivered && !failed) return;
-    sheetH.value = withTiming(SHEET_MAX, SHEET_OPEN);
-  }, [delivered, failed, sheetH]);
-
-  useEffect(() => {
-    setCourierRating(5);
-    setCourierComment('');
-    setCourierTip(0);
-    setCourierSubmitted(false);
-  }, [order?.id]);
+  const steps = useMemo(() => buildSteps(order, now), [order, now]);
+  const activeStep = steps.findIndex((s) => s.state === 'active');
+  const activeIndex =
+    activeStep >= 0 ? activeStep : Math.max(0, steps.findIndex((s) => s.state === 'done'));
+  const tone = statusTone(order.status, colors);
+  const delivered = order.status === 'delivered';
+  const failed = fulfillmentPhase(order) === 'failed';
+  const progress = opsProgressPercent(order);
+  const slotLabel = [order.dayLabel, order.slotLabel].filter(Boolean).join(' · ');
+  const etaCaption = opsEtaCaption(order);
+  const remSec = isCourseStarted(order) ? remainingEnRouteSeconds(order, now) : null;
+  const onRoad = isCourseStarted(order) && order.deliveryStatus !== 'delivered';
+  const etaPrimary = onRoad
+    ? remSec
+      ? `~${formatDurationMin(remSec)}`
+      : opsPhaseLabel(order)
+    : opsPhaseLabel(order);
+  const addressLine = formatOrderAddress(order.addressLine, order.addressCity);
+  const addressPhone = order.addressPhone ? formatBeninPhone(order.addressPhone) : '';
+  const courierPhone = order.courierPhone ? formatBeninPhone(order.courierPhone) : '';
+  const destName = order.addressLabel || 'vous';
+  const storeName = order.storeName || 'Super U';
+  const tripSec = order.routeDurationSeconds || 0;
+  const roadMeta = `${formatDistanceKm(order.routeDistanceMeters || 0)} · trajet ${formatDurationMin(tripSec)} · ${storeName} → ${destName}`;
+  const roadSub = slotLabel
+    ? `${formatDistanceKm(order.routeDistanceMeters || 0)} · ~${formatDurationMin(tripSec)} (itinéraire routier) · ${slotLabel}`
+    : `${formatDistanceKm(order.routeDistanceMeters || 0)} · ~${formatDurationMin(tripSec)} (itinéraire routier)`;
+  const showCourier = isCourierAssigned(order);
 
   const submitCourierReview = () => {
-    if (!order || existingCourierReview || courierSubmitted) return;
+    if (existingCourierReview || courierSubmitted) return;
     const comment = courierComment.trim();
     if (courierRating < 1) return;
     addCourierReview({
@@ -354,6 +340,391 @@ export default function TrackingScreen() {
     });
     setCourierSubmitted(true);
   };
+
+  return (
+    <View style={styles.sheetPane}>
+      <Text style={[styles.sheetEyebrow, { color: colors.muted }]}>
+        {failed
+          ? 'Incident de livraison'
+          : delivered
+            ? 'Livraison terminée'
+            : order.status === 'cancelled'
+              ? 'Commande annulée'
+              : opsPhaseLabel(order)}
+      </Text>
+      {!delivered && !failed && order.status !== 'cancelled' ? (
+        <View style={styles.handoffWrap}>
+          <HandoffCodeCard code={order.handoffCode} />
+        </View>
+      ) : null}
+      <Animated.ScrollView
+        showsVerticalScrollIndicator={false}
+        style={styles.sheetScroll}
+        contentContainerStyle={styles.sheetContent}
+        bounces
+        nestedScrollEnabled>
+        {failed ? (
+          <DeliveryIssueCard order={order} />
+        ) : delivered ? (
+          <View style={[styles.doneHero, { backgroundColor: colors.successSoft }]}>
+            <View style={[styles.doneIcon, { backgroundColor: colors.green }]}>
+              <Feather name="check" size={22} color={colors.onAccent} />
+            </View>
+            <Text style={styles.doneTitle}>Merci ! Votre commande est livrée</Text>
+            <Text style={styles.doneSub}>
+              Bon appétit. Notez votre livreur et partagez un avis sur les produits reçus.
+            </Text>
+          </View>
+        ) : (
+          <View style={styles.statusBlock}>
+            <View style={styles.etaRow}>
+              <View style={styles.etaTextBlock}>
+                <Text style={styles.meta}>{etaCaption}</Text>
+                <Text style={styles.eta}>{etaPrimary}</Text>
+                <Text style={styles.roadMeta}>{roadMeta}</Text>
+              </View>
+              <View style={[styles.tag, { backgroundColor: tone.bg }]}>
+                <View style={[styles.tagDot, { backgroundColor: tone.dot }]} />
+                <Text style={[styles.tagText, { color: tone.text }]}>{statusLabel(order.status)}</Text>
+              </View>
+            </View>
+            <View style={[styles.progressTrack, { backgroundColor: colors.cream }]}>
+              <View
+                style={[
+                  styles.progressFill,
+                  {
+                    width: `${Math.min(100, Math.max(8, progress))}%`,
+                    backgroundColor: colors.terracotta,
+                  },
+                ]}
+              />
+            </View>
+            <View style={styles.current}>
+              <PulseDot color={tone.dot} />
+              <Text style={styles.currentText}>
+                {steps[activeIndex]?.hint ?? 'Votre commande est en cours de traitement.'}
+              </Text>
+            </View>
+          </View>
+        )}
+
+        <PressScale
+          style={[styles.softCard, { backgroundColor: colors.white }]}
+          onPress={() => router.push(`/order/${order.id}` as Href)}
+          scaleTo={0.985}>
+          <View style={[styles.detailsIcon, { backgroundColor: colors.cream }]}>
+            <Feather name="shopping-bag" size={18} color={colors.gold} />
+          </View>
+          <View style={styles.detailsText}>
+            <Text style={styles.detailsLeft}>Articles & total</Text>
+            <Text style={styles.detailsRight}>
+              {order.itemCount} article{order.itemCount > 1 ? 's' : ''} · {formatFcfa(order.total)}
+            </Text>
+          </View>
+          <Feather name="chevron-right" size={18} color={colors.placeholder} />
+        </PressScale>
+
+        {delivered && order.courierName ? (
+          <View style={[styles.softCardCol, { backgroundColor: colors.white }]}>
+            <Text style={styles.cardTitle}>Noter le livreur</Text>
+            <View style={styles.courierMini}>
+              <AppImage
+                source={staffPhotoSource(order.courierHasPhoto ? order.courierId : undefined)}
+                frameStyle={styles.avatar}
+              />
+              <View style={styles.courierText}>
+                <Text style={styles.name}>{order.courierName}</Text>
+                <Text style={styles.meta}>Coursier CourseGO</Text>
+              </View>
+            </View>
+            {existingCourierReview || courierSubmitted ? (
+              <View style={[styles.reviewDoneBanner, { backgroundColor: colors.successSoft }]}>
+                <Feather name="check-circle" size={16} color={colors.green} />
+                <Text style={[styles.reviewDoneText, { color: colors.green }]}>
+                  Merci pour votre avis
+                  {existingCourierReview
+                    ? ` · ${existingCourierReview.rating}/5`
+                    : courierRating
+                      ? ` · ${courierRating}/5`
+                      : ''}
+                  {(existingCourierReview?.tipAmount ?? (courierSubmitted ? courierTip : 0)) > 0
+                    ? ` · pourboire ${formatFcfa(existingCourierReview?.tipAmount ?? courierTip)}`
+                    : ''}
+                  .
+                </Text>
+              </View>
+            ) : (
+              <>
+                <View style={styles.draftStars}>
+                  <StarRating rating={courierRating} size={28} interactive onChange={setCourierRating} />
+                  <Text style={styles.draftRatingLabel}>{courierRating}/5</Text>
+                </View>
+                <CourierTipPicker value={courierTip} onChange={setCourierTip} />
+                <TextInput
+                  value={courierComment}
+                  onChangeText={setCourierComment}
+                  placeholder="Comment s’est passée la livraison ?"
+                  placeholderTextColor={colors.placeholder}
+                  multiline
+                  style={styles.reviewInput}
+                  textAlignVertical="top"
+                />
+                <CtaButton label="Envoyer mon avis livreur" onPress={submitCourierReview} />
+              </>
+            )}
+          </View>
+        ) : null}
+
+        {delivered ? (
+          <View style={[styles.softCardCol, { backgroundColor: colors.white }]}>
+            <Text style={styles.cardTitle}>Avis produits</Text>
+            <Text style={styles.productReviewHint}>Seuls les articles de cette livraison peuvent être notés.</Text>
+            {order.lines.map((line, i) => {
+              const product = getProduct(line.productId);
+              const reviewed = hasUserReviewedProduct(line.productId);
+              return (
+                <View key={`${line.productId}-${i}`}>
+                  {i > 0 ? <View style={[styles.softHr, { backgroundColor: colors.border }]} /> : null}
+                  <Pressable
+                    style={styles.productReviewRow}
+                    onPress={() =>
+                      router.push(`/product/reviews/${encodeURIComponent(line.productId)}?write=1` as Href)
+                    }>
+                    {product?.image ? (
+                      <AppImage source={product.image} frameStyle={styles.productThumb} />
+                    ) : (
+                      <View style={[styles.productThumb, styles.productThumbFallback]}>
+                        <Feather name="package" size={16} color={colors.placeholder} />
+                      </View>
+                    )}
+                    <View style={styles.productReviewText}>
+                      <Text style={styles.productReviewName} numberOfLines={2}>
+                        {line.name}
+                      </Text>
+                      <Text style={styles.productReviewMeta}>{reviewed ? 'Avis déjà publié' : 'Laisser un avis'}</Text>
+                    </View>
+                    <Feather
+                      name={reviewed ? 'check' : 'edit-3'}
+                      size={16}
+                      color={reviewed ? colors.green : colors.gold}
+                    />
+                  </Pressable>
+                </View>
+              );
+            })}
+          </View>
+        ) : null}
+
+        {!delivered ? (
+          <View style={[styles.softCardCol, { backgroundColor: colors.white }]}>
+            <Text style={styles.cardTitle}>Parcours</Text>
+            <InfoRow
+              icon="shopping-bag"
+              title={storeName}
+              lines={['Magasin de départ', slotLabel ? `Créneau ${slotLabel}` : 'Point de départ livreur']}
+            />
+            <View style={[styles.softHr, { backgroundColor: colors.border }]} />
+            <InfoRow
+              icon="navigation"
+              title="Itinéraire routier"
+              lines={[
+                roadMeta,
+                order.routeProfile === 'motorcycle' ? 'Profil moto · plus rapide' : 'Profil voiture / moto · plus rapide',
+                roadSub,
+              ]}
+            />
+            <View style={[styles.softHr, { backgroundColor: colors.border }]} />
+            <InfoRow
+              icon="map-pin"
+              title={order.addressLabel || 'Adresse'}
+              lines={[addressLine, addressPhone].filter(Boolean)}
+            />
+          </View>
+        ) : null}
+
+        <View style={[styles.softCardCol, { backgroundColor: colors.white }]}>
+          <Text style={styles.cardTitle}>Étapes</Text>
+          {steps.map((step, i) => {
+            const isLast = i === steps.length - 1;
+            return (
+              <View key={step.label} style={styles.step}>
+                <View style={styles.col}>
+                  <View
+                    style={[
+                      styles.node,
+                      step.state === 'done' && { backgroundColor: colors.green },
+                      step.state === 'active' && { backgroundColor: colors.terracotta },
+                      step.state === 'pending' && { backgroundColor: colors.cream },
+                    ]}>
+                    {step.state === 'done' ? (
+                      <Feather name="check" size={12} color={colors.onAccent} />
+                    ) : (
+                      <Feather
+                        name={step.icon}
+                        size={11}
+                        color={step.state === 'active' ? colors.onAccent : colors.placeholder}
+                      />
+                    )}
+                  </View>
+                  {!isLast ? (
+                    <View
+                      style={[
+                        styles.vline,
+                        {
+                          backgroundColor:
+                            step.state === 'done' || step.state === 'active' ? colors.terracotta : colors.border,
+                        },
+                      ]}
+                    />
+                  ) : null}
+                </View>
+                <View style={styles.stepBody}>
+                  <Text
+                    style={[
+                      styles.stepLabel,
+                      step.state === 'pending' && { color: colors.placeholder },
+                      step.state === 'active' && { color: colors.terracotta },
+                    ]}>
+                    {step.label}
+                  </Text>
+                  <Text style={styles.stepHint}>{step.hint}</Text>
+                </View>
+                <Text style={styles.time}>{step.time || '—'}</Text>
+              </View>
+            );
+          })}
+        </View>
+
+        {order.status === 'cancelled' ? (
+          <View style={[styles.softCard, { backgroundColor: colors.white }]}>
+            <Feather name="x-circle" size={18} color={colors.muted} />
+            <View style={styles.cancelledText}>
+              <Text style={styles.cancelledTitle}>Commande annulée</Text>
+              <Text style={styles.cancelledMeta}>Aucun livreur ne sera envoyé.</Text>
+            </View>
+          </View>
+        ) : !delivered && showCourier ? (
+          <View style={[styles.softCard, { backgroundColor: colors.white }]}>
+            <View style={styles.avatarWrap}>
+              <AppImage
+                source={staffPhotoSource(order.courierHasPhoto ? order.courierId : undefined)}
+                frameStyle={styles.avatar}
+              />
+              <View style={[styles.onlineDot, { borderColor: colors.white }]} />
+            </View>
+            <View style={styles.courierText}>
+              <Text style={styles.name}>{order.courierName}</Text>
+              <Text style={styles.meta}>
+                {order.sameHandler
+                  ? courierPhone
+                    ? `${courierPhone} · prépare et livre`
+                    : 'Prépare et livre cette commande'
+                  : courierPhone
+                    ? `${courierPhone} · en livraison`
+                    : 'Livreur assigné'}
+              </Text>
+            </View>
+            <View style={styles.courierActions}>
+              <IconCircle
+                name="message-circle"
+                onPress={() => router.push(`/chat/${courierThreadId(order)}` as Href)}
+              />
+              <IconCircle
+                name="phone"
+                onPress={() => {
+                  if (phase === 'idle') startOutgoing(courierThreadId(order), order.courierName);
+                }}
+              />
+            </View>
+          </View>
+        ) : !delivered ? (
+          <View style={[styles.softCard, { backgroundColor: colors.white }]}>
+            <Feather name="package" size={18} color={colors.gold} />
+            <View style={styles.cancelledText}>
+              <Text style={styles.cancelledTitle}>En attente du magasin</Text>
+              <Text style={styles.cancelledMeta}>
+                Un préparateur rassemble votre panier. Le livreur apparaîtra une fois assigné.
+              </Text>
+            </View>
+          </View>
+        ) : null}
+
+        <PressScale style={styles.help} onPress={() => router.push('/help')} scaleTo={0.98}>
+          <Feather name="help-circle" size={15} color={colors.muted} />
+          <Text style={styles.helpText}>Besoin d’aide ? Contacter le support</Text>
+        </PressScale>
+      </Animated.ScrollView>
+    </View>
+  );
+}
+
+export default function TrackingScreen() {
+  const { scheme } = useTheme();
+  const colors = useColors();
+  const styles = useMemo(() => createStyles(colors), [colors]);
+  const insets = useSafeAreaInsets();
+  const { width: windowWidth } = useWindowDimensions();
+  const pageW = Math.min(windowWidth, 430);
+  const pagerRef = useRef<ScrollView>(null);
+  const { id } = useLocalSearchParams<{ id?: string }>();
+  const { getOrder, activeOrder, activeOrders, orders, ready, setStatus, setTrackingFocus } = useOrders();
+  const { startOutgoing, phase } = useCall();
+  const { count: cartCount } = useCart();
+  const orderId = typeof id === 'string' ? id : Array.isArray(id) ? id[0] : undefined;
+  const order = (orderId ? getOrder(orderId) : null) ?? activeOrder ?? null;
+  const trackList = useMemo(() => {
+    const list: Order[] = [];
+    const seen = new Set<string>();
+    for (const o of activeOrders) {
+      if (seen.has(o.id)) continue;
+      seen.add(o.id);
+      list.push(o);
+    }
+    if (order && !seen.has(order.id)) list.unshift(order);
+    return list;
+  }, [activeOrders, order]);
+  const pageIndex = order ? Math.max(0, trackList.findIndex((o) => o.id === order.id)) : 0;
+  const selectTracked = useCallback((nextId: string) => {
+    router.setParams({ id: nextId });
+  }, []);
+  const [now, setNow] = useState(Date.now());
+
+  const recentDone = useMemo(
+    () => orders.filter((o) => o.status === 'delivered' || o.status === 'cancelled').slice(0, 3),
+    [orders],
+  );
+
+  const tone = order ? statusTone(order.status, colors) : statusTone('confirmed', colors);
+  const cancellable = order ? canCancelOrder(order.status) : false;
+  const delivered = order?.status === 'delivered';
+  const failed = order ? fulfillmentPhase(order) === 'failed' : false;
+  const [menuOpen, setMenuOpen] = useState(false);
+  const [mapReady, setMapReady] = useState(false);
+  const [mapError, setMapError] = useState(false);
+
+  const sheetH = useSharedValue(SHEET_MIN);
+  const dragStartH = useSharedValue(SHEET_MIN);
+
+  useEffect(() => {
+    setTrackingFocus(order?.id ?? null);
+    return () => setTrackingFocus(null);
+  }, [order?.id, setTrackingFocus]);
+
+  useEffect(() => {
+    if (!order || trackList.length < 2) return;
+    pagerRef.current?.scrollTo({ x: pageIndex * pageW, animated: true });
+  }, [pageIndex, pageW, order, trackList.length]);
+
+  useEffect(() => {
+    if (!order || order.status === 'delivered' || order.status === 'cancelled' || fulfillmentPhase(order) === 'failed') return;
+    const timer = setInterval(() => setNow(Date.now()), isCourseStarted(order) ? 250 : 2000);
+    return () => clearInterval(timer);
+  }, [order?.id, order?.status]);
+
+  useEffect(() => {
+    if (!delivered && !failed) return;
+    sheetH.value = withTiming(SHEET_MAX, SHEET_OPEN);
+  }, [delivered, failed, sheetH]);
 
   const sheetPan = useMemo(
     () =>
@@ -533,26 +904,6 @@ export default function TrackingScreen() {
     );
   }
 
-  const progress = opsProgressPercent(order);
-  const slotLabel = [order.dayLabel, order.slotLabel].filter(Boolean).join(' · ');
-  const etaCaption = opsEtaCaption(order);
-  const remSec = isCourseStarted(order) ? remainingEnRouteSeconds(order, now) : null;
-  const onRoad = isCourseStarted(order) && order.deliveryStatus !== 'delivered';
-  const etaPrimary = onRoad
-    ? remSec
-      ? `~${formatDurationMin(remSec)}`
-      : opsPhaseLabel(order)
-    : opsPhaseLabel(order);
-  const addressLine = formatOrderAddress(order.addressLine, order.addressCity);
-  const addressPhone = order.addressPhone ? formatBeninPhone(order.addressPhone) : '';
-  const courierPhone = order.courierPhone ? formatBeninPhone(order.courierPhone) : '';
-  const destName = order.addressLabel || 'vous';
-  const storeName = order.storeName || 'Super U';
-  const tripSec = order.routeDurationSeconds || 0;
-  const roadMeta = `${formatDistanceKm(order.routeDistanceMeters || 0)} · trajet ${formatDurationMin(tripSec)} · ${storeName} → ${destName}`;
-  const roadSub = slotLabel
-    ? `${formatDistanceKm(order.routeDistanceMeters || 0)} · ~${formatDurationMin(tripSec)} (itinéraire routier) · ${slotLabel}`
-    : `${formatDistanceKm(order.routeDistanceMeters || 0)} · ~${formatDurationMin(tripSec)} (itinéraire routier)`;
   const showCourier = isCourierAssigned(order);
 
   return (
@@ -563,6 +914,7 @@ export default function TrackingScreen() {
           <View style={StyleSheet.absoluteFill}>
             {mapModel ? (
               <LibreMap
+                key={order.id}
                 style={StyleSheet.absoluteFill}
                 mapStyle={scheme === 'dark' ? mapStyles.dark : mapStyles.light}
                 center={[...mapModel.center]}
@@ -683,335 +1035,54 @@ export default function TrackingScreen() {
                 <View style={[styles.sheetHandleBar, { backgroundColor: colors.grabber }]} />
               </View>
             </GestureDetector>
-              <Text style={[styles.sheetEyebrow, { color: colors.muted }]}>
-                {failed
-                  ? 'Incident de livraison'
-                  : delivered
-                    ? 'Livraison terminée'
-                    : order.status === 'cancelled'
-                      ? 'Commande annulée'
-                      : opsPhaseLabel(order)}
-              </Text>
-              {!delivered && !failed && order.status !== 'cancelled' ? (
-                <View style={{ paddingHorizontal: 20, marginBottom: 8 }}>
-                  <HandoffCodeCard code={order.handoffCode} />
-                </View>
-              ) : null}
-
-              <Animated.ScrollView
-                showsVerticalScrollIndicator={false}
-                style={styles.sheetScroll}
-                contentContainerStyle={styles.sheetContent}
-                bounces
-                nestedScrollEnabled>
-                {failed ? (
-                  <DeliveryIssueCard order={order} />
-                ) : delivered ? (
-                  <View style={[styles.doneHero, { backgroundColor: colors.successSoft }]}>
-                    <View style={[styles.doneIcon, { backgroundColor: colors.green }]}>
-                      <Feather name="check" size={22} color={colors.onAccent} />
-                    </View>
-                    <Text style={styles.doneTitle}>Merci ! Votre commande est livrée</Text>
-                    <Text style={styles.doneSub}>
-                      Bon appétit. Notez votre livreur et partagez un avis sur les produits reçus.
-                    </Text>
-                  </View>
-                ) : (
-                  <View style={styles.statusBlock}>
-                    <View style={styles.etaRow}>
-                      <View style={styles.etaTextBlock}>
-                        <Text style={styles.meta}>{etaCaption}</Text>
-                        <Text style={styles.eta}>{etaPrimary}</Text>
-                        <Text style={styles.roadMeta}>{roadMeta}</Text>
-                      </View>
-                      <View style={[styles.tag, { backgroundColor: tone.bg }]}>
-                        <View style={[styles.tagDot, { backgroundColor: tone.dot }]} />
-                        <Text style={[styles.tagText, { color: tone.text }]}>
-                          {statusLabel(order.status)}
-                        </Text>
-                      </View>
-                    </View>
-                    <View style={[styles.progressTrack, { backgroundColor: colors.cream }]}>
-                      <View
-                        style={[
-                          styles.progressFill,
-                          {
-                            width: `${Math.min(100, Math.max(8, progress))}%`,
-                            backgroundColor: colors.terracotta },
-                        ]}
-                      />
-                    </View>
-                    <View style={styles.current}>
-                      <PulseDot color={tone.dot} />
-                      <Text style={styles.currentText}>
-                        {steps[activeIndex]?.hint ?? 'Votre commande est en cours de traitement.'}
-                      </Text>
-                    </View>
-                  </View>
-                )}
-
-                <PressScale
-                  style={[styles.softCard, { backgroundColor: colors.white }]}
-                  onPress={() => router.push(`/order/${order.id}` as Href)}
-                  scaleTo={0.985}>
-                  <View style={[styles.detailsIcon, { backgroundColor: colors.cream }]}>
-                    <Feather name="shopping-bag" size={18} color={colors.gold} />
-                  </View>
-                  <View style={styles.detailsText}>
-                    <Text style={styles.detailsLeft}>Articles & total</Text>
-                    <Text style={styles.detailsRight}>
-                      {order.itemCount} article{order.itemCount > 1 ? 's' : ''} · {formatFcfa(order.total)}
-                    </Text>
-                  </View>
-                  <Feather name="chevron-right" size={18} color={colors.placeholder} />
-                </PressScale>
-
-                {delivered && order.courierName ? (
-                  <View style={[styles.softCardCol, { backgroundColor: colors.white }]}>
-                    <Text style={styles.cardTitle}>Noter le livreur</Text>
-                    <View style={styles.courierMini}>
-                      <AppImage
-                        source={staffPhotoSource(order.courierHasPhoto ? order.courierId : undefined)}
-                        frameStyle={styles.avatar}
-                      />
-                      <View style={styles.courierText}>
-                        <Text style={styles.name}>{order.courierName}</Text>
-                        <Text style={styles.meta}>Coursier CourseGO</Text>
-                      </View>
-                    </View>
-                    {existingCourierReview || courierSubmitted ? (
-                      <View style={[styles.reviewDoneBanner, { backgroundColor: colors.successSoft }]}>
-                        <Feather name="check-circle" size={16} color={colors.green} />
-                        <Text style={[styles.reviewDoneText, { color: colors.green }]}>
-                          Merci pour votre avis
-                          {existingCourierReview
-                            ? ` · ${existingCourierReview.rating}/5`
-                            : courierRating
-                              ? ` · ${courierRating}/5`
-                              : ''}
-                          {(existingCourierReview?.tipAmount ?? (courierSubmitted ? courierTip : 0)) > 0
-                            ? ` · pourboire ${formatFcfa(existingCourierReview?.tipAmount ?? courierTip)}`
-                            : ''}
-                          .
-                        </Text>
-                      </View>
-                    ) : (
-                      <>
-                        <View style={styles.draftStars}>
-                          <StarRating
-                            rating={courierRating}
-                            size={28}
-                            interactive
-                            onChange={setCourierRating}
-                          />
-                          <Text style={styles.draftRatingLabel}>{courierRating}/5</Text>
-                        </View>
-                        <CourierTipPicker value={courierTip} onChange={setCourierTip} />
-                        <TextInput
-                          value={courierComment}
-                          onChangeText={setCourierComment}
-                          placeholder="Comment s’est passée la livraison ?"
-                          placeholderTextColor={colors.placeholder}
-                          multiline
-                          style={styles.reviewInput}
-                          textAlignVertical="top"
-                        />
-                        <CtaButton label="Envoyer mon avis livreur" onPress={submitCourierReview} />
-                      </>
-                    )}
-                  </View>
-                ) : null}
-
-                {delivered ? (
-                  <View style={[styles.softCardCol, { backgroundColor: colors.white }]}>
-                    <Text style={styles.cardTitle}>Avis produits</Text>
-                    <Text style={styles.productReviewHint}>
-                      Seuls les articles de cette livraison peuvent être notés.
-                    </Text>
-                    {order.lines.map((line, i) => {
-                      const product = getProduct(line.productId);
-                      const reviewed = hasUserReviewedProduct(line.productId);
-                      return (
-                        <View key={`${line.productId}-${i}`}>
-                          {i > 0 ? (
-                            <View style={[styles.softHr, { backgroundColor: colors.border }]} />
-                          ) : null}
-                          <Pressable
-                            style={styles.productReviewRow}
-                            onPress={() =>
-                              router.push(
-                                `/product/reviews/${encodeURIComponent(line.productId)}?write=1` as Href,
-                              )
-                            }>
-                            {product?.image ? (
-                              <AppImage source={product.image} frameStyle={styles.productThumb} />
-                            ) : (
-                              <View style={[styles.productThumb, styles.productThumbFallback]}>
-                                <Feather name="package" size={16} color={colors.placeholder} />
-                              </View>
-                            )}
-                            <View style={styles.productReviewText}>
-                              <Text style={styles.productReviewName} numberOfLines={2}>
-                                {line.name}
-                              </Text>
-                              <Text style={styles.productReviewMeta}>
-                                {reviewed ? 'Avis déjà publié' : 'Laisser un avis'}
-                              </Text>
-                            </View>
-                            <Feather
-                              name={reviewed ? 'check' : 'edit-3'}
-                              size={16}
-                              color={reviewed ? colors.green : colors.gold}
-                            />
-                          </Pressable>
-                        </View>
-                      );
-                    })}
-                  </View>
-                ) : null}
-
-                {!delivered ? (
-                  <View style={[styles.softCardCol, { backgroundColor: colors.white }]}>
-                    <Text style={styles.cardTitle}>Parcours</Text>
-                    <InfoRow
-                      icon="shopping-bag"
-                      title={storeName}
-                      lines={['Magasin de départ', slotLabel ? `Créneau ${slotLabel}` : 'Point de départ livreur']}
-                    />
-                    <View style={[styles.softHr, { backgroundColor: colors.border }]} />
-                    <InfoRow
-                      icon="navigation"
-                      title="Itinéraire routier"
-                      lines={[
-                        roadMeta,
-                        order.routeProfile === 'motorcycle'
-                          ? 'Profil moto · plus rapide'
-                          : 'Profil voiture / moto · plus rapide',
-                        roadSub,
-                      ]}
-                    />
-                    <View style={[styles.softHr, { backgroundColor: colors.border }]} />
-                    <InfoRow
-                      icon="map-pin"
-                      title={order.addressLabel || 'Adresse'}
-                      lines={[addressLine, addressPhone].filter(Boolean)}
-                    />
-                  </View>
-                ) : null}
-
-                <View style={[styles.softCardCol, { backgroundColor: colors.white }]}>
-                  <Text style={styles.cardTitle}>Étapes</Text>
-                  {steps.map((step, i) => {
-                    const isLast = i === steps.length - 1;
+              {trackList.length > 1 ? (
+                <>
+                <ScrollView
+                  horizontal
+                  showsHorizontalScrollIndicator={false}
+                  style={styles.orderTabs}
+                  contentContainerStyle={styles.orderTabsInner}>
+                  {trackList.map((o) => {
+                    const on = o.id === order.id;
                     return (
-                      <View key={step.label} style={styles.step}>
-                        <View style={styles.col}>
-                          <View
-                            style={[
-                              styles.node,
-                              step.state === 'done' && { backgroundColor: colors.green },
-                              step.state === 'active' && { backgroundColor: colors.terracotta },
-                              step.state === 'pending' && { backgroundColor: colors.cream },
-                            ]}>
-                            {step.state === 'done' ? (
-                              <Feather name="check" size={12} color={colors.onAccent} />
-                            ) : (
-                              <Feather
-                                name={step.icon}
-                                size={11}
-                                color={step.state === 'active' ? colors.onAccent : colors.placeholder}
-                              />
-                            )}
-                          </View>
-                          {!isLast ? (
-                            <View
-                              style={[
-                                styles.vline,
-                                {
-                                  backgroundColor:
-                                    step.state === 'done' || step.state === 'active'
-                                      ? colors.terracotta
-                                      : colors.border },
-                              ]}
-                            />
-                          ) : null}
-                        </View>
-                        <View style={styles.stepBody}>
-                          <Text
-                            style={[
-                              styles.stepLabel,
-                              step.state === 'pending' && { color: colors.placeholder },
-                              step.state === 'active' && { color: colors.terracotta },
-                            ]}>
-                            {step.label}
-                          </Text>
-                          <Text style={styles.stepHint}>{step.hint}</Text>
-                        </View>
-                        <Text style={styles.time}>{step.time || '—'}</Text>
-                      </View>
+                      <Pressable
+                        key={o.id}
+                        onPress={() => selectTracked(o.id)}
+                        style={[styles.orderTab, on ? styles.orderTabOn : null]}>
+                        <Text style={[styles.orderTabText, on ? styles.orderTabTextOn : null]} numberOfLines={1}>
+                          {formatOrderId(o.id)}
+                        </Text>
+                      </Pressable>
                     );
                   })}
-                </View>
-
-                {order.status === 'cancelled' ? (
-                  <View style={[styles.softCard, { backgroundColor: colors.white }]}>
-                    <Feather name="x-circle" size={18} color={colors.muted} />
-                    <View style={styles.cancelledText}>
-                      <Text style={styles.cancelledTitle}>Commande annulée</Text>
-                      <Text style={styles.cancelledMeta}>Aucun livreur ne sera envoyé.</Text>
-                    </View>
+                </ScrollView>
+              <ScrollView
+                ref={pagerRef}
+                horizontal
+                pagingEnabled
+                nestedScrollEnabled
+                keyboardShouldPersistTaps="handled"
+                showsHorizontalScrollIndicator={false}
+                style={styles.orderPager}
+                snapToInterval={pageW}
+                snapToAlignment="start"
+                decelerationRate="fast"
+                disableIntervalMomentum
+                onMomentumScrollEnd={(e: NativeSyntheticEvent<NativeScrollEvent>) => {
+                  const i = Math.round(e.nativeEvent.contentOffset.x / Math.max(pageW, 1));
+                  const next = trackList[i];
+                  if (next && next.id !== order.id) selectTracked(next.id);
+                }}>
+                {trackList.map((pageOrder) => (
+                  <View key={pageOrder.id} style={{ width: pageW, maxWidth: pageW, flexShrink: 0, overflow: 'hidden' }}>
+                    <TrackingOrderPane order={pageOrder} now={now} styles={styles} colors={colors} />
                   </View>
-                ) : !delivered && showCourier ? (
-                  <View style={[styles.softCard, { backgroundColor: colors.white }]}>
-                    <View style={styles.avatarWrap}>
-                      <AppImage
-                        source={staffPhotoSource(order.courierHasPhoto ? order.courierId : undefined)}
-                        frameStyle={styles.avatar}
-                      />
-                      <View style={[styles.onlineDot, { borderColor: colors.white }]} />
-                    </View>
-                    <View style={styles.courierText}>
-                      <Text style={styles.name}>{order.courierName}</Text>
-                      <Text style={styles.meta}>
-                        {order.sameHandler
-                          ? courierPhone
-                            ? `${courierPhone} · prépare et livre`
-                            : 'Prépare et livre cette commande'
-                          : courierPhone
-                            ? `${courierPhone} · en livraison`
-                            : 'Livreur assigné'}
-                      </Text>
-                    </View>
-                    <View style={styles.courierActions}>
-                      <IconCircle
-                        name="message-circle"
-                        onPress={() => router.push(`/chat/${courierThreadId(order)}` as Href)}
-                      />
-                      <IconCircle
-                        name="phone"
-                        onPress={() => {
-                          if (phase === 'idle') startOutgoing(courierThreadId(order), order.courierName);
-                        }}
-                      />
-                    </View>
-                  </View>
-                ) : !delivered ? (
-                  <View style={[styles.softCard, { backgroundColor: colors.white }]}>
-                    <Feather name="package" size={18} color={colors.gold} />
-                    <View style={styles.cancelledText}>
-                      <Text style={styles.cancelledTitle}>En attente du magasin</Text>
-                      <Text style={styles.cancelledMeta}>
-                        Un préparateur rassemble votre panier. Le livreur apparaîtra une fois assigné.
-                      </Text>
-                    </View>
-                  </View>
-                ) : null}
-
-                <PressScale style={styles.help} onPress={() => router.push('/help')} scaleTo={0.98}>
-                  <Feather name="help-circle" size={15} color={colors.muted} />
-                  <Text style={styles.helpText}>Besoin d’aide ? Contacter le support</Text>
-                </PressScale>
-              </Animated.ScrollView>
+                ))}
+              </ScrollView>
+                </>
+              ) : (
+                <TrackingOrderPane order={order} now={now} styles={styles} colors={colors} />
+              )}
             </Animated.View>
         </View>
       </GestureRoot>
@@ -1080,6 +1151,20 @@ function createStyles(colors: AppColors) {
         default: {} }) },
     sheetHandle: { alignItems: 'center', paddingTop: 10, paddingBottom: 4 },
     sheetHandleBar: { width: 40, height: 4, borderRadius: 999 },
+    orderTabs: { flexGrow: 0, flexShrink: 0, maxHeight: 44 },
+    orderTabsInner: { paddingHorizontal: 16, gap: 8, paddingBottom: 8, alignItems: 'center' },
+    orderTab: {
+      paddingHorizontal: 12,
+      paddingVertical: 7,
+      borderRadius: 999,
+      backgroundColor: colors.cream,
+    },
+    orderTabOn: { backgroundColor: colors.gold },
+    orderTabText: { fontSize: 12, fontWeight: '800', color: colors.muted },
+    orderTabTextOn: { color: colors.onAccent },
+    orderPager: { flex: 1, width: '100%', overflow: 'hidden' },
+    sheetPane: { flex: 1, width: '100%', overflow: 'hidden' },
+    handoffWrap: { paddingHorizontal: 20, marginBottom: 8, width: '100%', maxWidth: '100%' },
     sheetEyebrow: {
       fontSize: 11,
       fontWeight: '700',

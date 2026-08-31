@@ -3,6 +3,7 @@ import { apiGetCart, apiPutCart } from '@/lib/api/cart';
 import { getAuthToken } from '@/lib/api/http';
 import { loadAccountJson, saveAccountJson } from '@/lib/accountSync';
 import { useAuth } from '@/context/AuthContext';
+import { useCatalogVersion } from '@/context/CatalogContext';
 import React, { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
 
 export type CartLine = {
@@ -45,7 +46,7 @@ function sanitizeLines(lines: unknown): CartLine[] {
     .filter((l): l is CartLine => {
       if (!l || typeof l !== 'object') return false;
       const row = l as CartLine;
-      return typeof row.productId === 'string' && typeof row.qty === 'number' && row.qty > 0 && Boolean(getProduct(row.productId));
+      return typeof row.productId === 'string' && Boolean(row.productId) && typeof row.qty === 'number' && row.qty > 0;
     })
     .map((l) => ({
       productId: l.productId,
@@ -56,6 +57,7 @@ function sanitizeLines(lines: unknown): CartLine[] {
 
 export function CartProvider({ children }: { children: React.ReactNode }) {
   const { session, ready: authReady } = useAuth();
+  const catalogVersion = useCatalogVersion();
   const accountId = session?.accountId ?? null;
   const [lines, setLines] = useState<CartLine[]>([]);
   const [promoCode, setPromoCode] = useState<string | null>(null);
@@ -128,7 +130,7 @@ export function CartProvider({ children }: { children: React.ReactNode }) {
   }, [lines, promoCode, session?.accountId]);
 
   const add = useCallback((productId: string, qty = 1) => {
-    if (!getProduct(productId)) return;
+    if (!productId) return;
     setLines((prev) => {
       const existing = prev.find((l) => l.productId === productId);
       if (existing) {
@@ -171,7 +173,7 @@ export function CartProvider({ children }: { children: React.ReactNode }) {
         const p = getProduct(l.productId);
         return sum + (p ? p.price * l.qty : 0);
       }, 0),
-    [lines],
+    [lines, catalogVersion],
   );
   const listSubtotal = useMemo(
     () =>
@@ -180,7 +182,7 @@ export function CartProvider({ children }: { children: React.ReactNode }) {
         if (!p) return sum;
         return sum + (p.oldPrice ?? p.price) * l.qty;
       }, 0),
-    [lines],
+    [lines, catalogVersion],
   );
   const delivery = useMemo(() => (lines.length ? 1500 : 0), [lines.length]);
   const discount = 0;

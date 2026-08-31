@@ -26,6 +26,9 @@ export function HandoffCodeCard({ code }: { code?: string | null }) {
 function createStyles(colors: AppColors) {
   return StyleSheet.create({
     card: {
+      width: '100%',
+      maxWidth: '100%',
+      alignSelf: 'stretch',
       backgroundColor: colors.white,
       borderRadius: 20,
       padding: 16,
@@ -33,6 +36,7 @@ function createStyles(colors: AppColors) {
       gap: 10,
       borderWidth: 1,
       borderColor: colors.border,
+      overflow: 'hidden',
     },
     kicker: {
       ...displayFont('700'),
@@ -40,7 +44,7 @@ function createStyles(colors: AppColors) {
       letterSpacing: 1.2,
       color: colors.gold,
     },
-    row: { flexDirection: 'row', gap: 8 },
+    row: { flexDirection: 'row', gap: 8, justifyContent: 'center', flexWrap: 'wrap' },
     box: {
       width: 44,
       height: 52,

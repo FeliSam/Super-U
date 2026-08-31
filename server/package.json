@@ -7,6 +7,15 @@
     "start": "tsx src/index.ts",
     "seed": "tsx src/seed.ts",
     "dump-catalog": "node scripts/dump-catalog.mjs",
+    "catalog:generate": "node scripts/generate-west-africa-catalog.mjs",
+    "catalog:validate": "tsx scripts/validate-catalog.mjs",
+    "catalog:import": "tsx scripts/import-catalog.mjs",
+    "catalog:import:dry-run": "tsx scripts/import-catalog.mjs --dry-run",
+    "catalog:media": "node scripts/import-catalog-media.mjs",
+    "test:smoke": "node --import tsx --test tests/catalogHelpers.test.ts tests/catalogManifest.test.ts",
+    "test:integration": "node --import tsx --test tests/*.integration.test.ts",
+    "catalog:qa:api": "node scripts/qa-catalog-api.mjs",
+    "typecheck": "tsc --noEmit",
     "schema:export": "node scripts/export-schema.mjs"
   },
   "dependencies": {

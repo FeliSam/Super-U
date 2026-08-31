@@ -5,6 +5,8 @@ export type ProductBadge = 'nouveau' | 'local' | 'rupture';
 
 export type Product = {
   id: string;
+  sku?: string;
+  barcode?: string | null;
   name: string;
   unit: string;
   price: number;
@@ -15,6 +17,9 @@ export type Product = {
   producer?: string;
   description?: string;
   inStock?: boolean;
+  availableQty?: number;
+  imageUrl?: string;
+  updatedAt?: string;
   badge?: ProductBadge;
   rating?: number;
   reviews?: number;
@@ -644,8 +649,54 @@ export const products: Product[] = [
   ...aisleProducts,
 ];
 
-/** Bundled `require()` snapshots — never replaced by API/SQLite payloads. */
+/** Bundled snapshots stay available when the API/cache has no usable media. */
 const bundledProductImages = new Map(products.map((p) => [p.id, p.image]));
+const bundledProducts = new Map(products.map((p) => [p.id, { ...p }]));
+const catalogImageFallbacks = new Map<string, ImageSourcePropType>(bundledProductImages);
+
+export function categoryFallbackImage(categoryId: string): ImageSourcePropType {
+  return (
+    exploreCategories.find((category) => category.id === categoryId)?.image ??
+    require('../assets/images/catalog/cat-epicerie.png')
+  );
+}
+
+export function registerCatalogImageFallback(
+  productId: string,
+  image: ImageSourcePropType,
+) {
+  if (!catalogImageFallbacks.has(productId)) {
+    catalogImageFallbacks.set(productId, image);
+  }
+}
+
+export function catalogImageFallback(source: unknown): ImageSourcePropType | undefined {
+  const uri =
+    typeof source === 'string'
+      ? source
+      : source && typeof source === 'object' && 'uri' in source
+        ? String((source as { uri?: unknown }).uri ?? '')
+        : '';
+  const match = uri.match(/\/catalog\/media\/([^/?#]+)/i);
+  if (!match) return undefined;
+  try {
+    return catalogImageFallbacks.get(decodeURIComponent(match[1]));
+  } catch {
+    return catalogImageFallbacks.get(match[1]);
+  }
+}
+
+export function removeRuntimeCatalogProduct(productId: string) {
+  const index = products.findIndex((product) => product.id === productId);
+  const bundled = bundledProducts.get(productId);
+  if (bundled) {
+    if (index >= 0) products[index] = { ...bundled };
+    else products.push({ ...bundled });
+    return;
+  }
+  if (index >= 0) products.splice(index, 1);
+  catalogImageFallbacks.delete(productId);
+}
 
 export function restoreBundledCatalogImages() {
   for (const p of products) {
@@ -676,8 +727,11 @@ function isLegumeProduct(p: Product) {
 export function similarProducts(productId: string, limit = 6) {
   const product = getProduct(productId);
   if (!product) return [];
+  const family = productFamilyKey(product);
 
-  let pool = products.filter((p) => p.id !== productId && p.categoryId === product.categoryId);
+  let pool = products.filter(
+    (p) => p.id !== productId && p.categoryId === product.categoryId && productFamilyKey(p) !== family,
+  );
 
   if (product.categoryId === 'fruits-legumes') {
     if (isFruitProduct(product)) {
@@ -706,8 +760,10 @@ export function similarProducts(productId: string, limit = 6) {
 }
 
 export function discoverProducts(productId: string, limit = 8) {
+  const product = getProduct(productId);
+  const family = product ? productFamilyKey(product) : null;
   const exclude = new Set([productId, ...similarProducts(productId).map((p) => p.id)]);
-  const pool = products.filter((p) => !exclude.has(p.id));
+  const pool = products.filter((p) => !exclude.has(p.id) && (!family || productFamilyKey(p) !== family));
   return shuffleProducts(pool).slice(0, limit);
 }
 
@@ -899,21 +955,22 @@ export function trendingSearches(options: { recents?: string[]; limit?: number; 
     seedTerms.set(key, (seedTerms.get(key) ?? 0) + score);
   };
 
-  for (const term of popularSuggestions) bump(term, 18);
+  for (const term of popularSuggestions) bump(term, 42);
   for (const term of recents) bump(term, 28);
   for (const chip of chips.slice(0, 8)) bump(chip.label, 12);
-  for (const p of products) {
+  const sample = products.length > 32 ? products.slice(0, 32) : products;
+  for (const p of sample) {
     const base = 8 + (p.rating ?? 4) * 4 + Math.min(12, Math.round((p.reviews ?? 0) / 40));
     const promoBoost = p.discount || p.oldPrice ? 14 : 0;
-    bump(p.name.replace(/\s+(Bio|Frais|Nature|Entier).*$/i, '').trim(), base + promoBoost);
+    bump(productFamilyName(p), base + promoBoost);
   }
-  for (const p of promoProducts()) bump(p.name.split(' ')[0] ?? p.name, 22);
+  for (const p of promoProducts().slice(0, 12)) bump(productFamilyName(p).split(' ')[0] ?? p.name, 22);
 
   const scored = [...seedTerms.entries()].map(([term, base], index) => {
     const wave = Math.sin((tick + index * 1.7) * 1.3) * 10 + Math.cos((tick * 0.6 + index) * 0.9) * 6;
     const recentBoost = recents.some((r) => r.toLowerCase() === term.toLowerCase()) ? 8 : 0;
     const heat = Math.max(12, Math.min(99, Math.round(base + wave + recentBoost)));
-    const matches = searchProducts(term).length;
+    const matches = 0;
     const drift = Math.sin((tick + index) * 2.1);
     const delta: TrendingSearch['delta'] =
       index > seedTerms.size - 3 && drift > 0.55
@@ -960,6 +1017,62 @@ export function getProduct(id: string) {
   return products.find((p) => p.id === id);
 }
 
+function normalizeFamilyToken(value: string) {
+  return value
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, ' ')
+    .trim();
+}
+
+/** Nom du produit sans le format (1 kg, 500 ml, lot de 6…). */
+export function productFamilyName(product: Pick<Product, 'name' | 'unit'>): string {
+  const unit = String(product.unit ?? '').trim();
+  let name = String(product.name ?? '').trim();
+  if (unit) {
+    const escaped = unit.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    name = name.replace(new RegExp(`\\s*${escaped}\\s*$`, 'i'), '').trim();
+  }
+  return name || product.name;
+}
+
+export function productFamilyKey(product: Pick<Product, 'name' | 'unit' | 'categoryId'>): string {
+  return `${product.categoryId}:${normalizeFamilyToken(productFamilyName(product))}`;
+}
+
+function unitSortKey(unit: string): number {
+  const n = unit.replace(',', '.').toLowerCase();
+  const pack = n.match(/(\d+)\s*x\s*([\d.]+)\s*(cl|ml|l)\b/);
+  if (pack) {
+    const count = Number(pack[1]);
+    const amount = Number(pack[2]);
+    const unitCode = pack[3];
+    const ml = unitCode === 'l' ? amount * 1000 : unitCode === 'cl' ? amount * 10 : amount;
+    return count * ml;
+  }
+  const mass = n.match(/([\d.]+)\s*(kg|g|l|ml|cl)\b/);
+  if (mass) {
+    const amount = Number(mass[1]);
+    const unitCode = mass[2];
+    if (unitCode === 'kg' || unitCode === 'l') return amount * 1000;
+    if (unitCode === 'cl') return amount * 10;
+    return amount;
+  }
+  const lot = n.match(/lot de (\d+)/);
+  if (lot) return Number(lot[1]);
+  return Number.MAX_SAFE_INTEGER;
+}
+
+export function productVariants(productId: string): Product[] {
+  const product = getProduct(productId);
+  if (!product) return [];
+  const family = productFamilyKey(product);
+  return products
+    .filter((candidate) => productFamilyKey(candidate) === family)
+    .sort((a, b) => unitSortKey(a.unit) - unitSortKey(b.unit) || a.price - b.price || a.id.localeCompare(b.id));
+}
+
 export function productReviewStats(product: Pick<Product, 'id' | 'rating' | 'reviews'>) {
   if (product.rating != null && product.reviews != null) {
     return { rating: product.rating, reviews: product.reviews };
@@ -990,6 +1103,14 @@ export function getProducts(ids: string[]) {
 
 export function productsInCategory(categoryId: string) {
   return products.filter((p) => p.categoryId === categoryId);
+}
+
+export function categoryProductCounts(): Record<string, number> {
+  const counts: Record<string, number> = {};
+  for (const product of products) {
+    counts[product.categoryId] = (counts[product.categoryId] ?? 0) + 1;
+  }
+  return counts;
 }
 
 export function promoProducts() {
@@ -1096,7 +1217,13 @@ export type HomePromoBanner = {
   cta: string;
   image: ImageSourcePropType;
   href: `/category/${string}` | `/category/${string}?filter=${string}`;
+  /** false = masquée en boutique. Absent = visible. */
+  enabled?: boolean;
 };
+
+export function bannerIsLive(banner: Pick<HomePromoBanner, 'enabled'>): boolean {
+  return banner.enabled !== false;
+}
 
 export const homePromoBanners: HomePromoBanner[] = [
   {

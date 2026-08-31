@@ -21,7 +21,7 @@ export function LoginPage() {
         }}>
         <p className="pill">Back-office magasin</p>
         <h2>Marché Admin</h2>
-        <p style={{ color: 'var(--muted)', marginTop: 0 }}>Prix, stock, promotions — même base que la boutique.</p>
+        <p style={{ color: 'var(--muted)', marginTop: 0 }}>Catalogue, stocks et personnel — même base que la boutique, comptes ops.staff.</p>
         <label className="field">
           E-mail staff
           <input value={email} onChange={(e) => setEmail(e.target.value)} autoComplete="username" />
@@ -35,7 +35,7 @@ export function LoginPage() {
           {status === 'loading' ? 'Entrée…' : 'Entrer dans le magasin'}
         </button>
         <p style={{ fontSize: 12, color: 'var(--muted)', marginTop: 14 }}>
-          Compte démo admin. Le login client boutique ne fonctionne pas ici.
+          Compte démo admin@marchedore.bj · RH rh@marchedore.bj / marche2024. Le login client boutique ne fonctionne pas ici.
         </p>
       </form>
     </div>

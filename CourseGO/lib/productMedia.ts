@@ -58,13 +58,24 @@ function lookupLocal(productId: string, categoryId?: string | null) {
   return catalogImages['cat-epicerie'] ?? null;
 }
 
-/** Bundle first (marche-dore/assets). API only if the SKU has no local file. */
+function absoluteMediaUrl(imageUrl: string) {
+  if (/^https?:\/\//i.test(imageUrl)) return imageUrl;
+  return `${getApiBaseUrl()}${imageUrl.startsWith('/') ? '' : '/'}${imageUrl}`;
+}
+
+/** Local bundle/category fallback retained for offline and failed API images. */
 export function productImageSource(productId: string, categoryId?: string | null): ImageSourcePropType {
   const local = lookupLocal(productId, categoryId);
   if (local) return local;
   return { uri: `${getApiBaseUrl()}/catalog/media/${encodeURIComponent(productId)}` };
 }
 
-export function productImageUrl(productId: string) {
-  return `${getApiBaseUrl()}/catalog/media/${encodeURIComponent(productId)}`;
+export function productImageFallback(productId: string, categoryId?: string | null) {
+  return lookupLocal(productId, categoryId);
+}
+
+export function productImageUrl(productId: string, imageUrl?: string | null) {
+  return imageUrl
+    ? absoluteMediaUrl(imageUrl)
+    : `${getApiBaseUrl()}/catalog/media/${encodeURIComponent(productId)}`;
 }

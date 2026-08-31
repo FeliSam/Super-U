@@ -133,7 +133,7 @@ export const ProductCard = memo(function ProductCard({
   compact = false,
   circleImage = false,
   index = 0,
-  animate = true,
+  animate = false,
 }: {
   product: Product;
   width?: number | `${number}%`;
@@ -225,6 +225,7 @@ export const ProductCard = memo(function ProductCard({
             accessibilityRole="button"
             accessibilityLabel={`Voir ${product.name}`}>
             <AppImage
+              recyclingKey={product.id}
               source={product.image}
               frameStyle={[StyleSheet.absoluteFill, circleImage && { borderRadius: circleR, overflow: 'hidden' }]}
               style={circleImage ? ({ transform: [{ scale: 1.14 }] } as const) : undefined}
@@ -493,14 +494,13 @@ function CategoryTileOverlay() {
   );
 }
 
-export function CategoryTile({
+export const CategoryTile = memo(function CategoryTile({
   title,
   image,
   height,
   flex,
   onPress,
   count,
-  index = 0,
 }: {
   title: string;
   image: ImageSourcePropType;
@@ -513,12 +513,12 @@ export function CategoryTile({
   const colors = useColors();
   const styles = useMemo(() => createStyles(colors), [colors]);
   return (
-    <MotionView index={index} preset="down" style={{ flex, height }}>
+    <View style={{ flex, height }}>
       <PressScale style={[styles.tilePress, { flex: 1, height }]} onPress={onPress} scaleTo={0.96}>
         <View style={styles.tile}>
           <View style={[styles.tileFrame, { pointerEvents: 'none' }]}>
             <View style={styles.tileImageZoom}>
-              <AppImage source={image} frameStyle={styles.tileImage} />
+              <AppImage source={image} frameStyle={styles.tileImage} priority="low" />
             </View>
             <CategoryTileOverlay />
           </View>
@@ -535,9 +535,9 @@ export function CategoryTile({
           </View>
         </View>
       </PressScale>
-    </MotionView>
+    </View>
   );
-}
+});
 
 export function CtaButton({ label, onPress }: { label: string; onPress: () => void }) {
   const colors = useColors();
@@ -609,7 +609,7 @@ export function PromoBanner({
   cta,
   image,
   onPress,
-  width = 320,
+  width,
   index = 0,
 }: {
   title: string;
@@ -617,16 +617,18 @@ export function PromoBanner({
   cta: string;
   image: ImageSourcePropType;
   onPress: () => void;
+  /** Column width of the mobile frame. Omit to stretch 100% of parent. */
   width?: number;
   index?: number;
 }) {
   const colors = useColors();
   const styles = useMemo(() => createStyles(colors), [colors]);
+  const frame = width != null ? { width, maxWidth: '100%' as const } : { width: '100%' as const, maxWidth: '100%' as const };
   return (
-    <MotionView index={index} preset="right">
-      <PressScale style={[styles.promo, { width }]} onPress={onPress} scaleTo={0.985}>
+    <MotionView index={index} preset="right" style={frame}>
+      <PressScale style={styles.promo} onPress={onPress} scaleTo={0.985}>
         <AppImage source={image} style={styles.promoImg} frameStyle={StyleSheet.absoluteFill} />
-        <View style={styles.promoDim} />
+        <View style={styles.promoDim} pointerEvents="none" />
         <Text style={styles.promoTitle}>{title}</Text>
         <Text style={styles.promoSub}>{subtitle}</Text>
         <View style={styles.profiter}>
@@ -1221,13 +1223,15 @@ function createStyles(colors: AppColors) {
       textDecorationLine: 'line-through',
     },
     promo: {
+      width: '100%',
+      maxWidth: '100%',
       height: 150,
       borderRadius: 24,
       overflow: 'hidden',
-      justifyContent: 'center',
-      padding: 20,
+      justifyContent: 'flex-end',
+      padding: 18,
     },
-    promoImg: { ...StyleSheet.absoluteFillObject, width: '100%', height: '100%' },
+    promoImg: StyleSheet.absoluteFillObject,
     promoDim: { ...StyleSheet.absoluteFillObject, backgroundColor: colors.overlay },
     // Always light text: banner sits on a dimmed photo (theme white/cream flip in dark mode).
     promoTitle: { color: '#ffffff', fontSize: 20, ...displayFont('800') },

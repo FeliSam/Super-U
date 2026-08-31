@@ -2,7 +2,6 @@ import {
   CartTotalFab,
   IconCircle,
   ProductCard,
-  PromoBanner,
   Screen,
   SearchField,
   Page } from '@/components/ui';
@@ -11,26 +10,29 @@ import { MotionView, PressScale } from '@/components/motion';
 import { cotonouMap, mapStyles } from '@/constants/map';
 import { displayFont, heroChrome, tabBarClearance, type AppColors } from '@/constants/theme';
 import { useAddresses } from '@/context/AddressesContext';
+import { useCatalogVersion } from '@/context/CatalogContext';
 import { useColors, useTheme } from '@/context/ThemeContext';
 import { useCart } from '@/context/CartContext';
 import { formatOrderId, useOrders } from '@/context/OrdersContext';
 import { opsPhaseLabel } from '@/lib/orderOps';
 import { useNotifications } from '@/context/NotificationsContext';
+import { useFavorites } from '@/context/FavoritesContext';
 import { useUiState } from '@/context/UiStateContext';
 import { useProfile } from '@/context/ProfileContext';
 import { profilePhotoSource } from '@/lib/profilePhoto';
 import {
+  bannerIsLive,
   chipRoute,
-  getProducts,
   homeCategories,
   homePromoBanners,
   products,
-  productsForChip,
   productsInCategory,
   promoProducts,
-  recommendedIds,
   shuffleProducts,
   type Product } from '@/data/catalog';
+import { buildHomePlan } from '@/lib/homeEngine';
+import { ProductFlashGrid } from '@/components/ProductFlashGrid';
+import { PromoCarousel } from '@/components/PromoCarousel';
 import { navigateTab, tabPaths } from '@/lib/navigation';
 import { openSearchScreen } from '@/lib/searchNav';
 import { findNearestSuperU } from '@/lib/deliveryRouting';
@@ -39,9 +41,8 @@ import { etaWindowLabel, useDeliveryEstimate } from '@/lib/useDeliveryEstimate';
 import { Feather } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
 import { Href, router } from 'expo-router';
-import { memo, useCallback, useMemo, useRef, useState } from 'react';
+import { memo, useMemo } from 'react';
 import {
-  Dimensions,
   Image,
   Platform,
   Pressable,
@@ -53,32 +54,21 @@ import {
 import Animated, {
   Extrapolation,
   interpolate,
-  runOnJS,
   useAnimatedScrollHandler,
   useAnimatedStyle,
   useSharedValue } from 'react-native-reanimated';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 const GRID_IMAGE_HEIGHT = 173;
-const GRID_HEAD_COUNT = 6; // 3 lignes × 2 colonnes
-const HOME_GRID_CARD_WIDTH = '49.7%';
-const HOME_PRODUCT_GRID = {
-  flexDirection: 'row' as const,
-  flexWrap: 'wrap' as const,
-  justifyContent: 'flex-start' as const,
-  columnGap: 2,
-  rowGap: 3,
-};
 const CUISINE_COLS = 3;
 const CUISINE_COL_GAP = 3;
 const CUISINE_ROW_GAP = 6;
 const CUISINE_ROWS = 2;
 const GLACES_VISIBLE = 3.5;
 const GLACES_GAP = 12;
-const PROMO_WIDTH = Dimensions.get('window').width - 40;
-const homePromo = homePromoBanners[0];
 
 function HomeScreen() {
+  const catalogVersion = useCatalogVersion();
   const { scheme } = useTheme();
   const colors = useColors();
   const chrome = useMemo(() => heroChrome(scheme), [scheme]);
@@ -87,8 +77,8 @@ function HomeScreen() {
   const { width: windowWidth } = useWindowDimensions();
   const scrollY = useSharedValue(0);
 
-  const { count } = useCart();
-  const { activeOrders } = useOrders();
+  const { count, lines } = useCart();
+  const { activeOrders, orders } = useOrders();
   const orderCardWidth = useMemo(() => {
     const frame = Math.min(windowWidth, 430) - 40;
     return activeOrders.length > 1 ? Math.round(frame * 0.86) : frame;
@@ -103,78 +93,74 @@ function HomeScreen() {
       ? 'Livraison locale'
       : etaWindowLabel(deliveryEta.durationSeconds);
   const { unreadCount } = useNotifications();
-  const { homeActiveChipId } = useUiState();
+  const { homeActiveChipId, searchRecents, interests, setSearchQuery } = useUiState();
+  const { ids: favoriteIds } = useFavorites();
   const { profile } = useProfile();
   const { points: loyaltyPoints } = useLiveLoyalty();
-  const activeChip = homeCategories.find((c) => c.id === homeActiveChipId) ?? homeCategories[0];
-  const onSale = useMemo(() => promoProducts(), []);
-  const popular = useMemo(() => productsForChip(homeActiveChipId), [homeActiveChipId]);
-  const recommended = useMemo(() => getProducts(recommendedIds), []);
+  const orderedIds = useMemo(
+    () => orders.flatMap((order) => order.lines.map((line) => line.productId)).slice(0, 48),
+    [orders],
+  );
+  const plan = useMemo(
+    () =>
+      buildHomePlan({
+        recents: searchRecents,
+        favoriteIds,
+        cartIds: lines.map((line) => line.productId),
+        orderedIds,
+        interests,
+        firstName: profile.firstName,
+      }),
+    [searchRecents, favoriteIds, lines, orderedIds, interests, profile.firstName, catalogVersion],
+  );
+  const activeChip =
+    plan.rankedChips.find((c) => c.id === homeActiveChipId) ?? plan.rankedChips[0] ?? homeCategories[0];
+  const contentW = Math.min(windowWidth, 430) - 40;
+  const liveBanners = useMemo(
+    () => homePromoBanners.filter(bannerIsLive),
+    [catalogVersion],
+  );
+  const onSale = useMemo(() => promoProducts(), [catalogVersion]);
+  const popular = plan.momentProducts;
+  const recommended = plan.rankedFeed;
   const cuisineReady = useMemo(
     () => productsInCategory('cuisine').slice(0, CUISINE_COLS * CUISINE_ROWS),
-    [],
+    [catalogVersion],
   );
   const cuisineCardWidth = useMemo(() => {
     const contentW = Math.min(windowWidth, 430) - 40;
     return Math.floor((contentW - CUISINE_COL_GAP * (CUISINE_COLS - 1)) / CUISINE_COLS);
   }, [windowWidth]);
-  const glaces = useMemo(() => productsInCategory('glaces'), []);
+  const glaces = useMemo(() => productsInCategory('glaces'), [catalogVersion]);
   const glaceCardWidth = useMemo(() => {
     const contentW = Math.min(windowWidth, 430) - 40;
     return Math.floor((contentW - GLACES_GAP * Math.floor(GLACES_VISIBLE)) / GLACES_VISIBLE);
   }, [windowWidth]);
   const shuffledPool = useMemo(
     () => shuffleProducts(products.filter((p) => p.categoryId !== 'cuisine' && p.categoryId !== 'glaces')),
-    [],
+    [catalogVersion],
   );
-  const [feedPages, setFeedPages] = useState(1);
-  const loadingFeed = useRef(false);
-
-  const unreadNotifications = unreadCount;
-
   const feedItems = useMemo(() => {
-    const items: { product: Product; key: string }[] = [];
-    recommended.forEach((product) => {
-      if (product.categoryId === 'cuisine') return;
-      items.push({ product, key: `rec-${product.id}` });
-    });
-    for (let page = 0; page < feedPages; page++) {
-      shuffledPool.forEach((product, index) => {
-        items.push({ product, key: `${product.id}-${page}-${index}` });
-      });
+    const seen = new Set<string>();
+    const items: Product[] = [];
+    for (const product of [...recommended, ...shuffledPool]) {
+      if (product.categoryId === 'cuisine' || seen.has(product.id)) continue;
+      seen.add(product.id);
+      items.push(product);
     }
     return items;
-  }, [feedPages, recommended, shuffledPool]);
+  }, [recommended, shuffledPool]);
 
-  const feedHead = useMemo(() => feedItems.slice(0, GRID_HEAD_COUNT), [feedItems]);
-  const feedTail = useMemo(() => feedItems.slice(GRID_HEAD_COUNT), [feedItems]);
-
-  const loadMoreFeed = useCallback(() => {
-    setFeedPages((pages) => (pages >= 3 ? pages : pages + 1));
-  }, []);
-
-  const maybeLoadMore = useCallback(
-    (y: number, layoutH: number, contentH: number) => {
-      if (contentH < 1 || layoutH < 1) return;
-      const nearBottom = layoutH + y >= contentH - 280;
-      if (!nearBottom || loadingFeed.current) return;
-      loadingFeed.current = true;
-      loadMoreFeed();
-      requestAnimationFrame(() => {
-        loadingFeed.current = false;
-      });
-    },
-    [loadMoreFeed],
-  );
+  const unreadNotifications = unreadCount;
+  const firstName = profile.firstName.trim();
+  const helloLabel =
+    firstName && plan.greeting.toLowerCase().endsWith(firstName.toLowerCase())
+      ? plan.greeting.slice(0, -firstName.length).trim()
+      : plan.greeting;
 
   const onScroll = useAnimatedScrollHandler({
     onScroll: (event) => {
       scrollY.value = event.contentOffset.y;
-      runOnJS(maybeLoadMore)(
-        event.contentOffset.y,
-        event.layoutMeasurement.height,
-        event.contentSize.height,
-      );
     } });
 
   const sheetAnimStyle = useAnimatedStyle(() => {
@@ -216,20 +202,18 @@ function HomeScreen() {
         <View style={styles.hero} pointerEvents="box-none">
           <LinearGradient colors={chrome.gradient} style={StyleSheet.absoluteFill} pointerEvents="none" />
           <View style={[styles.heroBar, { paddingTop: Math.max(8, insets.top + 6) }]}>
-            <View style={styles.heroTitleCol}>
-              <PressScale
-                style={styles.heroLocation}
-                onPress={openAddresses}
-                scaleTo={0.98}
-                accessibilityRole="button"
-                accessibilityLabel="Choisir une adresse de livraison">
-                <Feather name="map-pin" size={14} color={colors.gold} />
-                <Text style={[styles.heroLocationText, { color: chrome.ink }]} numberOfLines={1}>
-                  {defaultAddress?.line ?? 'Choisir une adresse'}
-                </Text>
-                <Feather name="chevron-down" size={13} color={chrome.muted} />
-              </PressScale>
-            </View>
+            <PressScale
+              style={styles.heroLocation}
+              onPress={openAddresses}
+              scaleTo={0.98}
+              accessibilityRole="button"
+              accessibilityLabel="Choisir une adresse de livraison">
+              <Feather name="map-pin" size={14} color={colors.gold} />
+              <Text style={[styles.heroLocationText, { color: chrome.ink }]} numberOfLines={1}>
+                {defaultAddress?.line ?? 'Choisir une adresse'}
+              </Text>
+              <Feather name="chevron-down" size={13} color={chrome.muted} />
+            </PressScale>
             <View style={styles.navActionsRow}>
               <IconCircle
                 name="bell"
@@ -250,13 +234,22 @@ function HomeScreen() {
           </View>
         </View>
 
-        <Animated.ScrollView
+        <ProductFlashGrid
+          products={feedItems}
+          extraData={catalogVersion}
+          imageHeight={GRID_IMAGE_HEIGHT}
           style={styles.scrollLayer}
+          onScroll={onScroll as (event: unknown) => void}
           contentContainerStyle={styles.scrollContent}
-          showsVerticalScrollIndicator={false}
-          scrollEventThrottle={16}
-          onScroll={onScroll}>
+          header={
           <Animated.View style={[styles.bodySheet, sheetAnimStyle]}>
+            <Text style={styles.sheetHello} numberOfLines={2}>
+              <Text style={styles.sheetHelloKicker}>
+                {helloLabel}
+                {firstName ? ', ' : ''}
+              </Text>
+              {firstName ? <Text style={styles.sheetHelloName}>{firstName}</Text> : null}
+            </Text>
             <View
               style={[
                 styles.heroStats,
@@ -269,7 +262,9 @@ function HomeScreen() {
               <View style={[styles.heroDivider, { backgroundColor: chrome.divider }]} />
               <View style={styles.heroStat}>
                 <Feather name="percent" size={15} color={colors.terracotta} />
-                <Text style={[styles.heroStatText, { color: colors.text }]}>Promos actives</Text>
+                <Text style={[styles.heroStatText, { color: colors.text }]}>
+                  {plan.promoCount} promos
+                </Text>
               </View>
               <View style={[styles.heroDivider, { backgroundColor: chrome.divider }]} />
               <View style={styles.heroStat}>
@@ -279,49 +274,16 @@ function HomeScreen() {
             </View>
 
             <MotionView delay={80} preset="down">
-              <SearchField onPress={openSearchScreen} />
+              <SearchField
+                onPress={() => {
+                  if (plan.continueTerm) setSearchQuery(plan.continueTerm);
+                  openSearchScreen();
+                }}
+                placeholder={plan.searchHint}
+              />
             </MotionView>
 
             <MotionView delay={90} preset="down">
-              {activeOrders.length ? (
-                <ScrollView
-                  horizontal
-                  nestedScrollEnabled
-                  showsHorizontalScrollIndicator={false}
-                  decelerationRate="fast"
-                  snapToInterval={orderCardWidth + 10}
-                  snapToAlignment="start"
-                  contentContainerStyle={styles.orderRow}>
-                  {activeOrders.map((order, index) => (
-                    <PressScale
-                      key={order.id}
-                      style={[styles.orderBanner, { width: orderCardWidth }]}
-                      onPress={() => router.push(`/tracking?id=${order.id}` as Href)}
-                      scaleTo={0.985}>
-                      <View style={styles.orderIcon}>
-                        <Feather name="package" size={18} color={colors.gold} />
-                      </View>
-                      <View style={styles.orderText}>
-                        <Text style={styles.orderTitle}>
-                          {activeOrders.length > 1
-                            ? `En cours · ${index + 1}/${activeOrders.length}`
-                            : 'Commande en cours'}
-                        </Text>
-                        <Text style={styles.orderSub} numberOfLines={1}>
-                          {formatOrderId(order.id)} · {order.dayLabel} {order.slotLabel}
-                        </Text>
-                        <Text style={styles.orderPhase} numberOfLines={1}>
-                          {opsPhaseLabel(order)}
-                        </Text>
-                      </View>
-                      <Feather name="chevron-right" size={18} color={colors.placeholder} />
-                    </PressScale>
-                  ))}
-                </ScrollView>
-              ) : null}
-            </MotionView>
-
-            <MotionView delay={130} preset="down">
               <View style={styles.quickGrid}>
                 {quickActions.map((action) => (
                   <PressScale key={action.label} style={styles.quickTile} onPress={action.onPress} scaleTo={0.95}>
@@ -341,13 +303,89 @@ function HomeScreen() {
               </View>
             </MotionView>
 
+            <MotionView delay={100} preset="down">
+              {activeOrders.length ? (
+                <ScrollView
+                  horizontal
+                  nestedScrollEnabled
+                  showsHorizontalScrollIndicator={false}
+                  decelerationRate="fast"
+                  snapToInterval={orderCardWidth + 10}
+                  snapToAlignment="start"
+                  contentContainerStyle={styles.orderRow}>
+                  {activeOrders.map((order, index) => (
+                    <PressScale
+                      key={order.id}
+                      style={[styles.orderBanner, { width: orderCardWidth }]}
+                      onPress={() => router.push(`/tracking?id=${order.id}` as Href)}
+                      scaleTo={0.985}>
+                      <LinearGradient
+                        colors={[colors.cream, colors.white]}
+                        start={{ x: 0, y: 0 }}
+                        end={{ x: 1, y: 1 }}
+                        style={StyleSheet.absoluteFill}
+                      />
+                      <View style={styles.orderIcon}>
+                        <Feather name="package" size={18} color={colors.gold} />
+                      </View>
+                      <View style={styles.orderText}>
+                        <View style={styles.orderTitleRow}>
+                          <View style={styles.orderLiveDot} />
+                          <Text style={styles.orderTitle}>
+                            {activeOrders.length > 1
+                              ? `En cours · ${index + 1}/${activeOrders.length}`
+                              : 'Commande en cours'}
+                          </Text>
+                        </View>
+                        <Text style={styles.orderSub} numberOfLines={1}>
+                          {formatOrderId(order.id)} · {order.dayLabel} {order.slotLabel}
+                        </Text>
+                        <Text style={styles.orderPhase} numberOfLines={1}>
+                          {opsPhaseLabel(order)}
+                        </Text>
+                      </View>
+                      <View style={styles.orderChevron}>
+                        <Feather name="chevron-right" size={18} color={colors.gold} />
+                      </View>
+                    </PressScale>
+                  ))}
+                </ScrollView>
+              ) : null}
+            </MotionView>
+
+            {plan.cartNudge ? (
+              <PressScale style={styles.cartNudge} onPress={() => navigateTab(tabPaths.cart)} scaleTo={0.98}>
+                <Feather name="shopping-bag" size={14} color={colors.terracotta} />
+                <Text style={styles.cartNudgeText}>{plan.cartNudge}</Text>
+                <Feather name="chevron-right" size={14} color={colors.gold} />
+              </PressScale>
+            ) : null}
+
+            {plan.becauseProducts.length ? (
+              <View style={styles.section}>
+                <View style={styles.sectionHead}>
+                  <View>
+                    <Text style={styles.sectionTitle}>Dans la même veine</Text>
+                    <Text style={styles.sectionMeta}>Favoris, commandes, panier</Text>
+                  </View>
+                </View>
+                <ScrollView horizontal showsHorizontalScrollIndicator={false}>
+                  <View style={styles.rowCards}>
+                    {plan.becauseProducts.map((p) => (
+                      <ProductCard key={`bec-${p.id}`} product={p} width={148} imageHeight={130} compact animate={false} />
+                    ))}
+                  </View>
+                </ScrollView>
+              </View>
+            ) : null}
+
             <View style={styles.chipsWrap}>
               <ScrollView
                 horizontal
                 showsHorizontalScrollIndicator={false}
                 decelerationRate="fast"
                 contentContainerStyle={styles.chips}>
-                {homeCategories.map((cat, i) => {
+                {plan.rankedChips.map((cat, i) => {
                   const active = cat.id === homeActiveChipId;
                   return (
                     <MotionView key={cat.id} index={i} preset="zoom" delay={Math.min(i * 40, 200)}>
@@ -384,14 +422,7 @@ function HomeScreen() {
               </ScrollView>
             </View>
 
-            <PromoBanner
-              title={homePromo.title}
-              subtitle={homePromo.subtitle}
-              cta={homePromo.cta}
-              image={homePromo.image}
-              width={PROMO_WIDTH}
-              onPress={() => router.push(homePromo.href)}
-            />
+            {liveBanners.length ? <PromoCarousel banners={liveBanners} width={contentW} /> : null}
 
             <View style={styles.section}>
               <View style={styles.sectionHead}>
@@ -412,10 +443,14 @@ function HomeScreen() {
             <View style={styles.section}>
               <View style={styles.sectionHead}>
                 <View>
-                  <Text style={styles.sectionTitle}>Produits populaires</Text>
-                  <Text style={styles.sectionMeta}>{activeChip.label} · Sélection du moment</Text>
+                    <Text style={styles.sectionTitle}>{plan.momentTitle}</Text>
+                    <Text style={styles.sectionMeta}>{plan.momentMeta}</Text>
                 </View>
-                <Pressable onPress={() => router.push(chipRoute(activeChip))}>
+                <Pressable
+                  onPress={() => {
+                    const chip = plan.rankedChips.find((c) => c.id === plan.momentChipId) ?? activeChip;
+                    router.push(chipRoute(chip));
+                  }}>
                   <Text style={styles.seeAll}>Voir tout</Text>
                 </Pressable>
               </View>
@@ -428,7 +463,7 @@ function HomeScreen() {
               </ScrollView>
             </View>
 
-            {glaces.length > 0 ? (
+            {plan.showGlaces && glaces.length > 0 ? (
               <View style={styles.section}>
                 <View style={styles.sectionHead}>
                   <View>
@@ -459,24 +494,10 @@ function HomeScreen() {
 
             <View style={styles.section}>
               <View style={styles.sectionHead}>
-                <Text style={styles.sectionTitle}>Recommandés pour vous</Text>
-                <Text style={styles.sectionMeta}>Basé sur vos goûts</Text>
+                <Text style={styles.sectionTitle}>Pour vous, maintenant</Text>
+                <Text style={styles.sectionMeta}>Classé selon vos goûts et l’heure</Text>
               </View>
-              <View style={HOME_PRODUCT_GRID}>
-                {feedHead.map(({ product, key }, i) => (
-                  <ProductCard
-                    key={key}
-                    product={product}
-                    width={HOME_GRID_CARD_WIDTH}
-                    imageHeight={GRID_IMAGE_HEIGHT}
-                    compact
-                    index={i}
-                    animate={i < 6}
-                  />
-                ))}
-              </View>
-
-              {cuisineReady.length > 0 ? (
+              {plan.showCuisine && cuisineReady.length > 0 ? (
                 <View style={styles.cuisineBlock}>
                   <View style={styles.sectionHead}>
                     <View>
@@ -500,32 +521,17 @@ function HomeScreen() {
                         imageHeight={96}
                         compact
                         index={i}
-                        animate={i < 6}
+                        animate={false}
                       />
                     ))}
                   </View>
                 </View>
               ) : null}
-
-              {feedTail.length > 0 ? (
-                <View style={HOME_PRODUCT_GRID}>
-                  {feedTail.map(({ product, key }, i) => (
-                    <ProductCard
-                      key={key}
-                      product={product}
-                      width={HOME_GRID_CARD_WIDTH}
-                      imageHeight={GRID_IMAGE_HEIGHT}
-                      compact
-                      index={i}
-                      animate={i < 8}
-                    />
-                  ))}
-                </View>
-              ) : null}
-              <Text style={styles.feedHint}>Faites défiler pour voir plus de produits…</Text>
-    </View>
+            </View>
           </Animated.View>
-        </Animated.ScrollView>
+          }
+          footer={<Text style={styles.feedHint}>Faites défiler pour voir plus de produits…</Text>}
+        />
         <CartTotalFab aboveTabs />
       </Page>
     </Screen>
@@ -547,13 +553,12 @@ function createStyles(colors: AppColors) {
       paddingHorizontal: 16,
       paddingBottom: 10,
       gap: 12 },
-    heroTitleCol: { flex: 1, minWidth: 0 },
     heroLocation: {
+      flex: 1,
       flexDirection: 'row',
       alignItems: 'center',
       gap: 6,
-      alignSelf: 'flex-start',
-      maxWidth: '100%',
+      minWidth: 0,
       minHeight: 38,
       paddingVertical: 2 },
     heroLocationText: {
@@ -564,15 +569,34 @@ function createStyles(colors: AppColors) {
       flexDirection: 'row',
       alignItems: 'center',
       gap: 8,
-      flexShrink: 0 },
+      flexShrink: 0,
+      paddingTop: 2,
+    },
     scrollLayer: {
       flex: 1,
       zIndex: 1 },
-    scrollContent: { paddingBottom: tabBarClearance },
+    scrollContent: { paddingBottom: tabBarClearance, paddingHorizontal: 20 },
     avatarWrap: {
       padding: 2,
       borderRadius: 999 },
     avatar: { width: 38, height: 38, borderRadius: 19 },
+    sheetHello: {
+      paddingBottom: 4,
+    },
+    sheetHelloKicker: {
+      ...displayFont('600'),
+      fontSize: 22,
+      lineHeight: 28,
+      letterSpacing: -0.3,
+      color: colors.muted,
+    },
+    sheetHelloName: {
+      ...displayFont('800'),
+      fontSize: 22,
+      lineHeight: 28,
+      letterSpacing: -0.4,
+      color: colors.gold,
+    },
     heroStats: {
       flexDirection: 'row',
       alignItems: 'center',
@@ -587,10 +611,9 @@ function createStyles(colors: AppColors) {
       backgroundColor: colors.bg,
       borderTopLeftRadius: 28,
       borderTopRightRadius: 28,
-      paddingHorizontal: 20,
-      paddingTop: 8,
-      gap: 20,
-      minHeight: Dimensions.get('window').height,
+      paddingHorizontal: 0,
+      paddingTop: 16,
+      gap: 16,
       ...Platform.select({
         ios: {
           shadowColor: '#1c1613',
@@ -603,21 +626,67 @@ function createStyles(colors: AppColors) {
       flexDirection: 'row',
       alignItems: 'center',
       gap: 12,
-      backgroundColor: colors.white,
-      borderRadius: 18,
-      padding: 14 },
-    orderRow: { gap: 10, paddingRight: 4 },
-    orderPhase: { color: colors.gold, fontSize: 11, fontWeight: '700' },
-    orderIcon: {
-      width: 42,
-      height: 42,
-      borderRadius: 13,
       backgroundColor: colors.cream,
+      borderRadius: 18,
+      paddingVertical: 14,
+      paddingHorizontal: 14,
+      overflow: 'hidden',
+      borderWidth: 1.5,
+      borderColor: 'rgba(226, 147, 29, 0.35)',
+      ...Platform.select({
+        ios: {
+          shadowColor: '#c84b31',
+          shadowOffset: { width: 0, height: 6 },
+          shadowOpacity: 0.14,
+          shadowRadius: 12,
+        },
+        android: { elevation: 4 },
+        default: {},
+      }),
+    },
+    orderRow: { gap: 10, paddingRight: 4 },
+    orderPhase: { color: colors.terracotta, fontSize: 12, fontWeight: '700' },
+    orderIcon: {
+      width: 44,
+      height: 44,
+      borderRadius: 14,
+      backgroundColor: colors.white,
       alignItems: 'center',
-      justifyContent: 'center' },
-    orderText: { flex: 1, gap: 3 },
-    orderTitle: { color: colors.text, fontSize: 14, fontWeight: '700' },
+      justifyContent: 'center',
+      borderWidth: 1,
+      borderColor: 'rgba(226, 147, 29, 0.22)',
+      zIndex: 1,
+    },
+    orderText: { flex: 1, gap: 3, zIndex: 1 },
+    orderTitleRow: { flexDirection: 'row', alignItems: 'center', gap: 7 },
+    orderLiveDot: {
+      width: 8,
+      height: 8,
+      borderRadius: 4,
+      backgroundColor: colors.green,
+    },
+    orderTitle: { color: colors.text, fontSize: 15, fontWeight: '800', letterSpacing: -0.3 },
     orderSub: { color: colors.muted, fontSize: 12 },
+    orderChevron: {
+      width: 32,
+      height: 32,
+      borderRadius: 16,
+      backgroundColor: colors.white,
+      alignItems: 'center',
+      justifyContent: 'center',
+      zIndex: 1,
+    },
+    cartNudge: {
+      marginTop: 6,
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 8,
+      backgroundColor: colors.blush,
+      borderRadius: 14,
+      paddingVertical: 10,
+      paddingHorizontal: 12,
+    },
+    cartNudgeText: { flex: 1, color: colors.text, fontSize: 13, fontWeight: '650' },
     quickGrid: { flexDirection: 'row', gap: 10 },
     quickTile: {
     flex: 1,

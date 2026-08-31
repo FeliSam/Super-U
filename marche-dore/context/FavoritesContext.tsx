@@ -1,7 +1,8 @@
-import { getProduct, getProducts, type Product } from '@/data/catalog';
+import { getProducts, type Product } from '@/data/catalog';
 import { apiGetAccountState, apiPatchAccountState, loadAccountJson, saveAccountJson } from '@/lib/accountSync';
 import { getAuthToken } from '@/lib/api/http';
 import { useAuth } from '@/context/AuthContext';
+import { useCatalogVersion } from '@/context/CatalogContext';
 import React, { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
 
 type FavoritesContextValue = {
@@ -26,7 +27,7 @@ function sanitizeIds(raw: unknown): string[] {
   const seen = new Set<string>();
   const out: string[] = [];
   for (const id of raw) {
-    if (typeof id !== 'string' || !id || seen.has(id) || !getProduct(id)) continue;
+    if (typeof id !== 'string' || !id || seen.has(id)) continue;
     seen.add(id);
     out.push(id);
   }
@@ -35,6 +36,7 @@ function sanitizeIds(raw: unknown): string[] {
 
 export function FavoritesProvider({ children }: { children: React.ReactNode }) {
   const { session, ready: authReady } = useAuth();
+  const catalogVersion = useCatalogVersion();
   const accountId = session?.accountId ?? null;
   const [ids, setIds] = useState<string[]>([]);
   const [ready, setReady] = useState(false);
@@ -83,7 +85,7 @@ export function FavoritesProvider({ children }: { children: React.ReactNode }) {
   const isFavorite = useCallback((productId: string) => ids.includes(productId), [ids]);
 
   const add = useCallback((productId: string) => {
-    if (!getProduct(productId)) return;
+    if (!productId) return;
     setIds((prev) => (prev.includes(productId) ? prev : [productId, ...prev]));
   }, []);
 
@@ -92,7 +94,7 @@ export function FavoritesProvider({ children }: { children: React.ReactNode }) {
   }, []);
 
   const toggle = useCallback((productId: string) => {
-    if (!getProduct(productId)) return;
+    if (!productId) return;
     setIds((prev) => (prev.includes(productId) ? prev.filter((id) => id !== productId) : [productId, ...prev]));
   }, []);
 
@@ -104,7 +106,7 @@ export function FavoritesProvider({ children }: { children: React.ReactNode }) {
     await load(accountId);
   }, [load, accountId]);
 
-  const products = useMemo(() => getProducts(ids), [ids]);
+  const products = useMemo(() => getProducts(ids), [ids, catalogVersion]);
 
   const value = useMemo(
     () => ({

@@ -6,6 +6,7 @@ import { AppImage } from '@/components/AppImage';
 import { StarRating } from '@/components/StarRating';
 import { displayFont, type AppColors } from '@/constants/theme';
 import { useColors } from '@/context/ThemeContext';
+import { useCatalogVersion } from '@/context/CatalogContext';
 import { useCart } from '@/context/CartContext';
 import { useFavorites } from '@/context/FavoritesContext';
 import { useOrders } from '@/context/OrdersContext';
@@ -14,7 +15,9 @@ import {
   discoverProducts,
   getProduct,
   liveReviewStats,
+  productFamilyName,
   productGallery,
+  productVariants,
   products,
   shuffleProducts,
   similarProducts,
@@ -67,11 +70,15 @@ function NutriRow({ label, value }: { label: string; value: string }) {
   );
 }
 export default function ProductScreen() {
+  const catalogVersion = useCatalogVersion();
   const colors = useColors();
   const styles = useMemo(() => createStyles(colors), [colors]);
 
   const { id } = useLocalSearchParams<{ id: string }>();
-  const product = getProduct(id);
+  const routeId = Array.isArray(id) ? id[0] : id;
+  const variants = useMemo(() => productVariants(routeId ?? ''), [routeId, catalogVersion]);
+  const [selectedId, setSelectedId] = useState(routeId);
+  const product = getProduct(selectedId ?? '') ?? getProduct(routeId ?? '');
   const insets = useSafeAreaInsets();
   const { width: windowWidth, height: windowHeight } = useWindowDimensions();
   const {
@@ -96,24 +103,31 @@ export default function ProductScreen() {
   const { isFavorite, toggle } = useFavorites();
   const { reviewsForProduct, hasUserReviewedProduct } = useReviews();
   const { orders } = useOrders();
-  const liked = isFavorite(id ?? '');
+  const liked = isFavorite(product?.id ?? routeId ?? '');
   const [descOpen, setDescOpen] = useState(true);
   const [nutriOpen, setNutriOpen] = useState(false);
   const [heroIndex, setHeroIndex] = useState(0);
   const [justAdded, setJustAdded] = useState(false);
   const heroPagerRef = useRef<ImagePagerHandle>(null);
-  const cartQty = lines.find((l) => l.productId === id)?.qty ?? 0;
+  const cartQty = lines.find((l) => l.productId === product?.id)?.qty ?? 0;
   const inCart = cartQty > 0;
-  const similar = useMemo(() => similarProducts(id ?? ''), [id]);
-  const discoverSeed = useMemo(() => discoverProducts(id ?? ''), [id]);
+  const similar = useMemo(() => similarProducts(product?.id ?? routeId ?? ''), [product?.id, routeId, catalogVersion]);
+  const discoverSeed = useMemo(
+    () => discoverProducts(product?.id ?? routeId ?? ''),
+    [product?.id, routeId, catalogVersion],
+  );
   const discoverPool = useMemo(() => {
-    const exclude = new Set([id, ...similar.map((p) => p.id)]);
+    const currentId = product?.id ?? routeId;
+    const exclude = new Set([currentId, ...variants.map((p) => p.id), ...similar.map((p) => p.id)]);
     const pool = products.filter((p) => !exclude.has(p.id));
-    return shuffleProducts(pool.length ? pool : products.filter((p) => p.id !== id));
-  }, [id, similar]);
+    return shuffleProducts(pool.length ? pool : products.filter((p) => p.id !== currentId));
+  }, [product?.id, routeId, similar, variants, catalogVersion]);
   const [discoverPages, setDiscoverPages] = useState(1);
   const loadingDiscover = useRef(false);
-  const gallery = useMemo(() => (product ? productGallery(product, 4) : []), [product]);
+  const gallery = useMemo(
+    () => (product ? productGallery(product, 4) : []),
+    [product, catalogVersion],
+  );
   const heroWidth = Math.min(windowWidth, 430);
   const ctaScale = useSharedValue(1);
   const ctaAnimStyle = useAnimatedStyle(() => ({ transform: [{ scale: ctaScale.value }] }));
@@ -122,10 +136,11 @@ export default function ProductScreen() {
   const dotsBottom = SHEET_IMAGE_OVERLAP + 12;
 
   useEffect(() => {
+    setSelectedId(routeId);
     setDiscoverPages(1);
     setHeroIndex(0);
     setJustAdded(false);
-  }, [id]);
+  }, [routeId]);
 
   const discoverItems = useMemo(() => {
     const items: { product: Product; key: string }[] = [];
@@ -158,6 +173,38 @@ export default function ProductScreen() {
     },
     [loadMoreDiscover, onSheetScroll],
   );
+
+  const shareProduct = useCallback(async () => {
+    if (!product) return;
+    const url = Linking.createURL(`/product/${product.id}`);
+    const priceLine = `${formatFcfa(product.price)}${product.unit ? ` / ${product.unit}` : ''}`;
+    const blurb = `Découvre « ${product.name} » sur Marché Doré — ${priceLine}`;
+    const message = `${blurb}\n${url}`;
+
+    try {
+      if (Platform.OS === 'web') {
+        const nav = typeof navigator !== 'undefined' ? navigator : undefined;
+        if (nav && typeof nav.share === 'function') {
+          await nav.share({ title: product.name, text: blurb, url });
+          return;
+        }
+        if (nav?.clipboard?.writeText) {
+          await nav.clipboard.writeText(message);
+          Alert.alert('Lien copié', 'Le lien du produit a été copié dans le presse-papiers.');
+          return;
+        }
+      }
+
+      await Share.share(
+        Platform.OS === 'ios'
+          ? { message: blurb, url }
+          : { message, title: product.name },
+        { dialogTitle: 'Partager ce produit' },
+      );
+    } catch {
+      // User dismissed the sheet or share is unavailable.
+    }
+  }, [product]);
 
   const footerPad = Math.max(14, insets.bottom + 8) + 84;
 
@@ -214,37 +261,6 @@ export default function ProductScreen() {
     setHeroIndex(index);
     setViewerOpen(true);
   };
-
-  const shareProduct = useCallback(async () => {
-    const url = Linking.createURL(`/product/${product.id}`);
-    const priceLine = `${formatFcfa(product.price)}${product.unit ? ` / ${product.unit}` : ''}`;
-    const blurb = `Découvre « ${product.name} » sur Marché Doré — ${priceLine}`;
-    const message = `${blurb}\n${url}`;
-
-    try {
-      if (Platform.OS === 'web') {
-        const nav = typeof navigator !== 'undefined' ? navigator : undefined;
-        if (nav && typeof nav.share === 'function') {
-          await nav.share({ title: product.name, text: blurb, url });
-          return;
-        }
-        if (nav?.clipboard?.writeText) {
-          await nav.clipboard.writeText(message);
-          Alert.alert('Lien copié', 'Le lien du produit a été copié dans le presse-papiers.');
-          return;
-        }
-      }
-
-      await Share.share(
-        Platform.OS === 'ios'
-          ? { message: blurb, url }
-          : { message, title: product.name },
-        { dialogTitle: 'Partager ce produit' },
-      );
-    } catch {
-      // User dismissed the sheet or share is unavailable.
-    }
-  }, [product.id, product.name, product.price, product.unit]);
 
   return (
     <Screen>
@@ -307,7 +323,7 @@ export default function ProductScreen() {
                   variant="onPhoto"
                   color={liked ? colors.terracotta : undefined}
                   accessibilityLabel={liked ? 'Retirer des favoris' : 'Ajouter aux favoris'}
-                  onPress={() => id && toggle(id)}
+                  onPress={() => product?.id && toggle(product.id)}
                 />
               </View>
             }
@@ -408,8 +424,43 @@ export default function ProductScreen() {
               )}
             </View>
 
-            <Text style={styles.name}>{product.name}</Text>
+            <Text style={styles.name}>{productFamilyName(product)}</Text>
             <Text style={styles.unitLine}>{product.unit}</Text>
+
+            {variants.length > 1 ? (
+              <View style={styles.formats}>
+                <Text style={styles.formatsTitle}>Quantités</Text>
+                <Text style={styles.formatsHint}>Le prix change selon le format choisi.</Text>
+                <View style={styles.formatChips}>
+                  {variants.map((variant) => {
+                    const on = variant.id === product.id;
+                    const unavailable = variant.inStock === false;
+                    return (
+                      <Pressable
+                        key={variant.id}
+                        onPress={() => {
+                          setSelectedId(variant.id);
+                          router.setParams({ id: variant.id });
+                        }}
+                        style={[
+                          styles.formatChip,
+                          on && styles.formatChipOn,
+                          unavailable && styles.formatChipOut,
+                        ]}
+                        accessibilityRole="button"
+                        accessibilityState={{ selected: on, disabled: unavailable }}
+                        accessibilityLabel={`${variant.unit}, ${formatFcfa(variant.price)}`}>
+                        <Text style={[styles.formatUnit, on && styles.formatUnitOn]}>{variant.unit}</Text>
+                        <Text style={[styles.formatPrice, on && styles.formatPriceOn]}>
+                          {formatFcfa(variant.price)}
+                        </Text>
+                        {unavailable ? <Text style={styles.formatOut}>Rupture</Text> : null}
+                      </Pressable>
+                    );
+                  })}
+                </View>
+              </View>
+            ) : null}
 
             <Pressable
               style={styles.ratingCard}
@@ -857,6 +908,35 @@ function createStyles(colors: AppColors) {
     letterSpacing: -0.3,
     ...displayFont('800') },
   unitLine: { color: colors.muted, fontSize: 14, fontWeight: '500', marginTop: -6 },
+  formats: {
+    backgroundColor: colors.white,
+    borderRadius: 18,
+    padding: 14,
+    gap: 8,
+  },
+  formatsTitle: { color: colors.text, fontSize: 15, fontWeight: '700' },
+  formatsHint: { color: colors.muted, fontSize: 12, marginTop: -2 },
+  formatChips: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
+  formatChip: {
+    minWidth: 92,
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: colors.border,
+    backgroundColor: colors.bg,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    gap: 2,
+  },
+  formatChipOn: {
+    borderColor: colors.terracotta,
+    backgroundColor: colors.blush,
+  },
+  formatChipOut: { opacity: 0.7 },
+  formatUnit: { color: colors.text, fontSize: 13, fontWeight: '800' },
+  formatUnitOn: { color: colors.terracotta },
+  formatPrice: { color: colors.muted, fontSize: 12, fontWeight: '600' },
+  formatPriceOn: { color: colors.terracotta },
+  formatOut: { color: colors.terracotta, fontSize: 10, fontWeight: '700' },
   ratingCard: {
     flexDirection: 'row',
     alignItems: 'center',

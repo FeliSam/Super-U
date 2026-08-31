@@ -88,7 +88,20 @@ mkdirSync(outDir, { recursive: true });
 copyFileSync(join(root, 'src/schema.sql'), join(outDir, '00-public.sql'));
 copyFileSync(join(root, 'src/schema-ops.sql'), join(outDir, '01-ops.sql'));
 copyFileSync(join(root, 'src/schema-comms.sql'), join(outDir, '02-comms.sql'));
-const ddl = `${readFileSync(join(outDir, '00-public.sql'), 'utf8')}\n\n${readFileSync(join(outDir, '01-ops.sql'), 'utf8')}\n\n${readFileSync(join(outDir, '02-comms.sql'), 'utf8')}`;
+copyFileSync(join(root, 'src/schema-admin.sql'), join(outDir, '03-admin-catalog.sql'));
+copyFileSync(join(root, 'src/schema-staff.sql'), join(outDir, '03-admin-staff.sql'));
+copyFileSync(join(root, 'src/schema-catalog-core.sql'), join(outDir, '04-catalog-core.sql'));
+const schemaFiles = [
+  '00-public.sql',
+  '01-ops.sql',
+  '02-comms.sql',
+  '03-admin-catalog.sql',
+  '03-admin-staff.sql',
+  '04-catalog-core.sql',
+];
+const ddl = schemaFiles
+  .map((file) => readFileSync(join(outDir, file), 'utf8'))
+  .join('\n\n');
 writeFileSync(join(outDir, 'all-schemas.sql'), ddl, 'utf8');
 const live = dumpViaDocker() ?? dumpViaLocalPgDump();
 if (live) {

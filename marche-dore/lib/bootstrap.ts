@@ -9,7 +9,6 @@ import {
   searchCategories,
 } from '@/data/catalog';
 import { getLocalDb } from '@/lib/db/client';
-import { hydrateCatalogFromApi } from '@/lib/db/hydrateCatalog';
 import { loadBrandFonts } from '@/lib/fonts';
 import { Feather, Ionicons } from '@expo/vector-icons';
 import { Asset } from 'expo-asset';
@@ -27,10 +26,43 @@ if (Platform.OS !== 'web') {
   RNStatusBar.setHidden(true, 'none');
 }
 
-const iconFonts = {
-  ...Feather.font,
-  ...Ionicons.font,
-};
+const ioniconsModule = require('../assets/fonts/Ionicons.ttf') as number;
+const featherModule = require('../assets/fonts/Feather.ttf') as number;
+
+function injectWebIconFontPreload() {
+  if (Platform.OS !== 'web' || typeof document === 'undefined') return;
+  const hrefs = [Asset.fromModule(ioniconsModule).uri, Asset.fromModule(featherModule).uri].filter(Boolean);
+  for (const href of hrefs) {
+    if (document.querySelector(`link[rel="preload"][href="${href}"]`)) continue;
+    const link = document.createElement('link');
+    link.rel = 'preload';
+    link.as = 'font';
+    link.type = 'font/ttf';
+    link.crossOrigin = 'anonymous';
+    link.href = href as string;
+    document.head.appendChild(link);
+  }
+}
+
+injectWebIconFontPreload();
+
+async function loadIconFonts(): Promise<void> {
+  const display = Font.FontDisplay.BLOCK;
+  await Font.loadAsync({
+    ...Feather.font,
+    ...Ionicons.font,
+    ionicons: { uri: ioniconsModule, display },
+    feather: { uri: featherModule, display },
+  });
+  if (Platform.OS === 'web' && typeof document !== 'undefined' && document.fonts?.load) {
+    await Promise.all([
+      document.fonts.load('13px ionicons'),
+      document.fonts.load('16px feather'),
+    ]).catch(() => undefined);
+  }
+}
+
+const iconFontsReady = loadIconFonts().catch(() => undefined);
 
 const brandMark = require('../assets/images/brand-mark.png') as number;
 
@@ -124,7 +156,7 @@ function allImageSources(): ImageSourcePropType[] {
     avatar,
     mangoHero,
     promoBanner,
-    ...products.map((p) => p.image),
+    ...products.slice(0, 24).map((p) => p.image),
     ...exploreCategories.map((c) => c.image),
     ...searchCategories.map((c) => c.image),
     ...homeCategories.map((c) => c.image),
@@ -165,10 +197,9 @@ function scheduleIdle(task: () => void) {
   setTimeout(task, 400);
 }
 
-/** SQLite + optional API catalog — never block first paint. */
+/** Open/migrate SQLite without blocking first paint. CatalogProvider owns sync. */
 function warmLocalData() {
   void getLocalDb();
-  void hydrateCatalogFromApi();
 }
 
 let readyPromise: Promise<void> | null = null;
@@ -181,9 +212,10 @@ export function prepareApp(): Promise<void> {
   if (!readyPromise) {
     readyPromise = (async () => {
       warmLocalData();
-      const fonts = Promise.all([Font.loadAsync(iconFonts), loadBrandFonts()]).then(() => undefined);
+      await iconFontsReady;
+      const rest = Promise.all([loadBrandFonts(), preloadSplashMark()]).then(() => undefined);
       await Promise.race([
-        Promise.all([fonts, preloadSplashMark()]),
+        rest,
         new Promise<void>((resolve) => setTimeout(resolve, 900)),
       ]);
       void preloadHomeImages();

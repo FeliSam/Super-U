@@ -1,16 +1,21 @@
 import type { SQLiteDatabase } from 'expo-sqlite';
 import {
+  categoryFallbackImage,
   exploreCategories,
   homePromoBanners,
   popularIds,
   recommendedIds,
+  popularSuggestions,
   products,
-  restoreBundledCatalogImages,
+  chips,
+  homeCategories,
+  registerCatalogImageFallback,
+  removeRuntimeCatalogProduct,
   type ExploreCategory,
   type HomePromoBanner,
   type Product,
 } from '@/data/catalog';
-import { apiAvailable, apiFetch } from '@/lib/api/http';
+import { apiFetch, getApiBaseUrl } from '@/lib/api/http';
 
 function parsePayload<T>(raw: string): T | null {
   try {
@@ -21,10 +26,25 @@ function parsePayload<T>(raw: string): T | null {
 }
 
 export type CatalogRows = {
-  products: { id: string; categoryId?: string; category_id?: string; payload: Omit<Product, 'image'> | string }[];
+  products: CatalogProductRow[];
   categories: { id: string; payload: Omit<ExploreCategory, 'image'> | string }[];
   banners: { id: string; payload: Omit<HomePromoBanner, 'image'> | string }[];
+  chips?: { id: string; payload: unknown }[];
   merch?: { popularIds?: string[]; recommendedIds?: string[]; trendingTerms?: string[] } | null;
+};
+
+export type CatalogProductRow = {
+  id: string;
+  categoryId?: string;
+  category_id?: string;
+  payload: Omit<Product, 'image'> | string;
+  sku?: string | null;
+  barcode?: string | null;
+  available?: boolean;
+  availableQty?: number;
+  imageUrl?: string | null;
+  updatedAt?: string;
+  revision?: number | string;
 };
 
 function asObject<T>(payload: T | string): T | null {
@@ -39,29 +59,94 @@ function asObject<T>(payload: T | string): T | null {
 export function applyCatalogRows(rows: CatalogRows) {
   const byProduct = new Map(products.map((p) => [p.id, p]));
   for (const row of rows.products ?? []) {
-    const existing = byProduct.get(row.id);
     const data = asObject<Omit<Product, 'image'>>(row.payload);
-    if (!existing || !data) continue;
+    if (!data) continue;
+    const categoryId = row.categoryId ?? row.category_id ?? data.categoryId ?? 'epicerie';
+    const existing = byProduct.get(row.id);
+    const fallback = existing?.image ?? categoryFallbackImage(categoryId);
+    registerCatalogImageFallback(row.id, fallback);
     const overlay = { ...data } as Record<string, unknown>;
     delete overlay.image;
     delete overlay.id;
     delete overlay.categoryId;
-    Object.assign(existing, overlay, {
-      id: existing.id,
-      image: existing.image,
-      categoryId: existing.categoryId,
+    const imageUrl = row.imageUrl
+      ? /^https?:\/\//i.test(row.imageUrl)
+        ? row.imageUrl
+        : `${getApiBaseUrl()}${row.imageUrl.startsWith('/') ? '' : '/'}${row.imageUrl}`
+      : undefined;
+    const target: Product =
+      existing ??
+      ({
+        id: row.id,
+        name: typeof data.name === 'string' ? data.name : row.sku ?? row.id,
+        unit: typeof data.unit === 'string' ? data.unit : '1 unité',
+        price: typeof data.price === 'number' ? data.price : 0,
+        image: fallback,
+        categoryId,
+      } satisfies Product);
+    Object.assign(target, overlay, {
+      id: row.id,
+      sku: row.sku ?? data.sku,
+      barcode: row.barcode ?? data.barcode,
+      categoryId,
+      image: imageUrl ? { uri: imageUrl } : fallback,
+      imageUrl,
+      availableQty:
+        typeof row.availableQty === 'number' ? Math.max(0, row.availableQty) : data.availableQty,
+      inStock:
+        typeof row.available === 'boolean'
+          ? row.available
+          : typeof row.availableQty === 'number'
+            ? row.availableQty > 0
+            : data.inStock,
+      updatedAt: row.updatedAt ?? data.updatedAt,
     });
+    if (!existing) {
+      products.push(target);
+      byProduct.set(row.id, target);
+    }
   }
 
   const byCat = new Map(exploreCategories.map((c) => [c.id, c]));
   for (const row of rows.categories ?? []) {
     const existing = byCat.get(row.id);
     const data = asObject<Omit<ExploreCategory, 'image'>>(row.payload);
-    if (!existing || !data) continue;
+    if (!data) continue;
+    if (!existing) {
+      exploreCategories.push({
+        id: row.id,
+        title: typeof data.title === 'string' ? data.title : row.id,
+        image: categoryFallbackImage(row.id),
+        flex: typeof data.flex === 'number' ? data.flex : 1,
+        height: typeof data.height === 'number' ? data.height : 120,
+      });
+      continue;
+    }
     const overlay = { ...data } as Record<string, unknown>;
     delete overlay.image;
     delete overlay.id;
     Object.assign(existing, overlay, { id: existing.id, image: existing.image });
+  }
+
+  for (const row of rows.chips ?? []) {
+    const data = asObject<{ label?: string; emoji?: string; categoryId?: string }>(row.payload);
+    if (!data) continue;
+    const chip = chips.find((c) => c.id === row.id) as
+      | { label: string; emoji: string; categoryId: string }
+      | undefined;
+    const home = homeCategories.find((c) => c.id === row.id);
+    if (typeof data.label === 'string' && data.label.trim()) {
+      if (chip) chip.label = data.label.trim();
+      if (home) home.label = data.label.trim();
+    }
+    if (typeof data.emoji === 'string' && data.emoji.trim()) {
+      if (chip) chip.emoji = data.emoji.trim();
+      if (home) home.emoji = data.emoji.trim();
+    }
+    if (typeof data.categoryId === 'string' && data.categoryId.trim()) {
+      if (chip) chip.categoryId = data.categoryId.trim();
+      if (home) home.categoryId = data.categoryId.trim();
+    }
   }
 
   for (const row of rows.banners ?? []) {
@@ -74,19 +159,40 @@ export function applyCatalogRows(rows: CatalogRows) {
     Object.assign(current, overlay, { id: current.id, image: current.image });
   }
 
-  restoreBundledCatalogImages();
-
   if (rows.merch?.popularIds?.length) {
     popularIds.splice(0, popularIds.length, ...rows.merch.popularIds);
   }
   if (rows.merch?.recommendedIds?.length) {
     recommendedIds.splice(0, recommendedIds.length, ...rows.merch.recommendedIds);
   }
+  if (rows.merch?.trendingTerms?.length) {
+    popularSuggestions.splice(0, popularSuggestions.length, ...rows.merch.trendingTerms);
+  }
 }
 
-export async function hydrateCatalogFromDb(db: SQLiteDatabase) {
-  const productRows = await db.getAllAsync<{ id: string; category_id: string; payload: string }>(
-    'SELECT id, category_id, payload FROM catalog_products ORDER BY rowid',
+export function applyCatalogTombstones(rows: { id: string }[]) {
+  for (const row of rows) removeRuntimeCatalogProduct(row.id);
+}
+
+export async function hydrateCatalogFromDb(db: SQLiteDatabase, storeId = '') {
+  const productRows = await db.getAllAsync<{
+    id: string;
+    category_id: string;
+    payload: string;
+    sku: string | null;
+    barcode: string | null;
+    image_url: string | null;
+    updated_at: string | null;
+    available_qty: number | null;
+  }>(
+    `SELECT p.id, p.category_id, p.payload, p.sku, p.barcode, p.image_url, p.updated_at,
+            i.available_qty AS available_qty
+       FROM catalog_products p
+       LEFT JOIN catalog_inventory i
+         ON i.product_id = p.id AND i.store_id = ?
+      WHERE p.deleted_at IS NULL
+      ORDER BY p.rowid`,
+    storeId,
   );
   const categoryRows = await db.getAllAsync<{ id: string; payload: string }>(
     'SELECT id, payload FROM catalog_categories ORDER BY rowid',
@@ -94,21 +200,33 @@ export async function hydrateCatalogFromDb(db: SQLiteDatabase) {
   const bannerRows = await db.getAllAsync<{ id: string; payload: string }>(
     'SELECT id, payload FROM catalog_banners ORDER BY rowid',
   );
+  const chipRows = await db.getAllAsync<{ id: string; payload: string }>(
+    'SELECT id, payload FROM catalog_chips ORDER BY rowid',
+  );
   applyCatalogRows({
     products: productRows.map((row) => ({
       id: row.id,
       categoryId: row.category_id,
       payload: row.payload,
+      sku: row.sku,
+      barcode: row.barcode,
+      imageUrl: row.image_url,
+      updatedAt: row.updated_at ?? undefined,
+      availableQty: row.available_qty ?? undefined,
+      available: row.available_qty == null ? undefined : row.available_qty > 0,
     })),
     categories: categoryRows,
     banners: bannerRows,
+    chips: chipRows,
   });
 }
 
-export async function hydrateCatalogFromApi(): Promise<boolean> {
-  if (!(await apiAvailable())) return false;
+/** Legacy entry point retained for callers outside the catalog provider. */
+export async function hydrateCatalogFromApi(storeId?: string): Promise<boolean> {
   try {
-    const data = await apiFetch<CatalogRows>('/catalog');
+    const params = new URLSearchParams({ limit: '2000' });
+    if (storeId) params.set('storeId', storeId);
+    const data = await apiFetch<CatalogRows>(`/catalog?${params}`);
     if (!data?.products?.length) return false;
     applyCatalogRows(data);
     return true;

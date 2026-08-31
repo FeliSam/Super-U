@@ -48,6 +48,50 @@ CREATE TABLE IF NOT EXISTS stock_moves (
 
 CREATE INDEX IF NOT EXISTS stock_moves_product_idx ON stock_moves (product_id, created_at DESC);
 CREATE INDEX IF NOT EXISTS stock_moves_store_idx ON stock_moves (store_id, created_at DESC);
+CREATE UNIQUE INDEX IF NOT EXISTS stock_moves_order_product_uidx
+  ON stock_moves (product_id, store_id, ref_id)
+  WHERE ref_type = 'order' AND reason = 'sale';
+
+-- Rattrape une seule fois les commandes créées avant le registre automatique.
+WITH missing_sales AS (
+  SELECT l.product_id,
+         COALESCE(o.store_id, 'su-aeroport') AS store_id,
+         o.id AS order_id,
+         SUM(l.qty)::NUMERIC AS sold
+  FROM order_lines l
+  JOIN orders o ON o.id = l.order_id
+  WHERE o.status <> 'cancelled'
+    AND NOT EXISTS (
+      SELECT 1 FROM stock_moves m
+      WHERE m.product_id = l.product_id
+        AND m.store_id = COALESCE(o.store_id, 'su-aeroport')
+        AND m.ref_type = 'order'
+        AND m.ref_id = o.id
+        AND m.reason = 'sale'
+    )
+  GROUP BY l.product_id, COALESCE(o.store_id, 'su-aeroport'), o.id
+),
+inserted AS (
+  INSERT INTO stock_moves (id, product_id, store_id, delta, reason, ref_type, ref_id, note, created_at)
+  SELECT 'sale-backfill-' || md5(order_id || ':' || product_id || ':' || store_id),
+         product_id, store_id, -sold, 'sale', 'order', order_id,
+         'Commande historique ' || order_id,
+         COALESCE((SELECT created_at FROM orders WHERE id = order_id), NOW())
+  FROM missing_sales
+  ON CONFLICT DO NOTHING
+  RETURNING product_id, store_id, -delta AS sold
+),
+totals AS (
+  SELECT product_id, store_id, SUM(sold) AS sold
+  FROM inserted
+  GROUP BY product_id, store_id
+)
+UPDATE product_stock s
+SET qty = GREATEST(0, s.qty - totals.sold),
+    updated_at = NOW()
+FROM totals
+WHERE s.product_id = totals.product_id
+  AND s.store_id = totals.store_id;
 
 INSERT INTO catalog_settings (key, payload)
 VALUES

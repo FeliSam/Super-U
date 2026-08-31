@@ -22,4 +22,6 @@ export async function migrate() {
   await pool.query(readFileSync(join(dir, 'schema-ops.sql'), 'utf8'));
   await pool.query(readFileSync(join(dir, 'schema-comms.sql'), 'utf8'));
   await pool.query(readFileSync(join(dir, 'schema-admin.sql'), 'utf8'));
+  await pool.query(readFileSync(join(dir, 'schema-staff.sql'), 'utf8'));
+  await pool.query(readFileSync(join(dir, 'schema-catalog-core.sql'), 'utf8'));
 }

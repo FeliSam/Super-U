@@ -1,5 +1,5 @@
 import { existsSync, readdirSync, readFileSync } from 'node:fs';
-import { dirname, join } from 'node:path';
+import { dirname, extname, isAbsolute, join, relative, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const CAT_FALLBACK: Record<string, string> = {
@@ -34,6 +34,38 @@ let filesCache: string[] | null = null;
 
 export function catalogDir() {
   return join(dirname(fileURLToPath(import.meta.url)), '../../marche-dore/assets/images/catalog');
+}
+
+function allowedMediaRoots() {
+  return [
+    resolve(catalogDir()),
+    resolve(dirname(fileURLToPath(import.meta.url)), '../data/catalog-media'),
+  ];
+}
+
+export function resolveSafeMediaPath(localPath: string | null | undefined) {
+  if (!localPath || localPath.includes('\0')) return null;
+  const serverRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..');
+  const candidates = isAbsolute(localPath)
+    ? [resolve(localPath)]
+    : [resolve(serverRoot, localPath), ...allowedMediaRoots().map((root) => resolve(root, localPath))];
+  for (const candidate of candidates) {
+    const root = allowedMediaRoots().find((allowed) => {
+      const rel = relative(allowed, candidate);
+      return rel === '' || (!rel.startsWith('..') && !isAbsolute(rel));
+    });
+    if (root && existsSync(candidate)) return candidate;
+  }
+  return null;
+}
+
+export function readCatalogLocalPath(localPath: string | null | undefined) {
+  const path = resolveSafeMediaPath(localPath);
+  if (!path) return null;
+  const ext = extname(path).toLowerCase();
+  const type = ext === '.jpg' || ext === '.jpeg' ? 'image/jpeg' : ext === '.webp' ? 'image/webp' : ext === '.png' ? 'image/png' : null;
+  if (!type) return null;
+  return { buf: readFileSync(path), type, name: path };
 }
 
 function listCatalog() {
