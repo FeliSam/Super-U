@@ -1,6 +1,6 @@
 import { useCall } from '@/context/CallContext';
 import { useColors } from '@/context/ThemeContext';
-import { displayFont, type AppColors } from '@/constants/theme';
+import { displayFont, type AppColors, spacing } from '@/constants/theme';
 import { Feather } from '@expo/vector-icons';
 import { useEffect, useMemo, useState, type ComponentProps } from 'react';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
@@ -292,7 +292,7 @@ function createStyles(colors: AppColors) {
       borderRadius: 28,
       paddingTop: 16,
       paddingBottom: 28,
-      paddingHorizontal: 20,
+      paddingHorizontal: spacing.screen,
       alignItems: 'center',
       gap: 8,
     },

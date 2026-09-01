@@ -1,23 +1,20 @@
 import { AppImage } from '@/components/AppImage';
 import { goBack } from '@/lib/navigation';
-import { IconCircle, ProductCard, Screen, SearchField, Page } from '@/components/ui';
-import { bodyFont, heroChrome, tabBarClearance, type AppColors } from '@/constants/theme';
+import { FrostedTopBar, FROST_ICON_BG, frostedBarClearance, IconCircle, ProductCard, Screen, SearchField, Page } from '@/components/ui';
+import { bodyFont, heroChrome, tabBarClearance, type AppColors, spacing } from '@/constants/theme';
 import { useColors, useTheme } from '@/context/ThemeContext';
 import { useUiState } from '@/context/UiStateContext';
 import { useFavorites } from '@/context/FavoritesContext';
-import { useCatalogVersion } from '@/context/CatalogContext';
+import { useCatalog } from '@/context/CatalogContext';
 import { useOrders } from '@/context/OrdersContext';
 import {
   popularTermsForAccount,
-  products,
   searchCategories,
   searchCategoryRoute,
-  searchProducts,
   searchSuggestions,
   type SearchSort } from '@/data/catalog';
 import { ProductFlashGrid } from '@/components/ProductFlashGrid';
 import { Feather } from '@expo/vector-icons';
-import { LinearGradient } from 'expo-linear-gradient';
 import { router } from 'expo-router';
 import { memo, useMemo } from 'react';
 import {
@@ -45,12 +42,13 @@ const filters: { key: FilterKey; icon: React.ComponentProps<typeof Feather>['nam
 ];
 
 function SearchScreen() {
-  const catalogVersion = useCatalogVersion();
+  const { version: catalogVersion, products, searchProducts } = useCatalog();
   const { scheme } = useTheme();
   const colors = useColors();
   const chrome = useMemo(() => heroChrome(scheme), [scheme]);
   const styles = useMemo(() => createStyles(colors), [colors]);
   const insets = useSafeAreaInsets();
+  const heroClearance = frostedBarClearance(insets.top);
   const scrollY = useSharedValue(0);
 
   const onScroll = useAnimatedScrollHandler({
@@ -194,30 +192,29 @@ function SearchScreen() {
   return (
     <Screen>
       <Page style={styles.flex}>
-        <View style={styles.hero} pointerEvents="box-none">
-          <LinearGradient colors={chrome.gradient} style={StyleSheet.absoluteFill} pointerEvents="none" />
-          <View style={[styles.heroBar, { paddingTop: Math.max(8, insets.top + 6) }]}>
-            <View style={styles.heroTitleCol}>
-              <IconCircle
-                name="chevron-left"
-                variant="hero"
-                accessibilityLabel="Retour"
-                onPress={() => goBack()}
-              />
-              <Text style={[styles.heroTitle, { color: chrome.ink }]} numberOfLines={1}>
-                Rechercher
-              </Text>
-            </View>
-            <View style={styles.heroActions}>
-              <IconCircle
-                name="tag"
-                variant="hero"
-                accessibilityLabel="Promotions"
-                onPress={() => router.push('/promotions')}
-              />
-            </View>
-          </View>
-        </View>
+        <FrostedTopBar
+          right={
+            <IconCircle
+              name="tag"
+              variant="hero"
+              bg={FROST_ICON_BG}
+              color={chrome.ink}
+              accessibilityLabel="Promotions"
+              onPress={() => router.push('/promotions')}
+            />
+          }>
+          <IconCircle
+            name="chevron-left"
+            variant="hero"
+            bg={FROST_ICON_BG}
+            color={chrome.ink}
+            accessibilityLabel="Retour"
+            onPress={() => goBack()}
+          />
+          <Text style={[styles.heroTitle, { color: chrome.ink }]} numberOfLines={1}>
+            Rechercher
+          </Text>
+        </FrostedTopBar>
 
         <ProductFlashGrid
           products={results}
@@ -226,7 +223,7 @@ function SearchScreen() {
           style={styles.scrollLayer}
           onScroll={onScroll as (event: unknown) => void}
           keyboardShouldPersistTaps="handled"
-          contentContainerStyle={styles.scrollContent}
+          contentContainerStyle={[styles.scrollContent, { paddingTop: heroClearance }]}
           empty={
             <View style={styles.emptyCard}>
               <View style={styles.emptyIcon}>
@@ -429,36 +426,16 @@ export default memo(SearchScreen);
 function createStyles(colors: AppColors) {
   return StyleSheet.create({
     flex: { flex: 1 },
-    hero: {
-      zIndex: 10,
-      overflow: 'hidden',
-    },
-    heroBar: {
-      flexDirection: 'row',
-      alignItems: 'center',
-      justifyContent: 'space-between',
-      paddingHorizontal: 16,
-      paddingBottom: 10,
-      gap: 12,
-    },
-    heroTitleCol: {
-      flex: 1,
-      minWidth: 0,
-      flexDirection: 'row',
-      alignItems: 'center',
-      gap: 8,
-    },
     heroTitle: {
       ...bodyFont('800'),
       fontSize: 28,
       lineHeight: 34,
       flexShrink: 1,
     },
-    heroActions: { flexDirection: 'row', alignItems: 'center', gap: 8, flexShrink: 0 },
     scrollLayer: {
       flex: 1,
       zIndex: 1 },
-    scrollContent: { paddingBottom: tabBarClearance, paddingHorizontal: 20 },
+    scrollContent: { paddingBottom: tabBarClearance, paddingHorizontal: spacing.screen },
     bodySheet: {
       backgroundColor: colors.bg,
       borderTopLeftRadius: 28,

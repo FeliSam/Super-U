@@ -1,6 +1,6 @@
 import { IconCircle, Page, Screen, SmartNavbar } from '@/components/ui';
 import { PressScale } from '@/components/motion';
-import { displayFont, heroChrome, tabBarClearance, type AppColors } from '@/constants/theme';
+import { displayFont, heroChrome, tabBarClearance, type AppColors, spacing } from '@/constants/theme';
 import { useAddresses } from '@/context/AddressesContext';
 import { useColors, useTheme } from '@/context/ThemeContext';
 import { useCart } from '@/context/CartContext';
@@ -168,16 +168,6 @@ function ProfileScreen() {
           subtitle: loyalty.profileSubtitle,
           onPress: () => router.push('/account/loyalty'),
         },
-        {
-          icon: 'bell',
-          label: 'Centre de notifications',
-          subtitle:
-            unreadNotifications > 0
-              ? `${unreadNotifications} non lue${unreadNotifications > 1 ? 's' : ''}`
-              : 'Commandes, promos, livraisons',
-          badge: unreadNotifications > 0 ? String(unreadNotifications) : undefined,
-          onPress: () => router.push('/notifications'),
-        },
       ],
     },
     {
@@ -323,29 +313,28 @@ function ProfileScreen() {
             </View>
           </View>
 
-          <View style={styles.navbarFloat} pointerEvents="box-none">
-            <SmartNavbar
-              left={
+          <SmartNavbar
+            bare
+            left={
+              <IconCircle
+                name="bell"
+                variant="ghost"
+                badge={unreadNotifications}
+                accessibilityLabel="Notifications"
+                onPress={() => router.push('/notifications')}
+              />
+            }
+            right={
+              <View style={styles.navActions}>
                 <IconCircle
-                  name="bell"
-                  variant="hero"
-                  badge={unreadNotifications}
-                  accessibilityLabel="Notifications"
-                  onPress={() => router.push('/notifications')}
+                  name="settings"
+                  variant="ghost"
+                  accessibilityLabel="Paramètres"
+                  onPress={() => router.push('/account/settings')}
                 />
-              }
-              right={
-                <View style={styles.navActions}>
-                  <IconCircle
-                    name="settings"
-                    variant="hero"
-                    accessibilityLabel="Paramètres"
-                    onPress={() => router.push('/account/settings')}
-                  />
-                </View>
-              }
-            />
-          </View>
+              </View>
+            }
+          />
 
           <Animated.View
             style={[
@@ -523,7 +512,7 @@ function createStyles(colors: AppColors) {
       left: 0,
       right: 0,
       zIndex: 10,
-      paddingHorizontal: 20,
+      paddingHorizontal: spacing.screen,
       paddingTop: 8,
     },
     navActions: {
@@ -533,8 +522,8 @@ function createStyles(colors: AppColors) {
     },
     heroIdentityWrap: {
       position: 'absolute',
-      left: 20,
-      right: 20,
+      left: spacing.screen,
+      right: spacing.screen,
       zIndex: 1,
     },
     heroIdentity: { alignItems: 'center', gap: 10 },
@@ -613,7 +602,7 @@ function createStyles(colors: AppColors) {
     },
     sheetScrollContent: {
       flexGrow: 1,
-      paddingHorizontal: 20,
+      paddingHorizontal: spacing.screen,
       gap: 16,
     },
     activeOrder: {

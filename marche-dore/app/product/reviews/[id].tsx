@@ -1,7 +1,7 @@
 import { CtaButton, IconCircle, Page, Screen } from '@/components/ui';
 import { goBack } from '@/lib/navigation';
 import { StarRating } from '@/components/StarRating';
-import { type AppColors } from '@/constants/theme';
+import { type AppColors, spacing } from '@/constants/theme';
 import { useColors } from '@/context/ThemeContext';
 import { useOrders } from '@/context/OrdersContext';
 import { useProfile } from '@/context/ProfileContext';
@@ -351,7 +351,7 @@ function createStyles(colors: AppColors) {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    paddingHorizontal: 20,
+    paddingHorizontal: spacing.screen,
     paddingTop: 10,
     paddingBottom: 8 },
   headerCenter: { alignItems: 'center', gap: 2, flex: 1 },
@@ -364,7 +364,7 @@ function createStyles(colors: AppColors) {
     backgroundColor: colors.bg,
     borderTopLeftRadius: 28,
     borderTopRightRadius: 28,
-    paddingHorizontal: 20,
+    paddingHorizontal: spacing.screen,
     paddingTop: 18,
     gap: 14 },
   missing: { flex: 1, alignItems: 'center', justifyContent: 'center', gap: 10 },

@@ -1,28 +1,27 @@
 import { AppImage } from '@/components/AppImage';
-import { CartTotalFab, CategoryTile, IconCircle, ProductCard, PromoBanner, Screen, SearchField, Page } from '@/components/ui';
+import { CartTotalFab, CategoryTile, FrostedTopBar, FROST_ICON_BG, frostedBarClearance, IconCircle, ProductCard, Screen, SearchField, Page } from '@/components/ui';
+import { PromoCarousel } from '@/components/PromoCarousel';
 import { PressScale } from '@/components/motion';
-import { bodyFont, displayFont, heroChrome, tabBarClearance, type AppColors } from '@/constants/theme';
+import { bodyFont, displayFont, heroChrome, tabBarClearance, type AppColors, spacing } from '@/constants/theme';
+import { useCart } from '@/context/CartContext';
 import { useColors, useTheme } from '@/context/ThemeContext';
+import { useFavorites } from '@/context/FavoritesContext';
+import { useOrders } from '@/context/OrdersContext';
 import { useUiState } from '@/context/UiStateContext';
-import { useCatalogVersion } from '@/context/CatalogContext';
+import { useCatalog } from '@/context/CatalogContext';
 import {
+  bannerIsLive,
   categoryProductCounts,
   exploreCategories,
-  getProducts,
-  bannerIsLive,
   homePromoBanners,
-  popularIds,
-  products,
-  promoProducts,
-  searchCategories,
   searchCategoryRoute,
-  trendingSearches } from '@/data/catalog';
+} from '@/data/catalog';
+import { buildExplorePlan } from '@/lib/homeEngine';
 import { openSearchScreen } from '@/lib/searchNav';
 import { PlatformVirtualList } from '@/components/ProductFlashGrid';
 import { Feather } from '@expo/vector-icons';
-import { LinearGradient } from 'expo-linear-gradient';
 import { router } from 'expo-router';
-import { memo, useEffect, useMemo, useState } from 'react';
+import { memo, useMemo, useRef, useState } from 'react';
 import {
   Platform,
   Pressable,
@@ -45,51 +44,10 @@ const EXPLORE_PRODUCT_ROW = {
   gap: 3.6,
   paddingRight: 4,
 };
-const TREND_LIMIT = 5;
-/** Same height on every rayon tile; bento is width (`flex`) only. */
-const RAYON_TILE_H = 140;
-
-const TrendTags = memo(function TrendTags({
-  onSearch,
-}: {
-  onSearch: (term: string) => void;
-}) {
-  const catalogVersion = useCatalogVersion();
-  const colors = useColors();
-  const styles = useMemo(() => createStyles(colors), [colors]);
-  const { searchRecents } = useUiState();
-  const [trendTick, setTrendTick] = useState(() => Math.floor(Date.now() / 12_000));
-
-  useEffect(() => {
-    const id = setInterval(() => {
-      setTrendTick(Math.floor(Date.now() / 12_000));
-    }, 12_000);
-    return () => clearInterval(id);
-  }, []);
-
-  const trends = useMemo(
-    () => trendingSearches({ recents: searchRecents, limit: TREND_LIMIT, tick: trendTick }),
-    [searchRecents, trendTick, catalogVersion],
-  );
-
-  return (
-    <View style={styles.tagWrap}>
-      {trends.map((item) => (
-        <PressScale
-          key={`${item.rank}-${item.term}`}
-          style={styles.tag}
-          onPress={() => onSearch(item.term)}
-          scaleTo={0.96}
-          accessibilityLabel={`Rechercher ${item.term}`}>
-          <Text style={styles.tagText}>{item.term}</Text>
-        </PressScale>
-      ))}
-    </View>
-  );
-});
 
 function ExploreScreen() {
-  const catalogVersion = useCatalogVersion();
+  const { version: catalogVersion, products } = useCatalog();
+  const [visitSalt] = useState(() => Date.now());
   const { scheme } = useTheme();
   const colors = useColors();
   const chrome = useMemo(() => heroChrome(scheme), [scheme]);
@@ -99,23 +57,34 @@ function ExploreScreen() {
   const promoWidth = Math.min(windowWidth, 430) - 40;
   const scrollY = useSharedValue(0);
 
-  const { setSearchQuery } = useUiState();
+  const { setSearchQuery, searchRecents, interests } = useUiState();
+  const { lines } = useCart();
+  const { ids: favoriteIds } = useFavorites();
+  const favoriteIdsRef = useRef(favoriteIds);
+  favoriteIdsRef.current = favoriteIds;
+  const { orders } = useOrders();
+  const orderedIds = useMemo(
+    () => orders.flatMap((order) => order.lines.map((line) => line.productId)).slice(0, 48),
+    [orders],
+  );
+
+  const plan = useMemo(
+    () =>
+      buildExplorePlan({
+        recents: searchRecents,
+        favoriteIds: favoriteIdsRef.current,
+        cartIds: lines.map((line) => line.productId),
+        orderedIds,
+        interests,
+        hour: new Date().getHours(),
+        sessionSalt: visitSalt,
+      }),
+    [searchRecents, lines, orderedIds, interests, catalogVersion, visitSalt],
+  );
 
   const counts = useMemo(() => categoryProductCounts(), [catalogVersion]);
-  const rows = useMemo(() => {
-    const result: (typeof exploreCategories)[] = [];
-    for (let i = 0; i < exploreCategories.length; i += 2) {
-      result.push(exploreCategories.slice(i, i + 2));
-    }
-    return result;
-  }, []);
-
-  const explorePromo = useMemo(() => {
-    const slot = homePromoBanners.find((b) => b.id === 'rentree') ?? homePromoBanners[1];
-    return slot && bannerIsLive(slot) ? slot : null;
-  }, [catalogVersion]);
-  const trending = useMemo(() => promoProducts().slice(0, 6), [catalogVersion]);
-  const popular = useMemo(() => getProducts(popularIds).slice(0, 8), [catalogVersion]);
+  const liveBanners = useMemo(() => homePromoBanners.filter(bannerIsLive), [catalogVersion]);
+  const rows = plan.rayonRows;
 
   const openSearch = (term?: string) => {
     if (term) setSearchQuery(term);
@@ -148,44 +117,47 @@ function ExploreScreen() {
         default: {} }) };
   });
 
+  const heroClearance = frostedBarClearance(insets.top);
+
   return (
     <Screen>
       <Page style={styles.flex}>
-        <View style={styles.hero} pointerEvents="box-none">
-          <LinearGradient colors={chrome.gradient} style={StyleSheet.absoluteFill} pointerEvents="none" />
-          <View style={[styles.heroBar, { paddingTop: Math.max(8, insets.top + 6) }]}>
-            <View style={styles.heroTitleCol}>
-              <Text style={[styles.heroTitle, { color: chrome.ink }]} numberOfLines={1}>
-                Explorer
-              </Text>
-            </View>
-            <View style={styles.actions}>
+        <FrostedTopBar
+          right={
+            <>
               <IconCircle
                 name="search"
                 variant="hero"
+                bg={FROST_ICON_BG}
+                color={chrome.ink}
                 accessibilityLabel="Rechercher"
                 onPress={() => openSearch()}
               />
               <IconCircle
                 name="tag"
                 variant="hero"
+                bg={FROST_ICON_BG}
+                color={chrome.ink}
                 accessibilityLabel="Promotions"
                 onPress={openPromos}
               />
-            </View>
-          </View>
-        </View>
+            </>
+          }>
+          <Text style={[styles.heroTitle, { color: chrome.ink }]} numberOfLines={1}>
+            Explorer
+          </Text>
+        </FrostedTopBar>
 
         <PlatformVirtualList
           data={rows}
-          extraData={catalogVersion}
+          extraData={`${catalogVersion}-${visitSalt}`}
           keyExtractor={(_: unknown, index: number) => `rayon-${index}`}
           initialNumToRender={4}
           maxToRenderPerBatch={4}
           windowSize={5}
           removeClippedSubviews
           style={styles.scrollLayer}
-          contentContainerStyle={styles.scrollContent}
+          contentContainerStyle={[styles.scrollContent, { paddingTop: heroClearance }]}
           showsVerticalScrollIndicator={false}
           onScroll={onScroll}
           scrollEventThrottle={16}
@@ -229,7 +201,7 @@ function ExploreScreen() {
                 horizontal
                 showsHorizontalScrollIndicator={false}
                 contentContainerStyle={styles.quickRow}>
-                {searchCategories.map((cat) => {
+                {plan.quickCats.map((cat) => {
                   const count = counts[cat.id] ?? 0;
                   return (
                     <PressScale
@@ -250,63 +222,40 @@ function ExploreScreen() {
               </ScrollView>
             </View>
 
-            {explorePromo ? (
-              <View style={{ width: promoWidth, maxWidth: '100%', alignSelf: 'center' }}>
-                <PromoBanner
-                  title={explorePromo.title}
-                  subtitle={explorePromo.subtitle}
-                  cta={explorePromo.cta}
-                  image={explorePromo.image}
-                  width={promoWidth}
-                  onPress={() => router.push(explorePromo.href)}
-                />
+            {liveBanners.length ? <PromoCarousel banners={liveBanners} width={promoWidth} /> : null}
+
+            {plan.forYou.length ? (
+              <View style={styles.section}>
+                <View style={styles.sectionHead}>
+                  <View>
+                    <Text style={styles.sectionTitle}>{plan.forYouTitle}</Text>
+                    <Text style={styles.sectionMeta}>{plan.forYouMeta}</Text>
+                  </View>
+                </View>
+                <ScrollView horizontal showsHorizontalScrollIndicator={false}>
+                  <View style={EXPLORE_PRODUCT_ROW}>
+                    {plan.forYou.map((product) => (
+                      <ProductCard key={`you-${product.id}`} product={product} width={148} imageHeight={130} compact animate={false} />
+                    ))}
+                  </View>
+                </ScrollView>
               </View>
             ) : null}
 
             <View style={styles.section}>
               <View style={styles.sectionHead}>
-                <Text style={styles.sectionTitle}>En promotion</Text>
-                <Pressable onPress={openPromos}>
-                  <Text style={styles.sectionLink}>Voir tout</Text>
-                </Pressable>
+                <View>
+                  <Text style={styles.sectionTitle}>Populaires</Text>
+                  <Text style={styles.sectionMeta}>{plan.popularMeta}</Text>
+                </View>
               </View>
               <ScrollView horizontal showsHorizontalScrollIndicator={false}>
                 <View style={EXPLORE_PRODUCT_ROW}>
-                  {trending.map((product) => (
-                    <ProductCard key={product.id} product={product} width={148} imageHeight={130} compact animate={false} />
+                  {plan.popular.map((product) => (
+                    <ProductCard key={`pop-${product.id}`} product={product} width={148} imageHeight={130} compact animate={false} />
                   ))}
                 </View>
               </ScrollView>
-            </View>
-
-            <View style={styles.section}>
-              <View style={styles.sectionHead}>
-                <Text style={styles.sectionTitle}>Populaires</Text>
-                <Text style={styles.sectionMeta}>Les plus commandés</Text>
-              </View>
-              <ScrollView horizontal showsHorizontalScrollIndicator={false}>
-                <View style={EXPLORE_PRODUCT_ROW}>
-                  {popular.map((product) => (
-                    <ProductCard key={product.id} product={product} width={148} imageHeight={130} compact animate={false} />
-                  ))}
-                </View>
-              </ScrollView>
-            </View>
-
-            <View>
-              <View style={styles.suggestCard}>
-                <View style={styles.suggestHead}>
-                  <View style={styles.suggestHeadLeft}>
-                    <Feather name="trending-up" size={15} color={colors.terracotta} />
-                    <Text style={styles.suggestTitle}>Recherches tendance</Text>
-                  </View>
-                  <View style={styles.livePill}>
-                    <View style={styles.liveDot} />
-                    <Text style={styles.trendMeta}>En direct</Text>
-                  </View>
-                </View>
-                <TrendTags onSearch={openSearch} />
-              </View>
             </View>
 
             <View style={styles.rayonsSection}>
@@ -323,7 +272,7 @@ function ExploreScreen() {
           </Animated.View>
           }
           renderItem={({ item: row }: { item: (typeof exploreCategories)[number][] }) => (
-            <View style={[styles.gridRow, { paddingHorizontal: 20 }]}>
+            <View style={[styles.gridRow, { paddingHorizontal: spacing.screen }]}>
               {row.map((cat) => {
                 const count = counts[cat.id] ?? 0;
                 return (
@@ -331,7 +280,7 @@ function ExploreScreen() {
                     key={cat.id}
                     title={cat.title}
                     image={cat.image}
-                    height={RAYON_TILE_H}
+                    height={Math.round(cat.height * 1.15)}
                     flex={cat.flex}
                     count={count || undefined}
                     onPress={() => router.push(`/category/${cat.id}`)}
@@ -352,17 +301,6 @@ export default memo(ExploreScreen);
 function createStyles(colors: AppColors) {
   return StyleSheet.create({
     flex: { flex: 1 },
-    hero: {
-      zIndex: 10,
-      overflow: 'hidden' },
-    heroBar: {
-      flexDirection: 'row',
-      alignItems: 'center',
-      justifyContent: 'space-between',
-      paddingHorizontal: 16,
-      paddingBottom: 10,
-      gap: 12 },
-    heroTitleCol: { flex: 1, minWidth: 0 },
     heroTitle: {
       ...bodyFont('800'),
       fontSize: 28,
@@ -372,7 +310,6 @@ function createStyles(colors: AppColors) {
       flex: 1,
       zIndex: 1 },
     scrollContent: { paddingBottom: tabBarClearance },
-    actions: { flexDirection: 'row', alignItems: 'center', gap: 8, flexShrink: 0 },
     heroStats: {
       flexDirection: 'row',
       alignItems: 'center',
@@ -392,7 +329,7 @@ function createStyles(colors: AppColors) {
       backgroundColor: colors.bg,
       borderTopLeftRadius: 28,
       borderTopRightRadius: 28,
-      paddingHorizontal: 20,
+      paddingHorizontal: spacing.screen,
       paddingTop: 8,
       gap: 22,
       ...Platform.select({
@@ -446,32 +383,7 @@ function createStyles(colors: AppColors) {
     quickImage: { width: '100%', height: '100%' },
     quickLabel: { color: colors.text, fontSize: 13, fontWeight: '700', textAlign: 'center' },
     quickCount: { color: colors.placeholder, fontSize: 10, fontWeight: '600' },
-    suggestCard: {
-      backgroundColor: colors.white,
-      borderRadius: 18,
-      padding: 14,
-      gap: 12 },
-    suggestHead: {
-      flexDirection: 'row',
-      alignItems: 'center',
-      justifyContent: 'space-between',
-      gap: 12 },
-    suggestHeadLeft: { flexDirection: 'row', alignItems: 'center', gap: 8, flex: 1 },
-    suggestTitle: { color: colors.text, fontSize: 16, fontWeight: '800' },
-    livePill: { flexDirection: 'row', alignItems: 'center', gap: 6 },
-    liveDot: {
-      width: 7,
-      height: 7,
-      borderRadius: 4,
-      backgroundColor: colors.terracotta },
-    trendMeta: { color: colors.muted, fontSize: 11, fontWeight: '600' },
-    tagWrap: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
-    tag: {
-      backgroundColor: colors.bg,
-      borderRadius: 999,
-      paddingHorizontal: 14,
-      paddingVertical: 8 },
-    tagText: { color: colors.text, fontSize: 13, fontWeight: '600' },
     grid: { gap: 2 },
-    gridRow: { flexDirection: 'row', gap: 2, alignItems: 'stretch' } });
+    gridRow: { flexDirection: 'row', gap: 2, alignItems: 'stretch' },
+  });
 }

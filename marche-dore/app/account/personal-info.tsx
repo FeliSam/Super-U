@@ -2,7 +2,7 @@ import { BirthDateField } from '@/components/BirthDateField';
 import { goBack } from '@/lib/navigation';
 import { PressScale } from '@/components/motion';
 import { CtaButton, IconCircle, Screen, Page } from '@/components/ui';
-import { displayFont, type AppColors } from '@/constants/theme';
+import { displayFont, type AppColors, spacing } from '@/constants/theme';
 import { useProfile } from '@/context/ProfileContext';
 import { useColors } from '@/context/ThemeContext';
 import { formatBeninPhoneInput } from '@/lib/beninPhone';
@@ -134,7 +134,7 @@ function createStyles(colors: AppColors) {
       flexDirection: 'row',
       alignItems: 'center',
       justifyContent: 'space-between',
-      paddingHorizontal: 20,
+      paddingHorizontal: spacing.screen,
       paddingVertical: 12,
     },
     headerSpacer: { width: 40 },

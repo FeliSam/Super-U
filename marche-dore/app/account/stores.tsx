@@ -2,7 +2,7 @@ import { LibreMap, warmLibreMap } from '@/components/LibreMap';
 import { goBack } from '@/lib/navigation';
 import { CtaButton, IconCircle, Screen } from '@/components/ui';
 import { cotonouMap, mapStyles, type LngLat } from '@/constants/map';
-import { displayFont, type AppColors } from '@/constants/theme';
+import { displayFont, type AppColors, spacing } from '@/constants/theme';
 import { useColors, useTheme } from '@/context/ThemeContext';
 import { useAddresses } from '@/context/AddressesContext';
 import { useStores } from '@/context/StoresContext';
@@ -420,23 +420,23 @@ function createStyles(colors: AppColors) {
       fontWeight: '700',
       letterSpacing: 0.6,
       textTransform: 'uppercase',
-      paddingHorizontal: 20,
+      paddingHorizontal: spacing.screen,
       marginBottom: 4 },
     sheetTitle: {
       ...displayFont('700'),
       color: colors.text,
       fontSize: 20,
-      paddingHorizontal: 20 },
+      paddingHorizontal: spacing.screen },
     sheetSub: {
       color: colors.muted,
       fontSize: 13,
       lineHeight: 18,
-      paddingHorizontal: 20,
+      paddingHorizontal: spacing.screen,
       marginTop: 4,
       marginBottom: 10,
       fontWeight: '500' },
     sheetScroll: { flex: 1 },
-    sheetContent: { paddingHorizontal: 16, gap: 10, paddingBottom: 12 },
+    sheetContent: { paddingHorizontal: spacing.screenMd, gap: 10, paddingBottom: 12 },
     card: {
       backgroundColor: colors.white,
       borderRadius: 18,
@@ -475,6 +475,6 @@ function createStyles(colors: AppColors) {
       marginTop: 8 },
     radioOn: {
       backgroundColor: colors.gold },
-    footer: { paddingHorizontal: 16, gap: 8, paddingTop: 4 },
+    footer: { paddingHorizontal: spacing.screenMd, gap: 8, paddingTop: 4 },
     footerHint: { color: colors.muted, fontSize: 12, fontWeight: '600', textAlign: 'center' } });
 }

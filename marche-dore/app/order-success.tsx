@@ -1,7 +1,7 @@
 import { HandoffCodeCard } from '@/components/HandoffCodeCard';
 import { MotionView, PressScale } from '@/components/motion';
 import { Page, Screen } from '@/components/ui';
-import { displayFont, type AppColors } from '@/constants/theme';
+import { displayFont, screenEdge, type AppColors, spacing } from '@/constants/theme';
 import { useColors } from '@/context/ThemeContext';
 import { formatOrderId, useOrders } from '@/context/OrdersContext';
 import { formatFcfa } from '@/lib/format';
@@ -125,7 +125,7 @@ function createStyles(colors: AppColors) {
     flex: { flex: 1 },
     wrap: {
       flex: 1,
-      paddingHorizontal: 28,
+      paddingHorizontal: screenEdge(28),
       alignItems: 'center',
       justifyContent: 'center',
       gap: 12,

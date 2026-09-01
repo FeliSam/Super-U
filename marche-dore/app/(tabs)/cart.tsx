@@ -1,13 +1,13 @@
 import { AppImage } from '@/components/AppImage';
-import { IconCircle, Page, ProductCard, Screen } from '@/components/ui';
+import { FrostedTopBar, FROST_ICON_BG, frostedBarClearance, IconCircle, Page, ProductCard, Screen } from '@/components/ui';
 import { MotionView, PressScale } from '@/components/motion';
-import { bodyFont, displayFont, floatingAboveTabBar, heroChrome, tabBarClearance, type AppColors } from '@/constants/theme';
+import { bodyFont, displayFont, floatingAboveTabBar, heroChrome, tabBarClearance, type AppColors, spacing } from '@/constants/theme';
 import { useAddresses } from '@/context/AddressesContext';
-import { useCatalogVersion } from '@/context/CatalogContext';
+import { useCatalog } from '@/context/CatalogContext';
 import { useColors, useTheme } from '@/context/ThemeContext';
 import { CartLine, lineListTotal, lineProduct, lineTotal, useCart } from '@/context/CartContext';
 import { useStores } from '@/context/StoresContext';
-import { chipRoute, getProducts, homeCategories, recommendedIds } from '@/data/catalog';
+import { chipRoute, homeCategories, recommendedIds } from '@/data/catalog';
 import { formatDistanceKm, formatDurationMin } from '@/lib/deliveryRouting';
 import { formatFcfa } from '@/lib/format';
 import { navigateTab, tabPaths } from '@/lib/navigation';
@@ -200,6 +200,7 @@ function SummaryRow({ label, value, green }: { label: string; value: string; gre
 }
 
 function CartScreen() {
+  const { version: catalogVersion, getProducts } = useCatalog();
   const { scheme } = useTheme();
   const colors = useColors();
   const insets = useSafeAreaInsets();
@@ -238,27 +239,22 @@ function CartScreen() {
     return `${count} article${count > 1 ? 's' : ''}`;
   }, [count]);
 
-  const catalogVersion = useCatalogVersion();
-  const emptySuggestions = useMemo(() => getProducts(recommendedIds).slice(0, 6), [catalogVersion]);
+  const emptySuggestions = useMemo(() => getProducts(recommendedIds).slice(0, 6), [catalogVersion, getProducts]);
   const emptyCategories = useMemo(() => homeCategories.slice(0, 6), []);
+
+  const heroClearance = frostedBarClearance(insets.top);
 
   return (
     <Screen>
       <Page style={styles.flex}>
-        <View style={styles.hero} pointerEvents="box-none">
-          <LinearGradient colors={chrome.gradient} style={StyleSheet.absoluteFill} pointerEvents="none" />
-          <View style={[styles.heroBar, { paddingTop: Math.max(8, insets.top + 6) }]}>
-            <View style={styles.heroTitleCol}>
-              <Text style={[styles.heroTitle, { color: chrome.ink }]} numberOfLines={1}>
-                Panier
-              </Text>
-            </View>
-            <View style={styles.navActions}>
+        <FrostedTopBar
+          right={
+            <>
                 {count > 0 ? (
                   <PressScale
                     style={[
                       styles.countPill,
-                      { backgroundColor: chrome.iconBg, borderColor: chrome.iconBorder },
+                      { backgroundColor: FROST_ICON_BG, borderColor: 'rgba(255,255,255,0.45)' },
                     ]}
                     onPress={() => router.push('/checkout')}
                     scaleTo={0.94}
@@ -269,19 +265,23 @@ function CartScreen() {
                 <IconCircle
                   name="search"
                   variant="hero"
+                  bg={FROST_ICON_BG}
+                  color={chrome.ink}
                   accessibilityLabel="Rechercher"
                   onPress={openSearchScreen}
                 />
                 <IconCircle
                   name="tag"
                   variant="hero"
+                  bg={FROST_ICON_BG}
+                  color={chrome.ink}
                   accessibilityLabel="Promotions"
                   onPress={() => router.push('/promotions')}
                 />
                 <PressScale
                   style={[
                     styles.continueBtn,
-                    { backgroundColor: chrome.iconBg, borderColor: chrome.iconBorder },
+                    { backgroundColor: FROST_ICON_BG, borderColor: 'rgba(255,255,255,0.45)' },
                   ]}
                   onPress={() => navigateTab(tabPaths.explore)}
                   scaleTo={0.96}
@@ -289,14 +289,17 @@ function CartScreen() {
                   <Text style={[styles.continueText, { color: chrome.ink }]}>Continuer</Text>
                   <Feather name="chevron-right" size={14} color={colors.gold} />
                 </PressScale>
-            </View>
-          </View>
-        </View>
+            </>
+          }>
+          <Text style={[styles.heroTitle, { color: chrome.ink }]} numberOfLines={1}>
+            Panier
+          </Text>
+        </FrostedTopBar>
 
         {lines.length === 0 ? (
           <ScrollView
             style={styles.scrollLayer}
-            contentContainerStyle={styles.emptyScroll}
+            contentContainerStyle={[styles.emptyScroll, { paddingTop: heroClearance }]}
             showsVerticalScrollIndicator={false}>
             <View style={styles.bodySheet}>
               <MotionView preset="up" delay={40} style={styles.emptyHeroCard}>
@@ -408,6 +411,7 @@ function CartScreen() {
               contentContainerStyle={[
                 styles.content,
                 {
+                  paddingTop: heroClearance,
                   paddingBottom: dockBottom + 148,
                 },
               ]}
@@ -526,34 +530,19 @@ export default memo(CartScreen);
 function createStyles(colors: AppColors) {
   return StyleSheet.create({
     flex: { flex: 1 },
-    hero: {
-      zIndex: 10,
-      overflow: 'hidden' },
-    heroBar: {
-      flexDirection: 'row',
-      alignItems: 'center',
-      justifyContent: 'space-between',
-      paddingHorizontal: 16,
-      paddingBottom: 10,
-      gap: 12 },
-    heroTitleCol: { flex: 1, minWidth: 0 },
     heroTitle: {
       ...bodyFont('800'),
       fontSize: 28,
       lineHeight: 34,
     },
-    navActions: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
-    flexShrink: 0 },
   scrollLayer: {
     flex: 1,
     zIndex: 1 },
-  countPill: {
+    countPill: {
     minWidth: 28,
     height: 28,
     borderRadius: 14,
+    borderWidth: 1,
     alignItems: 'center',
     justifyContent: 'center',
     paddingHorizontal: 8 },
@@ -563,6 +552,7 @@ function createStyles(colors: AppColors) {
     alignItems: 'center',
     gap: 2,
     borderRadius: 999,
+    borderWidth: 1,
     paddingHorizontal: 12,
     paddingVertical: 8 },
   continueText: { fontSize: 13, fontWeight: '700' },
@@ -570,7 +560,7 @@ function createStyles(colors: AppColors) {
     backgroundColor: colors.bg,
     borderTopLeftRadius: 28,
     borderTopRightRadius: 28,
-    paddingHorizontal: 20,
+    paddingHorizontal: spacing.screen,
     paddingTop: 10,
     gap: 12,
     minHeight: Dimensions.get('window').height },
@@ -583,7 +573,7 @@ function createStyles(colors: AppColors) {
     left: 0,
     right: 0,
     zIndex: 30,
-    paddingHorizontal: 16 },
+    paddingHorizontal: spacing.screenMd },
   checkoutBar: {
     backgroundColor: colors.white,
     borderRadius: 22,
@@ -723,7 +713,7 @@ function createStyles(colors: AppColors) {
   emptySectionTitle: { color: colors.text, fontSize: 17, fontWeight: '800' },
   emptySectionLink: { color: colors.gold, fontSize: 13, fontWeight: '700' },
   emptySectionMeta: { color: colors.muted, fontSize: 12, fontWeight: '600' },
-  emptyCatsRow: { gap: 12, paddingRight: 4 },
+  emptyCatsRow: { flexDirection: 'row', gap: 3.6, paddingRight: 4 },
   emptyCat: { width: 76, alignItems: 'center', gap: 8 },
   emptyCatImg: {
     width: 68,
@@ -731,7 +721,7 @@ function createStyles(colors: AppColors) {
     borderRadius: 34,
     backgroundColor: colors.white },
   emptyCatLabel: { color: colors.text, fontSize: 12, fontWeight: '600', textAlign: 'center' },
-  emptyProductsRow: { gap: 12, paddingRight: 4, paddingBottom: 4 },
+  emptyProductsRow: { flexDirection: 'row', gap: 3.6, paddingRight: 4, paddingBottom: 4 },
   deliveryCard: {
     flexDirection: 'row',
     alignItems: 'center',

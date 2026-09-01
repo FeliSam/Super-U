@@ -1,4 +1,5 @@
 import { AppImage } from '@/components/AppImage';
+import { MobileModalFrame } from '@/components/MobileModalFrame';
 import { goBack } from '@/lib/navigation';
 import { EmptyStateHero } from '@/components/EmptyStateHero';
 import { PressScale } from '@/components/motion';
@@ -8,28 +9,44 @@ import {
   Page,
   Screen,
 } from '@/components/ui';
-import { displayFont, type AppColors } from '@/constants/theme';
-import { useColors } from '@/context/ThemeContext';
-import { useCatalogVersion } from '@/context/CatalogContext';
+import { displayFont, heroChrome, type AppColors, spacing } from '@/constants/theme';
+import { useColors, useTheme } from '@/context/ThemeContext';
+import { useCatalog } from '@/context/CatalogContext';
 import {
   categoryFilters,
   exploreCategories,
   productReviewStats,
-  products,
-  productsInCategory,
+  uniqueFamilyProducts,
   type Product,
 } from '@/data/catalog';
+import { rankProductsForShopper } from '@/lib/homeEngine';
 import { ProductFlashGrid } from '@/components/ProductFlashGrid';
 import { openSearchScreen } from '@/lib/searchNav';
 import { useExpandableSheet, SHEET_MIN_RATIO } from '@/lib/expandableSheet';
-import { Feather } from '@expo/vector-icons';
+import { useAuth } from '@/context/AuthContext';
+import { useCart } from '@/context/CartContext';
+import { useFavorites } from '@/context/FavoritesContext';
+import { useOrders } from '@/context/OrdersContext';
+import { useProfile } from '@/context/ProfileContext';
+import { useUiState } from '@/context/UiStateContext';
 import { LinearGradient } from 'expo-linear-gradient';
+import { Feather } from '@expo/vector-icons';
 import { router, useLocalSearchParams } from 'expo-router';
-import { useEffect, useMemo, useState } from 'react';
-import { Modal, Platform, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { useCallback, useEffect, useMemo, useState } from 'react';
+import {
+  ActivityIndicator,
+  Modal,
+  Platform,
+  Pressable,
+  ScrollView,
+  StyleSheet,
+  Text,
+  useWindowDimensions,
+  View,
+} from 'react-native';
 import { GestureRoot } from '@/components/GestureRoot';
 import { GestureDetector } from 'react-native-gesture-handler';
-import Animated from 'react-native-reanimated';
+import Animated, { interpolate, useAnimatedStyle } from 'react-native-reanimated';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 type SortKey = 'pertinence' | 'price-asc' | 'price-desc' | 'rating' | 'promo';
@@ -42,7 +59,16 @@ const SORT_OPTIONS: { key: SortKey; label: string; icon: React.ComponentProps<ty
   { key: 'promo', label: 'Promotions', icon: 'tag' },
 ];
 
-const GRID_IMAGE_H = 148;
+const GRID_IMAGE_H = Math.round(128 * 1.15);
+/** First paint + each onEndReached append. Rank/filter the full list first, then slice. */
+const PAGE_SIZE = 10;
+
+function hashAccount(id?: string) {
+  if (!id) return 0;
+  let h = 2166136261;
+  for (let i = 0; i < id.length; i++) h = Math.imul(h ^ id.charCodeAt(i), 16777619);
+  return h >>> 0;
+}
 
 function filterCategoryList(list: Product[], active: string) {
   if (!active || active === 'Tous') return list;
@@ -95,7 +121,11 @@ function filterCategoryList(list: Product[], active: string) {
   return list;
 }
 
-function sortCategoryList(list: Product[], sort: SortKey) {
+function sortCategoryList(
+  list: Product[],
+  sort: SortKey,
+  rank?: (items: Product[]) => Product[],
+) {
   if (sort === 'price-asc') return [...list].sort((a, b) => a.price - b.price);
   if (sort === 'price-desc') return [...list].sort((a, b) => b.price - a.price);
   if (sort === 'rating') {
@@ -110,14 +140,17 @@ function sortCategoryList(list: Product[], sort: SortKey) {
       return bp - ap || a.price - b.price;
     });
   }
-  return list;
+  return rank ? rank(list) : list;
 }
 
 export default function CategoryScreen() {
-  const catalogVersion = useCatalogVersion();
+  const { version: catalogVersion, products, productsInCategory } = useCatalog();
   const colors = useColors();
+  const { scheme } = useTheme();
   const styles = useMemo(() => createStyles(colors), [colors]);
   const insets = useSafeAreaInsets();
+  const { width: windowWidth } = useWindowDimensions();
+  const heroTitleSize = Math.round(Math.min(34, Math.max(22, windowWidth * 0.07)));
 
   const {
     sheetMin,
@@ -131,10 +164,19 @@ export default function CategoryScreen() {
     onSheetScrollBeginDrag,
     onSheetScrollEndDrag,
     onFiltersScroll,
+    expandedSV,
   } = useExpandableSheet({
     minRatio: SHEET_MIN_RATIO * 0.7,
     lockCollapseToHandle: true,
+    initiallyExpanded: true,
   });
+
+  const heroPopStyle = useAnimatedStyle(() => ({
+    opacity: interpolate(expandedSV.value, [0, 0.85], [1, 0]),
+  }));
+  const barTitleStyle = useAnimatedStyle(() => ({
+    opacity: interpolate(expandedSV.value, [0.2, 0.85], [0, 1]),
+  }));
 
   const { id, filter } = useLocalSearchParams<{ id: string; filter?: string }>();
   const cat = exploreCategories.find((c) => c.id === id);
@@ -148,6 +190,39 @@ export default function CategoryScreen() {
   const [active, setActive] = useState(initialFilter);
   const [sort, setSort] = useState<SortKey>('pertinence');
   const [sortOpen, setSortOpen] = useState(false);
+  const [visitSalt] = useState(() => Date.now());
+  const { session } = useAuth();
+  const { lines } = useCart();
+  const { ids: favoriteIds } = useFavorites();
+  const { orders } = useOrders();
+  const { profile } = useProfile();
+  const { searchRecents, interests } = useUiState();
+  const orderedIds = useMemo(
+    () => orders.flatMap((order) => order.lines.map((line) => line.productId)).slice(0, 48),
+    [orders],
+  );
+  const shopperSignals = useMemo(
+    () => ({
+      recents: searchRecents,
+      favoriteIds,
+      cartIds: lines.map((line) => line.productId),
+      orderedIds,
+      interests,
+      firstName: profile.firstName,
+      hour: new Date().getHours(),
+      sessionSalt: visitSalt + hashAccount(session?.accountId),
+    }),
+    [
+      searchRecents,
+      favoriteIds,
+      lines,
+      orderedIds,
+      interests,
+      profile.firstName,
+      visitSalt,
+      session?.accountId,
+    ],
+  );
 
   useEffect(() => {
     if (typeof filter !== 'string' || !filters.includes(filter)) return;
@@ -156,51 +231,94 @@ export default function CategoryScreen() {
 
   const baseList = useMemo(() => {
     const inCat = productsInCategory(id ?? '');
-    return inCat.length ? inCat : products;
-  }, [id, catalogVersion]);
+    const raw = inCat.length ? inCat : products;
+    return uniqueFamilyProducts(raw);
+  }, [id, catalogVersion, products, productsInCategory]);
 
   const list = useMemo(
-    () => sortCategoryList(filterCategoryList(baseList, active), sort),
-    [baseList, active, sort],
+    () =>
+      sortCategoryList(filterCategoryList(baseList, active), sort, (items) =>
+        rankProductsForShopper(items, shopperSignals),
+      ),
+    [baseList, active, sort, shopperSignals],
   );
+
+  const [visibleCount, setVisibleCount] = useState(PAGE_SIZE);
+  const [appending, setAppending] = useState(false);
+
+  useEffect(() => {
+    setVisibleCount(PAGE_SIZE);
+    setAppending(false);
+  }, [id, active, sort]);
+
+  const visibleList = useMemo(() => list.slice(0, visibleCount), [list, visibleCount]);
+  const hasMore = visibleCount < list.length;
+
+  const loadMore = useCallback(() => {
+    if (!hasMore || appending) return;
+    setAppending(true);
+    requestAnimationFrame(() => {
+      setVisibleCount((n) => Math.min(n + PAGE_SIZE, list.length));
+      setAppending(false);
+    });
+  }, [hasMore, appending, list.length]);
 
   const sortLabel = SORT_OPTIONS.find((o) => o.key === sort)?.label ?? 'Pertinence';
   const title = cat?.title ?? 'Catégorie';
   const fabBottom = Math.max(16, insets.bottom + 12);
+  const chrome = useMemo(() => heroChrome(scheme), [scheme]);
 
   return (
     <Screen>
       <Page style={styles.flex} edgeToEdge>
         <GestureRoot style={styles.flex}>
           <View style={styles.hero} pointerEvents="box-none">
-            {cat?.image ? (
-              <AppImage source={cat.image} frameStyle={StyleSheet.absoluteFill} contentFit="cover" priority="high" />
-            ) : (
-              <View style={[StyleSheet.absoluteFill, { backgroundColor: colors.cream }]} />
-            )}
             <LinearGradient
-              colors={['rgba(20,17,15,0.15)', 'rgba(20,17,15,0.55)', 'rgba(20,17,15,0.82)']}
-              locations={[0, 0.45, 1]}
+              colors={chrome.gradient}
+              locations={[0, 0.42, 1]}
+              start={{ x: 0.1, y: 0 }}
+              end={{ x: 0.9, y: 1 }}
               style={StyleSheet.absoluteFill}
-              pointerEvents="none"
             />
+            {cat?.image ? (
+              <Animated.View style={[styles.heroPop, heroPopStyle]} pointerEvents="none">
+                <AppImage
+                  source={cat.image}
+                  frameStyle={styles.heroPopImage}
+                  contentFit="cover"
+                  priority="low"
+                />
+              </Animated.View>
+            ) : null}
             <View style={[styles.heroBar, { paddingTop: Math.max(10, insets.top + 6) }]}>
               <IconCircle
                 name="chevron-left"
-                variant="onPhoto"
+                variant="hero"
                 accessibilityLabel="Retour"
                 onPress={() => goBack()}
               />
+              <Animated.Text
+                style={[styles.barTitle, barTitleStyle]}
+                numberOfLines={1}
+                accessibilityRole="header">
+                {title}
+              </Animated.Text>
               <IconCircle
                 name="search"
-                variant="onPhoto"
+                variant="hero"
                 accessibilityLabel="Rechercher"
                 onPress={openSearchScreen}
               />
             </View>
             <View style={[styles.heroCopy, { bottom: sheetMin + 28 }]} pointerEvents="none">
-              <Text style={styles.heroEyebrow}>Marché Doré</Text>
-              <Text style={styles.heroTitle}>{title}</Text>
+              <Text style={styles.heroEyebrow}>Rayon</Text>
+              <Text
+                style={[styles.heroTitle, { fontSize: heroTitleSize, lineHeight: Math.round(heroTitleSize * 1.15) }]}
+                numberOfLines={2}
+                adjustsFontSizeToFit
+                minimumFontScale={0.7}>
+                {title}
+              </Text>
               <Text style={styles.heroSub}>
                 {baseList.length} produit{baseList.length > 1 ? 's' : ''} · frais du jour
               </Text>
@@ -273,8 +391,8 @@ export default function CategoryScreen() {
             </View>
 
             <ProductFlashGrid
-              products={list}
-              extraData={`${catalogVersion}-${active}-${sort}`}
+              products={visibleList}
+              extraData={`${active}-${sort}-${visibleList.length}-${appending}`}
               imageHeight={GRID_IMAGE_H}
               listRef={sheetScrollRef as never}
               style={styles.sheetScroll}
@@ -283,6 +401,15 @@ export default function CategoryScreen() {
               onScroll={onSheetScroll as (event: unknown) => void}
               onScrollBeginDrag={onSheetScrollBeginDrag as (event: unknown) => void}
               onScrollEndDrag={onSheetScrollEndDrag as (event: unknown) => void}
+              onEndReached={loadMore}
+              onEndReachedThreshold={0.4}
+              footer={
+                appending ? (
+                  <View style={{ paddingVertical: 16, alignItems: 'center' }}>
+                    <ActivityIndicator color={colors.gold} />
+                  </View>
+                ) : null
+              }
               empty={
                 <View style={styles.emptyWrap}>
                   <EmptyStateHero
@@ -318,7 +445,7 @@ export default function CategoryScreen() {
           transparent
           animationType="fade"
           onRequestClose={() => setSortOpen(false)}>
-          <Pressable style={styles.modalBackdrop} onPress={() => setSortOpen(false)}>
+          <MobileModalFrame align="bottom" onDismiss={() => setSortOpen(false)}>
             <View style={styles.modalCard} onStartShouldSetResponder={() => true}>
               <Text style={styles.modalTitle}>Trier par</Text>
               {SORT_OPTIONS.map((opt) => {
@@ -340,7 +467,7 @@ export default function CategoryScreen() {
                 );
               })}
             </View>
-          </Pressable>
+          </MobileModalFrame>
         </Modal>
       </Page>
     </Screen>
@@ -353,6 +480,20 @@ function createStyles(colors: AppColors) {
     hero: {
       ...StyleSheet.absoluteFill,
       backgroundColor: colors.cream,
+      overflow: 'visible',
+    },
+    heroPop: {
+      position: 'absolute',
+      right: -28,
+      bottom: '18%',
+      width: '58%',
+      height: '62%',
+      zIndex: 1,
+    },
+    heroPopImage: {
+      width: '100%',
+      height: '100%',
+      borderRadius: 36,
     },
     heroBar: {
       position: 'absolute',
@@ -361,32 +502,43 @@ function createStyles(colors: AppColors) {
       right: 0,
       zIndex: 2,
       flexDirection: 'row',
+      alignItems: 'center',
       justifyContent: 'space-between',
-      paddingHorizontal: 16,
+      gap: 10,
+      paddingHorizontal: spacing.screenMd,
+    },
+    barTitle: {
+      flex: 1,
+      ...displayFont('800'),
+      color: colors.text,
+      fontSize: 17,
+      lineHeight: 22,
+      letterSpacing: -0.3,
+      textAlign: 'center',
     },
     heroCopy: {
       position: 'absolute',
-      left: 20,
-      right: 20,
+      left: spacing.screen,
+      right: '42%',
       zIndex: 1,
-      gap: 4,
+      gap: 6,
     },
     heroEyebrow: {
-      color: 'rgba(255,255,255,0.78)',
+      color: colors.gold,
       fontSize: 12,
       fontWeight: '700',
-      letterSpacing: 0.4,
+      letterSpacing: 0.8,
       textTransform: 'uppercase',
     },
     heroTitle: {
       ...displayFont('800'),
-      color: '#ffffff',
-      fontSize: 28,
-      lineHeight: 34,
-      letterSpacing: -0.4,
+      color: colors.text,
+      fontSize: 30,
+      lineHeight: 36,
+      letterSpacing: -0.5,
     },
     heroSub: {
-      color: 'rgba(255,255,255,0.82)',
+      color: colors.muted,
       fontSize: 14,
       fontWeight: '600',
     },
@@ -457,7 +609,7 @@ function createStyles(colors: AppColors) {
       ...(Platform.OS === 'web' ? ({ touchAction: 'pan-x' } as object) : {}),
     },
     filters: {
-      paddingHorizontal: 20,
+      paddingHorizontal: spacing.screen,
       gap: 8,
       paddingBottom: 0,
       alignItems: 'center',
@@ -483,7 +635,7 @@ function createStyles(colors: AppColors) {
       flexDirection: 'row',
       justifyContent: 'space-between',
       alignItems: 'center',
-      paddingHorizontal: 20,
+      paddingHorizontal: spacing.screen,
       gap: 12,
     },
     found: { color: colors.placeholder, fontSize: 13, fontWeight: '600', flexShrink: 1 },
@@ -499,7 +651,7 @@ function createStyles(colors: AppColors) {
     },
     sort: { color: colors.text, fontSize: 12, fontWeight: '700' },
     grid: {
-      paddingHorizontal: 20,
+      paddingHorizontal: spacing.screen,
       flexDirection: 'row',
       flexWrap: 'wrap',
       gap: 2,
@@ -507,22 +659,17 @@ function createStyles(colors: AppColors) {
     cell: {},
     emptyWrap: {
       flexGrow: 1,
-      paddingHorizontal: 20,
+      paddingHorizontal: spacing.screen,
       paddingTop: 16,
       paddingBottom: 48,
       justifyContent: 'center',
-    },
-    modalBackdrop: {
-      flex: 1,
-      backgroundColor: colors.overlay,
-      justifyContent: 'flex-end',
-      padding: 16,
-      paddingBottom: 28,
     },
     modalCard: {
       backgroundColor: colors.white,
       borderRadius: 22,
       padding: 16,
+      marginHorizontal: 16,
+      marginBottom: 28,
       gap: 4,
     },
     modalTitle: {

@@ -4,22 +4,21 @@ import { ImagePager, type ImagePagerHandle } from '@/components/ImagePager';
 import { ImageViewer } from '@/components/ImageViewer';
 import { AppImage } from '@/components/AppImage';
 import { StarRating } from '@/components/StarRating';
-import { displayFont, type AppColors } from '@/constants/theme';
+import { displayFont, type AppColors, spacing } from '@/constants/theme';
 import { useColors } from '@/context/ThemeContext';
-import { useCatalogVersion } from '@/context/CatalogContext';
+import { useCatalog } from '@/context/CatalogContext';
 import { useCart } from '@/context/CartContext';
-import { useFavorites } from '@/context/FavoritesContext';
+import { useFavoriteId } from '@/context/FavoritesContext';
 import { useOrders } from '@/context/OrdersContext';
 import { useReviews } from '@/context/ReviewsContext';
+import { useStores } from '@/context/StoresContext';
 import {
   discoverProducts,
-  getProduct,
   liveReviewStats,
+  productAvailableQty,
   productFamilyName,
   productGallery,
   productVariants,
-  products,
-  shuffleProducts,
   similarProducts,
   type Product,
 } from '@/data/catalog';
@@ -34,6 +33,7 @@ import { Href, router, useLocalSearchParams } from 'expo-router';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   Alert,
+  InteractionManager,
   NativeScrollEvent,
   NativeSyntheticEvent,
   Platform,
@@ -48,10 +48,13 @@ import {
 import { GestureRoot } from '@/components/GestureRoot';
 import { GestureDetector } from 'react-native-gesture-handler';
 import Animated, {
+  Easing,
   useAnimatedStyle,
   useSharedValue,
+  withDelay,
   withSequence,
   withSpring,
+  withTiming,
 } from 'react-native-reanimated';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
@@ -70,7 +73,8 @@ function NutriRow({ label, value }: { label: string; value: string }) {
   );
 }
 export default function ProductScreen() {
-  const catalogVersion = useCatalogVersion();
+  const { version: catalogVersion, getProduct, products } = useCatalog();
+  const { selectedStore } = useStores();
   const colors = useColors();
   const styles = useMemo(() => createStyles(colors), [colors]);
 
@@ -100,29 +104,142 @@ export default function ProductScreen() {
   });
   const { add, setQty: setCartQty, lines, count: cartCount, subtotal: cartSubtotal, listSubtotal: cartListSubtotal } =
     useCart();
-  const { isFavorite, toggle } = useFavorites();
+  const { liked, toggle } = useFavoriteId(product?.id ?? routeId ?? '');
   const { reviewsForProduct, hasUserReviewedProduct } = useReviews();
   const { orders } = useOrders();
-  const liked = isFavorite(product?.id ?? routeId ?? '');
   const [descOpen, setDescOpen] = useState(true);
   const [nutriOpen, setNutriOpen] = useState(false);
   const [heroIndex, setHeroIndex] = useState(0);
   const [justAdded, setJustAdded] = useState(false);
+  const [cartFlyHold, setCartFlyHold] = useState(false);
+  const [flyText, setFlyText] = useState<string | null>(null);
+  const [fabPulse, setFabPulse] = useState(0);
   const heroPagerRef = useRef<ImagePagerHandle>(null);
+  const ctaPriceRef = useRef<View>(null);
+  const fabAnchorRef = useRef<View>(null);
+  const flyHoldTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const flyX = useSharedValue(0);
+  const flyY = useSharedValue(0);
+  const flyOp = useSharedValue(0);
+  const flyScale = useSharedValue(1);
+  const ctaSlotL = useSharedValue(0);
+  const ctaSlotP = useSharedValue(0);
+  const ctaSlotO = useSharedValue(0);
+  const flyBusy = useRef(false);
+  const flyAnimStyle = useAnimatedStyle(() => ({
+    opacity: flyOp.value,
+    transform: [
+      { translateX: flyX.value - 44 },
+      { translateY: flyY.value - 14 },
+      { scale: flyScale.value },
+    ],
+  }));
+  const ctaLeftStyle = useAnimatedStyle(() => ({
+    opacity: ctaSlotL.value,
+    transform: [{ translateY: (1 - ctaSlotL.value) * 12 }],
+  }));
+  const ctaPriceSlotStyle = useAnimatedStyle(() => ({
+    opacity: ctaSlotP.value,
+    transform: [{ translateY: (1 - ctaSlotP.value) * 12 }],
+  }));
+  const ctaOldSlotStyle = useAnimatedStyle(() => ({
+    opacity: ctaSlotO.value,
+    transform: [{ translateY: (1 - ctaSlotO.value) * 10 }],
+  }));
   const cartQty = lines.find((l) => l.productId === product?.id)?.qty ?? 0;
   const inCart = cartQty > 0;
+
+  const playCtaSlots = useCallback(() => {
+    ctaSlotL.value = withSpring(1, { damping: 16, stiffness: 220 });
+    ctaSlotP.value = withDelay(90, withSpring(1, { damping: 16, stiffness: 220 }));
+    ctaSlotO.value = withDelay(180, withSpring(1, { damping: 16, stiffness: 220 }));
+  }, [ctaSlotL, ctaSlotO, ctaSlotP]);
+
+  useEffect(() => {
+    if (!product?.id || inCart) {
+      ctaSlotL.value = 1;
+      ctaSlotP.value = 1;
+      ctaSlotO.value = 1;
+      return;
+    }
+    ctaSlotL.value = 0;
+    ctaSlotP.value = 0;
+    ctaSlotO.value = 0;
+    let cancelled = false;
+    const measureView = (node: View | null) =>
+      new Promise<{ x: number; y: number; w: number; h: number } | null>((resolve) => {
+        if (!node) {
+          resolve(null);
+          return;
+        }
+        node.measureInWindow((x, y, w, h) => {
+          resolve(w > 0 || h > 0 ? { x, y, w, h } : null);
+        });
+      });
+    const timer = setTimeout(() => {
+      void (async () => {
+        if (cancelled || flyBusy.current) {
+          playCtaSlots();
+          return;
+        }
+        const from = await measureView(fabAnchorRef.current);
+        const to = await measureView(ctaPriceRef.current);
+        if (cancelled || flyBusy.current) {
+          playCtaSlots();
+          return;
+        }
+        if (from && to && cartSubtotal > 0) {
+          const ease = Easing.bezier(0.22, 1, 0.32, 1);
+          flyX.value = from.x + from.w / 2;
+          flyY.value = from.y + from.h / 2;
+          flyScale.value = 1;
+          flyOp.value = 1;
+          setFlyText(formatFcfa(cartSubtotal));
+          flyX.value = withTiming(to.x + to.w / 2, { duration: 560, easing: ease });
+          flyY.value = withTiming(to.y + to.h / 2, { duration: 560, easing: ease });
+          flyScale.value = withTiming(0.88, { duration: 560, easing: ease });
+          flyOp.value = withDelay(470, withTiming(0, { duration: 140 }));
+          setTimeout(() => {
+            if (!cancelled) {
+              setFlyText(null);
+              playCtaSlots();
+            }
+          }, 560);
+          return;
+        }
+        playCtaSlots();
+      })();
+    }, 360);
+    return () => {
+      cancelled = true;
+      clearTimeout(timer);
+    };
+  }, [product?.id, inCart, playCtaSlots]);
   const similar = useMemo(() => similarProducts(product?.id ?? routeId ?? ''), [product?.id, routeId, catalogVersion]);
   const discoverSeed = useMemo(
-    () => discoverProducts(product?.id ?? routeId ?? ''),
+    () => discoverProducts(product?.id ?? routeId ?? '', 8),
     [product?.id, routeId, catalogVersion],
   );
-  const discoverPool = useMemo(() => {
-    const currentId = product?.id ?? routeId;
-    const exclude = new Set([currentId, ...variants.map((p) => p.id), ...similar.map((p) => p.id)]);
-    const pool = products.filter((p) => !exclude.has(p.id));
-    return shuffleProducts(pool.length ? pool : products.filter((p) => p.id !== currentId));
-  }, [product?.id, routeId, similar, variants, catalogVersion]);
-  const [discoverPages, setDiscoverPages] = useState(1);
+  const extraDiscover = useMemo(() => {
+    const currentId = product?.id ?? routeId ?? '';
+    const exclude = new Set([
+      currentId,
+      ...variants.map((p) => p.id),
+      ...similar.map((p) => p.id),
+      ...discoverSeed.map((p) => p.id),
+    ]);
+    const out: Product[] = [];
+    const n = products.length;
+    if (!n) return out;
+    const start = Math.floor(Math.random() * n);
+    for (let i = 0; i < n && out.length < 18; i++) {
+      const p = products[(start + i) % n];
+      if (!exclude.has(p.id)) out.push(p);
+    }
+    return out;
+  }, [product?.id, routeId, similar, variants, discoverSeed, catalogVersion]);
+  const [discoverPages, setDiscoverPages] = useState(0);
+  const [feedReady, setFeedReady] = useState(false);
   const loadingDiscover = useRef(false);
   const gallery = useMemo(
     () => (product ? productGallery(product, 4) : []),
@@ -137,26 +254,29 @@ export default function ProductScreen() {
 
   useEffect(() => {
     setSelectedId(routeId);
-    setDiscoverPages(1);
+    setDiscoverPages(0);
+    setFeedReady(false);
     setHeroIndex(0);
     setJustAdded(false);
+    setCartFlyHold(false);
+    setFlyText(null);
+    flyBusy.current = false;
+    flyOp.value = 0;
+    ctaSlotL.value = 0;
+    ctaSlotP.value = 0;
+    ctaSlotO.value = 0;
+    const task = InteractionManager.runAfterInteractions(() => setFeedReady(true));
+    return () => task.cancel();
   }, [routeId]);
 
   const discoverItems = useMemo(() => {
-    const items: { product: Product; key: string }[] = [];
-    discoverSeed.forEach((p) => {
-      items.push({ product: p, key: `seed-${p.id}` });
-    });
-    for (let page = 0; page < discoverPages; page++) {
-      discoverPool.forEach((p, index) => {
-        items.push({ product: p, key: `${p.id}-d${page}-${index}` });
-      });
-    }
-    return items;
-  }, [discoverPages, discoverPool, discoverSeed]);
+    if (!feedReady) return [];
+    const extra = extraDiscover.slice(0, 6 + discoverPages * 6);
+    return [...discoverSeed, ...extra].map((p, i) => ({ product: p, key: `${p.id}-${i}` }));
+  }, [discoverPages, extraDiscover, discoverSeed, feedReady]);
 
   const loadMoreDiscover = useCallback(() => {
-    setDiscoverPages((pages) => Math.min(pages + 1, 3));
+    setDiscoverPages((pages) => Math.min(pages + 1, 2));
   }, []);
 
   const onProductScroll = useCallback(
@@ -230,9 +350,16 @@ export default function ProductScreen() {
   const unitLabel = product.unit.replace(/^\d+(?:[.,]\d+)?\s*/, '') || 'kg';
   const { rating, reviews } = liveReviewStats(product, reviewsForProduct(product.id));
   const savings = product.oldPrice ? Math.max(0, product.oldPrice - product.price) : 0;
+  const availableQty = productAvailableQty(product);
+  const outOfStock = product.inStock === false || availableQty === 0;
+  const stockLabel = outOfStock
+    ? 'Rupture de stock'
+    : availableQty != null && availableQty < 20
+      ? `${availableQty} disponible${availableQty > 1 ? 's' : ''} · ${selectedStore.name}`
+      : `En stock · ${selectedStore.name}`;
 
   const bumpQty = (next: number) => {
-    if (!product || product.inStock === false) return;
+    if (!product || outOfStock) return;
     if (inCart) {
       setCartQty(product.id, next);
       return;
@@ -241,15 +368,81 @@ export default function ProductScreen() {
   };
 
   const addToCart = () => {
-    if (!product || inCart || product.inStock === false) return;
-    add(product.id, 1);
-    setJustAdded(true);
+    if (!product || inCart || outOfStock) return;
+    flyBusy.current = true;
+    ctaSlotL.value = 1;
+    ctaSlotP.value = 1;
+    ctaSlotO.value = 1;
+    const label = formatFcfa(total);
     ctaScale.value = withSequence(
       withSpring(0.94, { damping: 14, stiffness: 280 }),
       withSpring(1.03, { damping: 12, stiffness: 220 }),
       withSpring(1, { damping: 16, stiffness: 200 }),
     );
-    setTimeout(() => setJustAdded(false), 900);
+
+    const measureView = (node: View | null) =>
+      new Promise<{ x: number; y: number; w: number; h: number } | null>((resolve) => {
+        if (!node) {
+          resolve(null);
+          return;
+        }
+        node.measureInWindow((x, y, w, h) => {
+          resolve(w > 0 || h > 0 ? { x, y, w, h } : null);
+        });
+      });
+
+    const finishHold = () => {
+      if (flyHoldTimer.current) clearTimeout(flyHoldTimer.current);
+      flyHoldTimer.current = setTimeout(() => {
+        setFlyText(null);
+        setCartFlyHold(false);
+        flyOp.value = 0;
+      }, 620);
+    };
+
+    void (async () => {
+      const from = await measureView(ctaPriceRef.current);
+      setJustAdded(true);
+      setCartFlyHold(true);
+      setTimeout(() => setJustAdded(false), 900);
+      add(product.id, 1);
+      await new Promise<void>((resolve) => {
+        requestAnimationFrame(() => requestAnimationFrame(() => resolve()));
+      });
+      let to = await measureView(fabAnchorRef.current);
+      if (!to) {
+        await new Promise((r) => setTimeout(r, 48));
+        to = await measureView(fabAnchorRef.current);
+      }
+      if (!to) {
+        to = {
+          x: Math.max(12, windowWidth - 20 - 128),
+          y: windowHeight - footerPad - 48,
+          w: 121,
+          h: 42,
+        };
+      }
+      if (!from) {
+        finishHold();
+        return;
+      }
+      const sx = from.x + from.w / 2;
+      const sy = from.y + from.h / 2;
+      const tx = to.x + to.w / 2;
+      const ty = to.y + to.h / 2;
+      flyX.value = sx;
+      flyY.value = sy;
+      flyScale.value = 1;
+      flyOp.value = 1;
+      setFlyText(label);
+      const ease = Easing.bezier(0.22, 1, 0.32, 1);
+      flyX.value = withTiming(tx, { duration: 520, easing: ease });
+      flyY.value = withTiming(ty, { duration: 520, easing: ease });
+      flyScale.value = withTiming(0.62, { duration: 520, easing: ease });
+      flyOp.value = withDelay(430, withTiming(0, { duration: 140 }));
+      setTimeout(() => setFabPulse((n) => n + 1), 440);
+      finishHold();
+    })();
   };
 
   const goToSlide = (index: number) => {
@@ -290,16 +483,12 @@ export default function ProductScreen() {
           </View>
         </View>
 
-        <View
-          style={[
-            styles.navbarFloat,
-            { paddingTop: Math.max(8, insets.top || 8), pointerEvents: 'box-none' },
-          ]}>
           <SmartNavbar
+            bare
             left={
               <IconCircle
                 name="arrow-left"
-                variant="onPhoto"
+                variant="ghost"
                 accessibilityLabel="Retour"
                 onPress={() => goBack()}
               />
@@ -308,19 +497,19 @@ export default function ProductScreen() {
               <View style={styles.navActionsRow}>
                 <IconCircle
                   name="maximize-2"
-                  variant="onPhoto"
+                  variant="ghost"
                   accessibilityLabel="Voir les photos"
                   onPress={() => openViewer(heroIndex)}
                 />
                 <IconCircle
                   name="share-2"
-                  variant="onPhoto"
+                  variant="ghost"
                   accessibilityLabel="Partager"
                   onPress={shareProduct}
                 />
                 <IconCircle
                   name="heart"
-                  variant="onPhoto"
+                  variant="ghost"
                   color={liked ? colors.terracotta : undefined}
                   accessibilityLabel={liked ? 'Retirer des favoris' : 'Ajouter aux favoris'}
                   onPress={() => product?.id && toggle(product.id)}
@@ -328,7 +517,6 @@ export default function ProductScreen() {
               </View>
             }
           />
-        </View>
 
         <Animated.View style={[styles.sheet, { height: sheetMax }, sheetAnimStyle]}>
           <GestureDetector gesture={sheetHandleGesture}>
@@ -411,15 +599,19 @@ export default function ProductScreen() {
                 <Feather name="sun" size={12} color={colors.gold} />
                 <Text style={styles.producer}>{(product.producer ?? 'Marché Doré').toUpperCase()}</Text>
               </View>
-              {product.inStock === false ? (
+              {outOfStock ? (
                 <View style={[styles.stock, styles.stockOut]}>
                   <View style={[styles.stockDot, styles.stockDotOut]} />
-                  <Text style={[styles.stockText, styles.stockTextOut]}>Rupture de stock</Text>
+                  <Text style={[styles.stockText, styles.stockTextOut]} numberOfLines={2}>
+                    Rupture de stock
+                  </Text>
                 </View>
               ) : (
                 <View style={styles.stock}>
                   <View style={styles.stockDot} />
-                  <Text style={styles.stockText}>En stock</Text>
+                  <Text style={styles.stockText} numberOfLines={2}>
+                    {stockLabel}
+                  </Text>
                 </View>
               )}
             </View>
@@ -584,7 +776,7 @@ export default function ProductScreen() {
             </View>
             ) : null}
 
-            {similar.length > 0 ? (
+            {feedReady && similar.length > 0 ? (
               <View style={styles.section}>
                 <View style={styles.sectionHead}>
                   <Text style={styles.sectionTitle}>Produits similaires</Text>
@@ -598,32 +790,34 @@ export default function ProductScreen() {
               </View>
             ) : null}
 
+            {feedReady ? (
             <View style={styles.section}>
               <View style={styles.sectionHead}>
                 <Text style={styles.sectionTitle}>À découvrir</Text>
                 <Text style={styles.sectionMeta}>Pour vous</Text>
               </View>
               <View style={styles.grid}>
-                {discoverItems.map(({ product: p, key }, i) => (
+                {discoverItems.map(({ product: p, key }) => (
                   <ProductCard
                     key={key}
                     product={p}
                     width="49.6%"
                     imageHeight={GRID_IMAGE_HEIGHT}
                     compact
-                    index={i}
-                    animate={i < 8}
+                    animate={false}
                   />
                 ))}
               </View>
               <Text style={styles.feedHint}>Faites défiler pour voir plus de produits…</Text>
             </View>
+            ) : null}
           </ScrollView>
           </GestureDetector>
         </Animated.View>
 
+        {viewerOpen ? (
         <ImageViewer
-          visible={viewerOpen}
+          visible
           images={gallery}
           initialIndex={heroIndex}
           onClose={() => setViewerOpen(false)}
@@ -632,14 +826,24 @@ export default function ProductScreen() {
             heroPagerRef.current?.goTo(i);
           }}
         />
+        ) : null}
 
         <View style={[styles.footer, { paddingBottom: Math.max(14, insets.bottom + 8) }]}>
-          {inCart ? (
+          {inCart && !cartFlyHold ? (
             <View style={styles.footerActions}>
-              <View style={styles.footerLinePrices} accessibilityLabel="Prix de la ligne">
-                <Text style={styles.footerLineNow} numberOfLines={1}>
-                  {formatFcfa(total)}
+              <View
+                style={styles.footerLinePrices}
+                accessibilityLabel="Prix unitaire initial">
+                <Text
+                  style={product.oldPrice ? styles.footerLineOld : styles.footerLineNow}
+                  numberOfLines={1}>
+                  {formatFcfa(product.oldPrice ?? product.price)}
                 </Text>
+                {product.oldPrice ? (
+                  <Text style={styles.footerLineNow} numberOfLines={1}>
+                    {formatFcfa(product.price)}
+                  </Text>
+                ) : null}
               </View>
               <View style={styles.footerQty}>
                 <Pressable style={styles.footerQtyBtn} onPress={() => bumpQty(cartQty - 1)} hitSlop={8}>
@@ -700,19 +904,23 @@ export default function ProductScreen() {
                   start={{ x: 0, y: 0 }}
                   end={{ x: 1, y: 0 }}
                   style={styles.ctaGradient}>
-                  <View style={styles.ctaAddLeft}>
+                  <Animated.View style={[styles.ctaAddLeft, ctaLeftStyle]}>
                     <Feather name={justAdded ? 'check' : 'shopping-bag'} size={17} color="#ffffff" />
                     <Text style={styles.ctaText}>{justAdded ? 'Ajouté !' : 'Ajouter au panier'}</Text>
-                  </View>
+                  </Animated.View>
                   {!justAdded ? (
-                    <View style={styles.ctaPrices}>
-                      <Text style={styles.ctaPrice} numberOfLines={1}>
-                        {formatFcfa(total)}
-                      </Text>
-                      {showCompare ? (
-                        <Text style={styles.ctaOld} numberOfLines={1}>
-                          {formatFcfa(listTotal)}
+                    <View ref={ctaPriceRef} collapsable={false} style={styles.ctaPrices}>
+                      <Animated.View style={ctaPriceSlotStyle}>
+                        <Text style={styles.ctaPrice} numberOfLines={1}>
+                          {formatFcfa(total)}
                         </Text>
+                      </Animated.View>
+                      {showCompare ? (
+                        <Animated.View style={ctaOldSlotStyle}>
+                          <Text style={styles.ctaOld} numberOfLines={1}>
+                            {formatFcfa(listTotal)}
+                          </Text>
+                        </Animated.View>
                       ) : null}
                     </View>
                   ) : null}
@@ -722,8 +930,17 @@ export default function ProductScreen() {
           )}
         </View>
 
-        {!inCart ? (
-          <CartTotalFab bottom={Math.max(14, insets.bottom + 8) + 84} />
+        {!inCart || cartFlyHold ? (
+          <CartTotalFab
+            bottom={Math.max(14, insets.bottom + 8) + 84}
+            pulse={fabPulse}
+            measureRef={fabAnchorRef}
+          />
+        ) : null}
+        {flyText ? (
+          <Animated.View pointerEvents="none" style={[styles.flyChip, flyAnimStyle]}>
+            <Text style={styles.flyChipText}>{flyText}</Text>
+          </Animated.View>
         ) : null}
         </GestureRoot>
       </Page>
@@ -784,7 +1001,7 @@ function createStyles(colors: AppColors) {
     left: 0,
     right: 0,
     zIndex: 10,
-    paddingHorizontal: 20,
+    paddingHorizontal: spacing.screen,
   },
   navActionsRow: {
     flexDirection: 'row',
@@ -838,7 +1055,7 @@ function createStyles(colors: AppColors) {
   sheetScrollContent: {
     flexGrow: 1,
     gap: 14,
-    paddingHorizontal: 20,
+    paddingHorizontal: spacing.screen,
     paddingBottom: 20,
   },
   thumbScroll: { marginHorizontal: -4 },
@@ -889,6 +1106,8 @@ function createStyles(colors: AppColors) {
     paddingVertical: 5 },
   producer: { color: colors.gold, fontSize: 11, fontWeight: '800', letterSpacing: 0.5 },
   stock: {
+    flexShrink: 1,
+    maxWidth: '62%',
     flexDirection: 'row',
     alignItems: 'center',
     gap: 6,
@@ -897,7 +1116,7 @@ function createStyles(colors: AppColors) {
     paddingHorizontal: 10,
     paddingVertical: 5 },
   stockDot: { width: 7, height: 7, borderRadius: 4, backgroundColor: colors.green },
-  stockText: { color: colors.green, fontWeight: '700', fontSize: 12 },
+  stockText: { flexShrink: 1, color: colors.green, fontWeight: '700', fontSize: 12 },
   stockOut: { backgroundColor: colors.blush },
   stockDotOut: { backgroundColor: colors.terracotta },
   stockTextOut: { color: colors.terracotta },
@@ -1096,6 +1315,13 @@ function createStyles(colors: AppColors) {
     letterSpacing: -0.2,
     lineHeight: 18,
   },
+  footerLineOld: {
+    color: colors.muted,
+    fontSize: 11,
+    fontWeight: '600',
+    textDecorationLine: 'line-through',
+    lineHeight: 13,
+  },
   footerQty: {
     flex: 3,
     flexDirection: 'row',
@@ -1237,6 +1463,22 @@ function createStyles(colors: AppColors) {
     fontWeight: '600',
     fontSize: 12,
     textDecorationLine: 'line-through',
+  },
+  flyChip: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    zIndex: 50,
+    backgroundColor: colors.terracotta,
+    borderRadius: 999,
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+  },
+  flyChipText: {
+    color: '#ffffff',
+    fontSize: 14,
+    fontWeight: '800',
+    fontVariant: ['tabular-nums'],
   },
 });
 }

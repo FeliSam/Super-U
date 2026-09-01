@@ -1,6 +1,7 @@
+import { MobileModalFrame } from '@/components/MobileModalFrame';
 import { CtaButton, IconCircle, Screen, Page } from '@/components/ui';
 import { goBack } from '@/lib/navigation';
-import { displayFont, type AppColors } from '@/constants/theme';
+import { displayFont, type AppColors, spacing } from '@/constants/theme';
 import { useCheckoutPayment, type PaymentId } from '@/context/CheckoutPaymentContext';
 import { usePayments, type WalletMethod } from '@/context/PaymentsContext';
 import { useColors } from '@/context/ThemeContext';
@@ -174,8 +175,7 @@ export default function PaymentMethodsScreen() {
       </Page>
 
       <Modal visible={Boolean(editId)} transparent animationType="slide" onRequestClose={() => setEditId(null)}>
-        <View style={styles.modalRoot}>
-          <Pressable style={styles.modalBackdrop} onPress={() => setEditId(null)} />
+        <MobileModalFrame onDismiss={() => setEditId(null)}>
           <View style={[styles.modalSheet, { backgroundColor: colors.bg }]}>
             <Text style={styles.modalTitle}>
               {editId === 'wave' ? 'MTN MoMo' : 'Orange Money'}
@@ -201,7 +201,7 @@ export default function PaymentMethodsScreen() {
               <Text style={styles.modalCancelText}>Annuler</Text>
             </Pressable>
           </View>
-        </View>
+        </MobileModalFrame>
       </Modal>
     </Screen>
   );
@@ -214,7 +214,7 @@ function createStyles(colors: AppColors) {
       flexDirection: 'row',
       alignItems: 'center',
       justifyContent: 'space-between',
-      paddingHorizontal: 20,
+      paddingHorizontal: spacing.screen,
       paddingVertical: 12 },
     headerSpacer: { width: 40 },
     title: { color: colors.text, fontSize: 17, ...displayFont('700') },
@@ -274,8 +274,6 @@ function createStyles(colors: AppColors) {
       borderTopWidth: 1,
       borderTopColor: colors.border,
       backgroundColor: colors.white },
-    modalRoot: { flex: 1, justifyContent: 'flex-end' },
-    modalBackdrop: { ...StyleSheet.absoluteFillObject, backgroundColor: 'rgba(0,0,0,0.35)' },
     modalSheet: {
       borderTopLeftRadius: 22,
       borderTopRightRadius: 22,

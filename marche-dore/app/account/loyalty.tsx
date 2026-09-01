@@ -1,6 +1,7 @@
 import { LoyaltyQrCode } from '@/components/LoyaltyQrCode';
+import { MobileModalFrame } from '@/components/MobileModalFrame';
 import { CtaButton, IconCircle, Page, Screen } from '@/components/ui';
-import { displayFont, type AppColors } from '@/constants/theme';
+import { displayFont, type AppColors, spacing } from '@/constants/theme';
 import { useCart } from '@/context/CartContext';
 import { useColors } from '@/context/ThemeContext';
 import { useUiState } from '@/context/UiStateContext';
@@ -219,8 +220,7 @@ export default function LoyaltyScreen() {
         </ScrollView>
 
         <Modal visible={qrOpen} transparent animationType="fade" onRequestClose={() => setQrOpen(false)}>
-          <View style={styles.modalBackdrop}>
-            <Pressable style={StyleSheet.absoluteFill} onPress={() => setQrOpen(false)} />
+          <MobileModalFrame align="center" onDismiss={() => setQrOpen(false)}>
             <View style={styles.modalCard}>
               <Text style={styles.modalTitle}>QR code fidélité</Text>
               <Text style={styles.modalSub}>{loyalty.memberName}</Text>
@@ -235,7 +235,7 @@ export default function LoyaltyScreen() {
                 <Text style={styles.modalCloseText}>Fermer</Text>
               </Pressable>
             </View>
-          </View>
+          </MobileModalFrame>
         </Modal>
       </Page>
     </Screen>
@@ -249,7 +249,7 @@ function createStyles(colors: AppColors) {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    paddingHorizontal: 20,
+    paddingHorizontal: spacing.screen,
     paddingVertical: 12 },
   headerSpacer: { width: 40 },
   title: { color: colors.text, fontSize: 17, ...displayFont('700') },
@@ -413,12 +413,6 @@ function createStyles(colors: AppColors) {
   earnTitle: { color: colors.text, fontSize: 14, fontWeight: '700' },
   earnSub: { color: colors.muted, fontSize: 12, marginTop: 1 },
   separator: { height: 1, backgroundColor: colors.border, marginLeft: 48 },
-  modalBackdrop: {
-    flex: 1,
-    backgroundColor: 'rgba(28,22,19,0.55)',
-    alignItems: 'center',
-    justifyContent: 'center',
-    padding: 24 },
   modalCard: {
     width: '100%',
     maxWidth: 340,

@@ -1,10 +1,11 @@
 import { AppImage } from '@/components/AppImage';
 import { DeliveryIssueCard } from '@/components/DeliveryIssueCard';
 import { HandoffCodeCard } from '@/components/HandoffCodeCard';
+import { MobileModalFrame } from '@/components/MobileModalFrame';
 import { goBack } from '@/lib/navigation';
 import { IconCircle, Screen, Page } from '@/components/ui';
 import { MotionView, PressScale } from '@/components/motion';
-import { displayFont, type AppColors } from '@/constants/theme';
+import { displayFont, type AppColors, spacing } from '@/constants/theme';
 import { useColors } from '@/context/ThemeContext';
 import { getProduct } from '@/data/catalog';
 import { useCart } from '@/context/CartContext';
@@ -194,8 +195,8 @@ export default function OrderDetailsScreen() {
         </View>
 
         <Modal visible={menuOpen} transparent animationType="fade" onRequestClose={closeMenu}>
-          <View style={styles.menuRoot}>
-            <Pressable style={styles.menuBackdrop} onPress={closeMenu} />
+          <MobileModalFrame align="fill" onDismiss={closeMenu}>
+          <View style={styles.menuRoot} pointerEvents="box-none">
             <View
               style={[
                 styles.menuPanel,
@@ -243,6 +244,7 @@ export default function OrderDetailsScreen() {
               ) : null}
             </View>
           </View>
+          </MobileModalFrame>
         </Modal>
 
         <ScrollView
@@ -542,14 +544,14 @@ function createStyles(colors: AppColors) {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    paddingHorizontal: 20,
+    paddingHorizontal: spacing.screen,
     paddingBottom: 8,
     gap: 10 },
   headerCenter: { flex: 1, alignItems: 'center' },
   headerSpacer: { width: 40 },
   title: { ...displayFont('700'), color: colors.text, fontSize: 18 },
   sub: { color: colors.muted, fontSize: 12, fontWeight: '600', marginTop: 2 },
-  content: { paddingHorizontal: 20, gap: 18 },
+  content: { paddingHorizontal: spacing.screen, gap: 18 },
   statusCard: {
     backgroundColor: colors.white,
     borderRadius: 22,
@@ -697,9 +699,6 @@ function createStyles(colors: AppColors) {
     paddingVertical: 14 },
   cancelBtnText: { color: colors.terracotta, fontSize: 14, fontWeight: '800' },
   menuRoot: { flex: 1 },
-  menuBackdrop: {
-    ...StyleSheet.absoluteFillObject,
-    backgroundColor: 'rgba(28,22,19,0.28)' },
   menuPanel: {
     position: 'absolute',
     minWidth: 220,
@@ -740,7 +739,7 @@ function createStyles(colors: AppColors) {
     marginTop: 10,
     backgroundColor: colors.gold,
     borderRadius: 14,
-    paddingHorizontal: 20,
+    paddingHorizontal: spacing.screen,
     paddingVertical: 14 },
   emptyBtnText: { color: colors.onAccent, fontSize: 14, fontWeight: '800' } });
 }

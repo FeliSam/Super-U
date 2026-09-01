@@ -1,5 +1,7 @@
 import { ImageSourcePropType } from 'react-native';
 import { aisleProducts } from './aisleProducts';
+import { productVisualSource } from '@/lib/productVisual';
+import { pickCatalogStem } from '@/lib/productVisualMatch';
 
 export type ProductBadge = 'nouveau' | 'local' | 'rupture';
 
@@ -17,7 +19,10 @@ export type Product = {
   producer?: string;
   description?: string;
   inStock?: boolean;
+  /** Quantité disponible (qty − reserved) au Super U sélectionné. */
   availableQty?: number;
+  /** Alias de availableQty — stock rayon / entrepôt. */
+  stockQty?: number;
   imageUrl?: string;
   updatedAt?: string;
   badge?: ProductBadge;
@@ -31,13 +36,26 @@ export type Product = {
   };
 };
 
+export type RayonTone = 'produce' | 'warm' | 'cool' | 'peach' | 'blush';
+
 export type ExploreCategory = {
   id: string;
   title: string;
   image: ImageSourcePropType;
   flex: number;
   height: number;
+  tone?: RayonTone;
 };
+
+export function rayonTone(id: string): RayonTone {
+  if (id === 'fruits-legumes' || id === 'bio' || id === 'epices') return 'produce';
+  if (id === 'surgeles' || id === 'glaces' || id === 'cuisine' || id === 'charcuterie') return 'peach';
+  if (id === 'laitiers' || id === 'oeufs' || id === 'poissons' || id === 'boissons' || id === 'cafe-the') {
+    return 'cool';
+  }
+  if (id === 'viandes' || id === 'hygiene' || id === 'bebe' || id === 'animalerie') return 'blush';
+  return 'warm';
+}
 
 export const products: Product[] = [
   {
@@ -692,10 +710,27 @@ export function removeRuntimeCatalogProduct(productId: string) {
   if (bundled) {
     if (index >= 0) products[index] = { ...bundled };
     else products.push({ ...bundled });
+    productById = new Map();
     return;
   }
   if (index >= 0) products.splice(index, 1);
   catalogImageFallbacks.delete(productId);
+  productById = new Map();
+}
+
+/** After a full Postgres sync, keep only remote SKUs in memory (matches SQLite). */
+export function pruneCatalogToRemoteIds(ids: Iterable<string>) {
+  const keep = new Set(ids);
+  if (keep.size < 8) return;
+  let changed = false;
+  for (let i = products.length - 1; i >= 0; i--) {
+    const id = products[i]!.id;
+    if (keep.has(id)) continue;
+    products.splice(i, 1);
+    catalogImageFallbacks.delete(id);
+    changed = true;
+  }
+  if (changed) productById = new Map();
 }
 
 export function restoreBundledCatalogImages() {
@@ -760,11 +795,16 @@ export function similarProducts(productId: string, limit = 6) {
 }
 
 export function discoverProducts(productId: string, limit = 8) {
-  const product = getProduct(productId);
-  const family = product ? productFamilyKey(product) : null;
-  const exclude = new Set([productId, ...similarProducts(productId).map((p) => p.id)]);
-  const pool = products.filter((p) => !exclude.has(p.id) && (!family || productFamilyKey(p) !== family));
-  return shuffleProducts(pool).slice(0, limit);
+  const exclude = new Set([productId, ...similarProducts(productId, 6).map((p) => p.id)]);
+  const out: Product[] = [];
+  const n = products.length;
+  if (!n) return out;
+  const start = Math.floor(Math.random() * n);
+  for (let i = 0; i < n && out.length < limit; i++) {
+    const p = products[(start + i) % n];
+    if (!exclude.has(p.id)) out.push(p);
+  }
+  return out;
 }
 
 export const chips = [
@@ -846,7 +886,7 @@ export const homeCategories = chips.map((chip) => ({
 }));
 
 export const exploreCategories: ExploreCategory[] = [
-  { id: 'fruits-legumes', title: 'Fruits & Légumes', image: require('../assets/images/catalog/cat-fruits.png'), flex: 208, height: 140 },
+  { id: 'fruits-legumes', title: 'Fruits & Légumes', image: require('../assets/images/catalog/cat-fruits.jpg'), flex: 208, height: 140, tone: 'produce' },
   { id: 'viandes', title: 'Viandes & Volailles', image: require('../assets/images/catalog/cat-viandes.png'), flex: 138, height: 140 },
   { id: 'charcuterie', title: 'Charcuterie', image: require('../assets/images/catalog/cat-viandes.png'), flex: 138, height: 120 },
   { id: 'poissons', title: 'Poissons & Fruits de mer', image: require('../assets/images/catalog/cat-poissons.png'), flex: 138, height: 120 },
@@ -864,7 +904,7 @@ export const exploreCategories: ExploreCategory[] = [
   { id: 'snacking', title: 'Snacking', image: require('../assets/images/catalog/plantains.png'), flex: 208, height: 130 },
   { id: 'boissons', title: 'Boissons', image: require('../assets/images/catalog/cat-boissons.png'), flex: 208, height: 130 },
   { id: 'alcools', title: 'Bières & vins', image: require('../assets/images/catalog/cat-boissons.png'), flex: 138, height: 130 },
-  { id: 'bio', title: 'Bio & diététique', image: require('../assets/images/catalog/cat-fruits.png'), flex: 208, height: 130 },
+  { id: 'bio', title: 'Bio & diététique', image: require('../assets/images/catalog/cat-fruits.jpg'), flex: 208, height: 130 },
   { id: 'cuisine', title: 'Produits déjà cuisinés', image: require('../assets/images/catalog/cat-cuisine.png'), flex: 208, height: 140 },
   { id: 'glaces', title: 'Glaces & Sorbets', image: require('../assets/images/catalog/cat-glaces.png'), flex: 138, height: 140 },
   { id: 'hygiene', title: 'Hygiène & Beauté', image: require('../assets/images/catalog/cat-hygiene.png'), flex: 208, height: 120 },
@@ -1013,8 +1053,29 @@ export function productsForSearchCategory(label: string) {
   return (filtered.length ? filtered : pool).slice(0, 8);
 }
 
+let productById = new Map<string, Product>();
+
 export function getProduct(id: string) {
-  return products.find((p) => p.id === id);
+  if (productById.size !== products.length) {
+    productById = new Map(products.map((p) => [p.id, p]));
+  }
+  return productById.get(id);
+}
+
+/** Unités achetables au magasin hydraté. `null` = pas de plafond serveur. */
+export function productAvailableQty(product?: Product | null): number | null {
+  if (!product) return null;
+  const qty = product.availableQty ?? product.stockQty;
+  if (typeof qty === 'number' && Number.isFinite(qty)) return Math.max(0, Math.floor(qty));
+  if (product.inStock === false) return 0;
+  return null;
+}
+
+export function productMaxCartQty(productId: string): number {
+  const product = getProduct(productId);
+  const available = productAvailableQty(product);
+  if (available == null) return 99;
+  return Math.min(99, available);
 }
 
 function normalizeFamilyToken(value: string) {
@@ -1039,6 +1100,18 @@ export function productFamilyName(product: Pick<Product, 'name' | 'unit'>): stri
 
 export function productFamilyKey(product: Pick<Product, 'name' | 'unit' | 'categoryId'>): string {
   return `${product.categoryId}:${normalizeFamilyToken(productFamilyName(product))}`;
+}
+
+export function productShelfKey(product: Pick<Product, 'id' | 'name' | 'unit' | 'categoryId'>): string {
+  const stem = pickCatalogStem(product.id, product.categoryId, product.name);
+  const generic =
+    !stem ||
+    stem.startsWith('cat-') ||
+    stem.startsWith('cuisine-') ||
+    stem.startsWith('glace-') ||
+    stem.startsWith('circle-');
+  if (!generic) return `${product.categoryId}:${stem}`;
+  return productFamilyKey(product);
 }
 
 function unitSortKey(unit: string): number {
@@ -1067,10 +1140,31 @@ function unitSortKey(unit: string): number {
 export function productVariants(productId: string): Product[] {
   const product = getProduct(productId);
   if (!product) return [];
-  const family = productFamilyKey(product);
+  const family = productShelfKey(product);
   return products
-    .filter((candidate) => productFamilyKey(candidate) === family)
+    .filter((candidate) => productShelfKey(candidate) === family)
     .sort((a, b) => unitSortKey(a.unit) - unitSortKey(b.unit) || a.price - b.price || a.id.localeCompare(b.id));
+}
+
+/** Une carte par produit : les formats (1 kg, 500 g…) se choisissent sur la fiche. */
+export function preferredFamilyProduct(group: Product[]): Product {
+  if (group.length === 1) return group[0]!;
+  const kilo = group.find((item) => /^1\s*kg$/i.test(String(item.unit ?? '').trim()));
+  if (kilo) return kilo;
+  return [...group].sort(
+    (a, b) => unitSortKey(a.unit) - unitSortKey(b.unit) || a.price - b.price || a.id.localeCompare(b.id),
+  )[0]!;
+}
+
+export function uniqueFamilyProducts(list: Product[]): Product[] {
+  const groups = new Map<string, Product[]>();
+  for (const product of list) {
+    const key = productShelfKey(product);
+    const bucket = groups.get(key);
+    if (bucket) bucket.push(product);
+    else groups.set(key, [product]);
+  }
+  return [...groups.values()].map(preferredFamilyProduct);
 }
 
 export function productReviewStats(product: Pick<Product, 'id' | 'rating' | 'reviews'>) {
@@ -1191,23 +1285,13 @@ export const promoRentreeBanner = require('../assets/images/catalog/promo-rentre
 export const promoBoissonsBanner = require('../assets/images/catalog/promo-boissons.png');
 export const avatar = require('../assets/images/catalog/avatar.png');
 
-/** Product image gallery (main + extras from same category / catalog). */
-export function productGallery(product: Product, maxExtras = 2): ImageSourcePropType[] {
-  const main = product.id === 'mangues' ? mangoHero : product.image;
-  const extras: ImageSourcePropType[] = [];
-  const sameCat = products.filter((p) => p.id !== product.id && p.categoryId === product.categoryId);
-  for (const p of sameCat) {
-    if (extras.length >= maxExtras) break;
-    if (p.image === main) continue;
-    extras.push(p.image);
-  }
-  for (const p of products) {
-    if (extras.length >= maxExtras) break;
-    if (p.id === product.id) continue;
-    if (extras.includes(p.image) || p.image === main) continue;
-    extras.push(p.image);
-  }
-  return [main, ...extras];
+/** One coherent image per SKU (extras disabled until unique photos exist). */
+export function productGallery(product: Product, _maxExtras = 0): ImageSourcePropType[] {
+  const uploaded =
+    product.image && typeof product.image === 'object' && 'uri' in product.image ? product.image : null;
+  const main =
+    product.id === 'mangues' ? mangoHero : uploaded ?? productVisualSource(product.id, product.categoryId, product.name);
+  return [main];
 }
 
 export type HomePromoBanner = {

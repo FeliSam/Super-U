@@ -1,7 +1,7 @@
 import { AuthPrimaryButton, AuthScreen } from '@/components/auth/AuthUI';
 import { AppImage } from '@/components/AppImage';
 import { MotionView, PressScale } from '@/components/motion';
-import { bodyFont, displayFont, type AppColors } from '@/constants/theme';
+import { bodyFont, displayFont, type AppColors, spacing } from '@/constants/theme';
 import { useAuth } from '@/context/AuthContext';
 import { useUiState } from '@/context/UiStateContext';
 import { useColors } from '@/context/ThemeContext';
@@ -300,7 +300,7 @@ function createStyles(colors: AppColors) {
   return StyleSheet.create({
     root: {
       flex: 1,
-      paddingHorizontal: 22,
+      paddingHorizontal: spacing.screen,
       justifyContent: 'space-between',
       gap: 12,
     },

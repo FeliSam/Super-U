@@ -5,12 +5,12 @@ import { CtaButton, IconCircle, Screen } from '@/components/ui';
 import { appLocation } from '@/constants/location';
 import { formatBeninPhoneInput } from '@/lib/beninPhone';
 import { cotonouMap, mapStyles, type LngLat, type MapMarker } from '@/constants/map';
-import { displayFont, type AppColors } from '@/constants/theme';
+import { displayFont, type AppColors, spacing } from '@/constants/theme';
 import { useAddresses } from '@/context/AddressesContext';
 import { useProfile } from '@/context/ProfileContext';
 import { useColors, useTheme } from '@/context/ThemeContext';
 import type { DeliveryAddress } from '@/data/account';
-import { SUPER_U_BRAND } from '@/data/superU';
+import { SUPER_U_BRAND, SUPER_U_STORES } from '@/data/superU';
 import { listSuperUStores, superUStoresToMapMarkers } from '@/lib/api/superU';
 import { SHEET_OPEN, SHEET_SPRING } from '@/lib/expandableSheet';
 import { getDeviceLocation } from '@/lib/geolocation';
@@ -255,7 +255,6 @@ export default function AddressesScreen() {
 
   const [mode, setMode] = useState<'list' | 'edit'>('list');
   const [editingId, setEditingId] = useState<string | null>(null);
-  const [mapReady, setMapReady] = useState(false);
   const [mapError, setMapError] = useState(false);
   const [mapCenter, setMapCenter] = useState<LngLat>([
     ...(selectedAddress?.coordinate ?? cotonouMap.home),
@@ -268,7 +267,9 @@ export default function AddressesScreen() {
   const [phone, setPhone] = useState('');
   const [geoLoading, setGeoLoading] = useState(false);
   const [locateLoading, setLocateLoading] = useState(false);
-  const [superUMarkers, setSuperUMarkers] = useState<MapMarker[]>([]);
+  const [superUMarkers, setSuperUMarkers] = useState<MapMarker[]>(() =>
+    superUStoresToMapMarkers(SUPER_U_STORES, SUPER_U_BRAND.red),
+  );
 
   const sheetH = useSharedValue(SHEET_MIN);
   const dragStartH = useSharedValue(SHEET_MIN);
@@ -530,11 +531,9 @@ export default function AddressesScreen() {
               right: 12 }}
             onReady={() => {
               setMapError(false);
-              setMapReady(true);
             }}
             onError={() => {
               setMapError(true);
-              setMapReady(true);
             }}
             onPressMap={editing ? (coord) => void applyCoordinate(coord, true) : undefined}
             onPressMarker={(id) => {
@@ -548,11 +547,6 @@ export default function AddressesScreen() {
               <Feather name="wifi-off" size={22} color={colors.muted} />
               <Text style={styles.mapLoadingText}>Carte indisponible pour le moment</Text>
               <Text style={styles.mapErrorHint}>Vérifiez votre connexion, puis réessayez.</Text>
-            </View>
-          ) : !mapReady ? (
-            <View style={styles.mapLoading}>
-              <ActivityIndicator color={colors.gold} />
-              <Text style={styles.mapLoadingText}>Chargement de la carte…</Text>
             </View>
           ) : null}
         </View>
@@ -901,23 +895,23 @@ function createStyles(colors: AppColors) {
       fontWeight: '700',
       letterSpacing: 0.6,
       textTransform: 'uppercase',
-      paddingHorizontal: 20,
+      paddingHorizontal: spacing.screen,
       marginBottom: 4 },
     sheetTitle: {
       ...displayFont('700'),
       color: colors.text,
       fontSize: 20,
-      paddingHorizontal: 20 },
+      paddingHorizontal: spacing.screen },
     sheetSub: {
       color: colors.muted,
       fontSize: 13,
       lineHeight: 18,
-      paddingHorizontal: 20,
+      paddingHorizontal: spacing.screen,
       marginTop: 4,
       marginBottom: 10,
       fontWeight: '500' },
     sheetScroll: { flex: 1 },
-    sheetContent: { paddingHorizontal: 16, gap: 10, paddingBottom: 12 },
+    sheetContent: { paddingHorizontal: spacing.screenMd, gap: 10, paddingBottom: 12 },
     swipeWrap: {
       borderRadius: 18,
       overflow: 'hidden',
@@ -993,9 +987,9 @@ function createStyles(colors: AppColors) {
       justifyContent: 'center',
       gap: 8 },
     addText: { color: colors.gold, fontSize: 15, fontWeight: '700' },
-    footer: { paddingHorizontal: 16, gap: 8, paddingTop: 4 },
+    footer: { paddingHorizontal: spacing.screenMd, gap: 8, paddingTop: 4 },
     footerHint: { color: colors.muted, fontSize: 12, fontWeight: '600', textAlign: 'center' },
-    form: { paddingHorizontal: 16, gap: 10, paddingBottom: 12 },
+    form: { paddingHorizontal: spacing.screenMd, gap: 10, paddingBottom: 12 },
     placeRow: { flexDirection: 'row', gap: 8 },
     placeChip: {
       flex: 1,

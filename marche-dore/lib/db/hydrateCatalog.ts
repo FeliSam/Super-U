@@ -11,11 +11,13 @@ import {
   homeCategories,
   registerCatalogImageFallback,
   removeRuntimeCatalogProduct,
+  pruneCatalogToRemoteIds,
   type ExploreCategory,
   type HomePromoBanner,
   type Product,
 } from '@/data/catalog';
 import { apiFetch, getApiBaseUrl } from '@/lib/api/http';
+import { productVisualSource } from '@/lib/productVisual';
 
 function parsePayload<T>(raw: string): T | null {
   try {
@@ -54,17 +56,19 @@ function asObject<T>(payload: T | string): T | null {
 
 /**
  * Overlay live fields (price, stock, copy) onto the local catalog.
- * Never drop bundled SKUs, never take images/URLs from the API.
+ * Images stay local unless an uploaded media URL is present.
+ * `replace` drops SKUs absent from Postgres so SQLite and RAM stay aligned.
  */
-export function applyCatalogRows(rows: CatalogRows) {
+export function applyCatalogRows(rows: CatalogRows, options?: { replace?: boolean }) {
   const byProduct = new Map(products.map((p) => [p.id, p]));
   for (const row of rows.products ?? []) {
     const data = asObject<Omit<Product, 'image'>>(row.payload);
     if (!data) continue;
     const categoryId = row.categoryId ?? row.category_id ?? data.categoryId ?? 'epicerie';
     const existing = byProduct.get(row.id);
-    const fallback = existing?.image ?? categoryFallbackImage(categoryId);
-    registerCatalogImageFallback(row.id, fallback);
+    const name = typeof data.name === 'string' ? data.name : row.sku ?? row.id;
+    const visual = productVisualSource(row.id, categoryId, name);
+    registerCatalogImageFallback(row.id, visual);
     const overlay = { ...data } as Record<string, unknown>;
     delete overlay.image;
     delete overlay.id;
@@ -74,14 +78,16 @@ export function applyCatalogRows(rows: CatalogRows) {
         ? row.imageUrl
         : `${getApiBaseUrl()}${row.imageUrl.startsWith('/') ? '' : '/'}${row.imageUrl}`
       : undefined;
+    const uploaded = Boolean(imageUrl && /[?&]v=/.test(imageUrl));
+    const image = uploaded ? { uri: imageUrl! } : visual;
     const target: Product =
       existing ??
       ({
         id: row.id,
-        name: typeof data.name === 'string' ? data.name : row.sku ?? row.id,
+        name,
         unit: typeof data.unit === 'string' ? data.unit : '1 unité',
         price: typeof data.price === 'number' ? data.price : 0,
-        image: fallback,
+        image,
         categoryId,
       } satisfies Product);
     Object.assign(target, overlay, {
@@ -89,10 +95,12 @@ export function applyCatalogRows(rows: CatalogRows) {
       sku: row.sku ?? data.sku,
       barcode: row.barcode ?? data.barcode,
       categoryId,
-      image: imageUrl ? { uri: imageUrl } : fallback,
+      image,
       imageUrl,
       availableQty:
         typeof row.availableQty === 'number' ? Math.max(0, row.availableQty) : data.availableQty,
+      stockQty:
+        typeof row.availableQty === 'number' ? Math.max(0, row.availableQty) : data.stockQty ?? data.availableQty,
       inStock:
         typeof row.available === 'boolean'
           ? row.available
@@ -105,6 +113,10 @@ export function applyCatalogRows(rows: CatalogRows) {
       products.push(target);
       byProduct.set(row.id, target);
     }
+  }
+
+  if (options?.replace) {
+    pruneCatalogToRemoteIds((rows.products ?? []).map((row) => row.id));
   }
 
   const byCat = new Map(exploreCategories.map((c) => [c.id, c]));
@@ -203,22 +215,25 @@ export async function hydrateCatalogFromDb(db: SQLiteDatabase, storeId = '') {
   const chipRows = await db.getAllAsync<{ id: string; payload: string }>(
     'SELECT id, payload FROM catalog_chips ORDER BY rowid',
   );
-  applyCatalogRows({
-    products: productRows.map((row) => ({
-      id: row.id,
-      categoryId: row.category_id,
-      payload: row.payload,
-      sku: row.sku,
-      barcode: row.barcode,
-      imageUrl: row.image_url,
-      updatedAt: row.updated_at ?? undefined,
-      availableQty: row.available_qty ?? undefined,
-      available: row.available_qty == null ? undefined : row.available_qty > 0,
-    })),
-    categories: categoryRows,
-    banners: bannerRows,
-    chips: chipRows,
-  });
+  applyCatalogRows(
+    {
+      products: productRows.map((row) => ({
+        id: row.id,
+        categoryId: row.category_id,
+        payload: row.payload,
+        sku: row.sku,
+        barcode: row.barcode,
+        imageUrl: row.image_url,
+        updatedAt: row.updated_at ?? undefined,
+        availableQty: row.available_qty ?? undefined,
+        available: row.available_qty == null ? undefined : row.available_qty > 0,
+      })),
+      categories: categoryRows,
+      banners: bannerRows,
+      chips: chipRows,
+    },
+    { replace: productRows.length >= 8 },
+  );
 }
 
 /** Legacy entry point retained for callers outside the catalog provider. */
@@ -228,7 +243,7 @@ export async function hydrateCatalogFromApi(storeId?: string): Promise<boolean> 
     if (storeId) params.set('storeId', storeId);
     const data = await apiFetch<CatalogRows>(`/catalog?${params}`);
     if (!data?.products?.length) return false;
-    applyCatalogRows(data);
+    applyCatalogRows(data, { replace: data.products.length >= 8 });
     return true;
   } catch {
     return false;

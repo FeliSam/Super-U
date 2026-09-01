@@ -1,5 +1,5 @@
 import { IconCircle, Screen, Page } from '@/components/ui';
-import { displayFont, type AppColors } from '@/constants/theme';
+import { displayFont, type AppColors, spacing } from '@/constants/theme';
 import { useNotifications } from '@/context/NotificationsContext';
 import { useColors } from '@/context/ThemeContext';
 import { goBack, navigateTab } from '@/lib/navigation';
@@ -118,7 +118,7 @@ function createStyles(colors: AppColors) {
       flexDirection: 'row',
       alignItems: 'center',
       justifyContent: 'space-between',
-      paddingHorizontal: 20,
+      paddingHorizontal: spacing.screen,
       paddingVertical: 12,
       gap: 8,
     },
@@ -184,7 +184,7 @@ function createStyles(colors: AppColors) {
       alignItems: 'center',
       gap: 10,
       paddingVertical: 48,
-      paddingHorizontal: 24,
+      paddingHorizontal: spacing.screenLg,
     },
     emptyTitle: { color: colors.text, fontSize: 16, fontWeight: '700' },
     emptySub: { color: colors.muted, fontSize: 13, textAlign: 'center', lineHeight: 19 },

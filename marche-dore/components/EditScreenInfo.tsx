@@ -1,3 +1,4 @@
+import { spacing } from '@/constants/theme';
 import { StyleSheet } from 'react-native';
 
 import { ExternalLink } from './ExternalLink';
@@ -64,7 +65,7 @@ const styles = StyleSheet.create({
   },
   helpContainer: {
     marginTop: 15,
-    marginHorizontal: 20,
+    marginHorizontal: spacing.screen,
     alignItems: 'center',
   },
   helpLink: {

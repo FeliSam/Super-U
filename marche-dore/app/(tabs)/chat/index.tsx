@@ -1,6 +1,6 @@
 import { AppImage } from '@/components/AppImage';
-import { IconCircle, Page, Screen } from '@/components/ui';
-import { bodyFont, displayFont, heroChrome, tabBarClearance, type AppColors } from '@/constants/theme';
+import { FrostedTopBar, FROST_ICON_BG, frostedBarClearance, IconCircle, Page, Screen } from '@/components/ui';
+import { bodyFont, displayFont, heroChrome, tabBarClearance, type AppColors, spacing } from '@/constants/theme';
 import { useChat } from '@/context/ChatContext';
 import { useProfile } from '@/context/ProfileContext';
 import {
@@ -206,25 +206,6 @@ function ChatInboxScreen() {
               <Feather name="message-circle" size={168} color={chrome.ink} />
             </View>
             <View style={[styles.heroSpark, { backgroundColor: colors.gold }]} pointerEvents="none" />
-
-            <View style={[styles.heroBar, { paddingTop: Math.max(10, insets.top + 6) }]}>
-              <View style={styles.heroTitleCol}>
-                <Text style={[styles.heroTitle, { color: chrome.ink }]} numberOfLines={1}>
-                  {tab === 'messages' ? 'Messages' : 'Suivi'}
-                </Text>
-              </View>
-              <IconCircle
-                name={tab === 'messages' ? 'edit-3' : 'package'}
-                variant="hero"
-                accessibilityLabel={
-                  tab === 'messages' ? 'Contacter l’assistance' : 'Voir mes commandes'
-                }
-                onPress={() => {
-                  if (tab === 'messages') router.push('/chat/support' as Href);
-                  else router.push('/orders' as Href);
-                }}
-              />
-            </View>
           </View>
 
           <Animated.View
@@ -238,7 +219,10 @@ function ChatInboxScreen() {
             <ScrollView
               ref={sheetScrollRef}
               style={styles.sheetScroll}
-              contentContainerStyle={[styles.sheetScrollContent, { paddingBottom: tabBarClearance }]}
+              contentContainerStyle={[
+                styles.sheetScrollContent,
+                { paddingBottom: tabBarClearance, paddingTop: frostedBarClearance(insets.top) },
+              ]}
               showsVerticalScrollIndicator={false}
               bounces
               overScrollMode="auto"
@@ -387,6 +371,26 @@ function ChatInboxScreen() {
             </ScrollView>
             </GestureDetector>
           </Animated.View>
+          <FrostedTopBar
+            right={
+              <IconCircle
+                name={tab === 'messages' ? 'edit-3' : 'package'}
+                variant="hero"
+                bg={FROST_ICON_BG}
+                color={chrome.ink}
+                accessibilityLabel={
+                  tab === 'messages' ? 'Contacter l’assistance' : 'Voir mes commandes'
+                }
+                onPress={() => {
+                  if (tab === 'messages') router.push('/chat/support' as Href);
+                  else router.push('/orders' as Href);
+                }}
+              />
+            }>
+            <Text style={[styles.heroTitle, { color: chrome.ink }]} numberOfLines={1}>
+              {tab === 'messages' ? 'Messages' : 'Suivi'}
+            </Text>
+          </FrostedTopBar>
         </GestureRoot>
       </Page>
     </Screen>
@@ -454,19 +458,6 @@ function createStyles(colors: AppColors) {
       borderRadius: 4,
       opacity: 0.55,
     },
-    heroBar: {
-      position: 'absolute',
-      top: 0,
-      left: 0,
-      right: 0,
-      zIndex: 2,
-      flexDirection: 'row',
-      justifyContent: 'space-between',
-      alignItems: 'center',
-      paddingHorizontal: 16,
-      gap: 12,
-    },
-    heroTitleCol: { flex: 1, minWidth: 0 },
     heroTitle: {
       ...bodyFont('800'),
       fontSize: 28,
@@ -508,7 +499,7 @@ function createStyles(colors: AppColors) {
     },
     sheetScrollContent: {
       flexGrow: 1,
-      paddingHorizontal: 20,
+      paddingHorizontal: spacing.screen,
       gap: 14,
     },
     menu: {
@@ -652,7 +643,7 @@ function createStyles(colors: AppColors) {
       backgroundColor: colors.white,
       borderRadius: 18,
       paddingVertical: 28,
-      paddingHorizontal: 20,
+      paddingHorizontal: spacing.screen,
     },
     emptyTitle: { color: colors.text, fontSize: 15, fontWeight: '700' },
     emptyText: { color: colors.muted, fontSize: 13, textAlign: 'center', lineHeight: 18 },

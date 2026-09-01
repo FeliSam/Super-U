@@ -3,7 +3,7 @@ import { EmptyStateHero } from '@/components/EmptyStateHero';
 import { IconCircle, Screen, Page } from '@/components/ui';
 import { PlatformVirtualList } from '@/components/ProductFlashGrid';
 import { MotionView, PressScale } from '@/components/motion';
-import { displayFont, type AppColors } from '@/constants/theme';
+import { displayFont, screenEdge, type AppColors, spacing } from '@/constants/theme';
 import { useColors } from '@/context/ThemeContext';
 import { getProduct } from '@/data/catalog';
 import { useCart } from '@/context/CartContext';
@@ -383,7 +383,7 @@ function createStyles(colors: AppColors) {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    paddingHorizontal: 20,
+    paddingHorizontal: spacing.screen,
     paddingBottom: 8,
     gap: 10 },
   headerCenter: { flex: 1, alignItems: 'center' },
@@ -393,7 +393,7 @@ function createStyles(colors: AppColors) {
   filters: {
     flexDirection: 'row',
     alignItems: 'center',
-    marginHorizontal: 20,
+    marginHorizontal: spacing.screen,
     marginBottom: 12,
     padding: 4,
     minHeight: 48,
@@ -427,7 +427,7 @@ function createStyles(colors: AppColors) {
   chipCountOn: { backgroundColor: 'rgba(255,255,255,0.18)' },
   chipCountText: { color: colors.muted, fontSize: 11, fontWeight: '800' },
   chipCountTextOn: { color: colors.onAccent },
-  content: { paddingHorizontal: 20, flexGrow: 1 },
+  content: { paddingHorizontal: spacing.screen, flexGrow: 1 },
   listItem: { paddingBottom: 12 },
   swipeWrap: {
     position: 'relative',
@@ -533,7 +533,7 @@ function createStyles(colors: AppColors) {
     flex: 1,
     alignItems: 'center',
     justifyContent: 'center',
-    paddingHorizontal: 28,
+    paddingHorizontal: screenEdge(28),
     gap: 10,
     paddingTop: 48 },
   emptyIcon: {
@@ -558,7 +558,7 @@ function createStyles(colors: AppColors) {
     marginTop: 10,
     backgroundColor: colors.gold,
     borderRadius: 14,
-    paddingHorizontal: 20,
+    paddingHorizontal: spacing.screen,
     paddingVertical: 14 },
   emptyBtnText: { color: colors.onAccent, fontSize: 14, fontWeight: '800' },
   emptyGhost: { paddingVertical: 10, paddingHorizontal: 12 },

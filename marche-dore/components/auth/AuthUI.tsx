@@ -1,6 +1,6 @@
 import { MotionView, PressScale } from '@/components/motion';
 import { Screen } from '@/components/ui';
-import { bodyFont, displayFont, type AppColors } from '@/constants/theme';
+import { bodyFont, displayFont, type AppColors, spacing } from '@/constants/theme';
 import { useColors } from '@/context/ThemeContext';
 import { noZoomInputStyle } from '@/lib/noZoomInput';
 import { Feather } from '@expo/vector-icons';
@@ -8,7 +8,6 @@ import { LinearGradient } from 'expo-linear-gradient';
 import { useMemo, useState, type ReactNode } from 'react';
 import {
   ActivityIndicator,
-  Image,
   KeyboardAvoidingView,
   Platform,
   ScrollView,
@@ -17,6 +16,7 @@ import {
   TextInput,
   View,
   type TextInputProps,
+  Image,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
@@ -208,11 +208,11 @@ function createStyles(colors: AppColors) {
     fill: { flex: 1 },
     scrollContent: {
       flexGrow: 1,
-      paddingHorizontal: 22,
+      paddingHorizontal: spacing.screen,
       gap: 18,
     },
     footerSlot: {
-      paddingHorizontal: 22,
+      paddingHorizontal: spacing.screen,
       paddingTop: 8,
       gap: 10,
       backgroundColor: 'transparent',

@@ -1,6 +1,6 @@
 import { IconCircle, Page, Screen } from '@/components/ui';
 import { goBack } from '@/lib/navigation';
-import { type AppColors } from '@/constants/theme';
+import { type AppColors, spacing } from '@/constants/theme';
 import { useColors } from '@/context/ThemeContext';
 import { legalSections } from '@/data/help';
 import { router } from 'expo-router';
@@ -43,7 +43,7 @@ function createStyles(colors: AppColors) {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    paddingHorizontal: 20,
+    paddingHorizontal: spacing.screen,
     paddingVertical: 12 },
   headerSpacer: { width: 40 },
   title: { color: colors.text, fontSize: 16, fontWeight: '700', maxWidth: 220, textAlign: 'center' },

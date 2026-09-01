@@ -5,6 +5,7 @@ import {
   type CatalogProductRow,
   type CatalogRows,
 } from '@/lib/db/hydrateCatalog';
+import { pruneCatalogToRemoteIds } from '@/data/catalog';
 import { apiFetch } from '@/lib/api/http';
 
 const PAGE_SIZE = 2000;
@@ -215,7 +216,7 @@ export async function syncCatalogCache(options: {
       }
       if (!delta) {
         const stale = await db.getAllAsync<{ id: string }>(
-          'SELECT id FROM catalog_products WHERE updated_at IS NOT NULL AND deleted_at IS NULL',
+          'SELECT id FROM catalog_products WHERE deleted_at IS NULL',
         );
         const removed = stale.filter((row) => !seen.has(row.id));
         removedAfterFull = removed;
@@ -234,18 +235,25 @@ export async function syncCatalogCache(options: {
   }
 
   if (collected.length || collectedTombs.length || decorations) {
-    applyCatalogRows({
-      products: collected,
-      categories: decorations?.categories ?? [],
-      banners: decorations?.banners ?? [],
-      chips: decorations?.chips ?? [],
-      merch: decorations?.merch ?? null,
-    });
+    applyCatalogRows(
+      {
+        products: collected,
+        categories: decorations?.categories ?? [],
+        banners: decorations?.banners ?? [],
+        chips: decorations?.chips ?? [],
+        merch: decorations?.merch ?? null,
+      },
+      { replace: !delta && collected.length >= 8 },
+    );
     applyCatalogTombstones(collectedTombs);
     changed = true;
   }
   if (removedAfterFull.length) {
     applyCatalogTombstones(removedAfterFull);
+    changed = true;
+  }
+  if (!delta && collected.length >= 8) {
+    pruneCatalogToRemoteIds(collected.map((row) => row.id));
     changed = true;
   }
   if (changed) onChange();

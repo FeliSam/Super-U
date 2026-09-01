@@ -1,19 +1,20 @@
 import { AppImage } from '@/components/AppImage';
 import { MotionView, PressScale, enterZoom } from '@/components/motion';
-import { heroChrome, inkOnSurface, type AppColors, bodyFont, displayFont, floatingAboveTabBar } from '@/constants/theme';
+import { heroChrome, liquidIce, inkOnSurface, type AppColors, bodyFont, displayFont, floatingAboveTabBar, MOBILE_FRAME_MAX, screenEdge, spacing } from '@/constants/theme';
 import { useColors, useTheme } from '@/context/ThemeContext';
 import { Product, liveReviewStats } from '@/data/catalog';
 import { useCart, useProductQty } from '@/context/CartContext';
-import { useFavorites } from '@/context/FavoritesContext';
+import { useFavoriteId } from '@/context/FavoritesContext';
 import { useReviews } from '@/context/ReviewsContext';
 import { formatFcfa } from '@/lib/format';
+import { productVisualSource } from '@/lib/productVisual';
 import { transferWebKeyboard, pinWebKeyboard } from '@/lib/keepKeyboard';
 import { navigateTab, tabPaths } from '@/lib/navigation';
 import { softShadow } from '@/lib/shadow';
 import { Feather, Ionicons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
 import { router, useFocusEffect } from 'expo-router';
-import { memo, useCallback, useMemo, useRef } from 'react';
+import { memo, useCallback, useEffect, useMemo, useRef, type RefObject } from 'react';
 import {
   Animated,
   type ImageSourcePropType,
@@ -24,7 +25,13 @@ import {
   TextInput,
   View,
 } from 'react-native';
-import Reanimated from 'react-native-reanimated';
+import Reanimated, {
+  useAnimatedStyle,
+  useSharedValue,
+  withSequence,
+  withSpring,
+  type SharedValue,
+} from 'react-native-reanimated';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 /** Full-bleed screen shell. */
@@ -61,25 +68,134 @@ export function Page({
   return <View style={[styles.page, style]}>{children}</View>;
 }
 
+const SMART_NAV_INNER = 50;
+
+export function smartNavbarClearance(topInset: number) {
+  return Math.max(8, topInset + 4) + SMART_NAV_INNER + 8;
+}
+
 /**
- * Smart top navbar row for tab heroes (location, actions, etc.).
- * Lives above the title so taps stay hit-testable while the sheet scrolls under.
+ * Barre haute flottante (77 % + flou) : le contenu défile dessous.
  */
 export function SmartNavbar({
   left,
   right,
   style,
+  hideProgress,
+  hideOffset,
+  bare = false,
+  split = false,
 }: {
   left?: React.ReactNode;
   right?: React.ReactNode;
   style?: React.ComponentProps<typeof View>['style'];
+  /** @deprecated 0–1 ; préférer hideOffset en px. */
+  hideProgress?: SharedValue<number>;
+  /** Décalage vers le haut en px (0 visible). */
+  hideOffset?: SharedValue<number>;
+  /** Sans pastille unique : 3 blocs (adresse / alerte / profil). */
+  split?: boolean;
+  /** Sans pastille : icônes seules. */
+  bare?: boolean;
 }) {
   const colors = useColors();
+  const { scheme } = useTheme();
+  const insets = useSafeAreaInsets();
   const styles = useMemo(() => createStyles(colors), [colors]);
+  const ice = liquidIce(scheme);
+  const barBg = scheme === 'dark' ? 'rgba(30, 26, 23, 0.77)' : 'rgba(255, 255, 255, 0.77)';
+  const padTop = Math.max(8, insets.top + 4);
+  const hideDistance = padTop + SMART_NAV_INNER + 12;
+  const splitOrBare = bare || split;
+
+  const hideStyle = useAnimatedStyle(() => {
+    const y = hideOffset
+      ? hideOffset.value
+      : hideProgress
+        ? hideProgress.value * hideDistance
+        : 0;
+    const p = hideDistance > 0 ? Math.min(1, Math.max(0, y / hideDistance)) : 0;
+    return {
+      transform: [{ translateY: -y }, { scale: 1 - p * 0.04 }],
+      opacity: 1 - p * 0.12,
+    };
+  });
+
   return (
-    <View style={[styles.smartNavbar, style]} pointerEvents="box-none">
-      {left ? <View style={styles.smartNavbarLeft}>{left}</View> : <View style={styles.smartNavbarLeft} />}
-      {right ? <View style={styles.smartNavbarRight}>{right}</View> : null}
+    <Reanimated.View
+      style={[styles.smartNavbarWrap, { paddingTop: padTop }, hideStyle, style]}
+      pointerEvents="box-none">
+      <View
+        style={[
+          styles.smartNavbarBar,
+          splitOrBare ? styles.smartNavbarBarBare : { backgroundColor: barBg, borderColor: colors.border },
+        ]}>
+        {left ? (
+          <View style={[styles.smartNavbarLeft, split && [styles.smartNavbarChip, { backgroundColor: ice.backgroundColor, borderColor: ice.borderColor }]]}>
+            {left}
+          </View>
+        ) : (
+          <View style={styles.smartNavbarLeft} />
+        )}
+        {right ? <View style={styles.smartNavbarRight}>{right}</View> : null}
+      </View>
+    </Reanimated.View>
+  );
+}
+
+/** Pastille 77 % pour un bloc de SmartNavbar (alerte, profil). */
+export function SmartNavbarChip({
+  children,
+  round,
+  style,
+}: {
+  children: React.ReactNode;
+  round?: boolean;
+  style?: React.ComponentProps<typeof View>['style'];
+}) {
+  const colors = useColors();
+  const { scheme } = useTheme();
+  const styles = useMemo(() => createStyles(colors), [colors]);
+  const ice = liquidIce(scheme);
+  return (
+    <View
+      style={[
+        round ? styles.smartNavbarChipRound : styles.smartNavbarChip,
+        { backgroundColor: ice.backgroundColor, borderColor: ice.borderColor },
+        style,
+      ]}>
+      {children}
+    </View>
+  );
+}
+
+export const FROST_ICON_BG = 'rgba(255,255,255,0.2)';
+const FROST_BAR_INNER = 44;
+
+export function frostedBarClearance(topInset: number) {
+  return Math.max(8, topInset + 6) + FROST_BAR_INNER;
+}
+
+/** Entête overlay verre (Explorer, Panier, Messages, Recherche). */
+export function FrostedTopBar({
+  children,
+  right,
+}: {
+  children: React.ReactNode;
+  right?: React.ReactNode;
+}) {
+  const colors = useColors();
+  const { scheme } = useTheme();
+  const insets = useSafeAreaInsets();
+  const styles = useMemo(() => createStyles(colors), [colors]);
+  const padTop = Math.max(8, insets.top + 6);
+  const barBg = scheme === 'dark' ? 'rgba(30, 26, 23, 0.2)' : 'rgba(255, 255, 255, 0.2)';
+  return (
+    <View style={[styles.frostedWrap, { height: padTop + FROST_BAR_INNER }]} pointerEvents="box-none">
+      <View style={[styles.frostedBar, { paddingTop: padTop, backgroundColor: barBg }]}>
+        <View style={styles.frostedLeft}>{children}</View>
+        {right ? <View style={styles.frostedRight}>{right}</View> : null}
+      </View>
     </View>
   );
 }
@@ -147,13 +263,13 @@ export const ProductCard = memo(function ProductCard({
   const colors = useColors();
   const styles = useMemo(() => createStyles(colors), [colors]);
   const { qty, increment, decrement } = useProductQty(product.id);
-  const { isFavorite, toggle } = useFavorites();
+  const { liked, toggle } = useFavoriteId(product.id);
   const { reviewsForProduct } = useReviews();
-  const liked = isFavorite(product.id);
   const outOfStock = product.inStock === false;
   const badge = outOfStock ? ('rupture' as const) : product.badge;
   const scaleX = useRef(new Animated.Value(1)).current;
-  const heartScale = useRef(new Animated.Value(1)).current;
+  const heartScale = useSharedValue(1);
+  const heartAnim = useAnimatedStyle(() => ({ transform: [{ scale: heartScale.value }] }));
 
   const bump = (next: () => void) => {
     if (outOfStock) return;
@@ -165,11 +281,11 @@ export const ProductCard = memo(function ProductCard({
   };
 
   const toggleLike = () => {
-    Animated.sequence([
-      Animated.timing(heartScale, { toValue: 1.25, duration: 90, useNativeDriver: true }),
-      Animated.spring(heartScale, { toValue: 1, useNativeDriver: true, speed: 26, bounciness: 8 }),
-    ]).start();
-    toggle(product.id);
+    heartScale.value = withSequence(
+      withSpring(1.42, { damping: 8, stiffness: 480, mass: 0.32 }),
+      withSpring(1, { damping: 11, stiffness: 260, mass: 0.4 }),
+    );
+    toggle();
   };
 
   const openProduct = () => router.push(`/product/${product.id}`);
@@ -225,8 +341,12 @@ export const ProductCard = memo(function ProductCard({
             accessibilityRole="button"
             accessibilityLabel={`Voir ${product.name}`}>
             <AppImage
-              recyclingKey={product.id}
-              source={product.image}
+              recyclingKey={`${product.id}-${product.imageUrl ?? ''}`}
+              source={
+                product.image && typeof product.image === 'object' && 'uri' in product.image
+                  ? product.image
+                  : productVisualSource(product.id, product.categoryId, product.name)
+              }
               frameStyle={[StyleSheet.absoluteFill, circleImage && { borderRadius: circleR, overflow: 'hidden' }]}
               style={circleImage ? ({ transform: [{ scale: 1.14 }] } as const) : undefined}
             />
@@ -268,13 +388,13 @@ export const ProductCard = memo(function ProductCard({
             hitSlop={compact ? 8 : 12}
             accessibilityRole="button"
             accessibilityLabel={liked ? 'Retirer des favoris' : 'Ajouter aux favoris'}>
-            <Animated.View style={{ transform: [{ scale: heartScale }] }}>
+            <Reanimated.View style={heartAnim}>
               <Ionicons
                 name={liked ? 'heart' : 'heart-outline'}
                 size={compact ? 13 : 15}
                 color={liked ? colors.terracotta : colors.text}
               />
-            </Animated.View>
+            </Reanimated.View>
           </Pressable>
           {qty > 0 && !outOfStock ? (
             <View
@@ -557,29 +677,38 @@ export function IconCircle({
   variant = 'default',
   badge,
   accessibilityLabel,
+  size = 'md',
 }: {
   name: React.ComponentProps<typeof Feather>['name'];
   onPress?: () => void;
   bg?: string;
   color?: string;
-  /** Frosted on gradients (`hero`) or solid chip on photos (`onPhoto`). */
-  variant?: 'default' | 'hero' | 'onPhoto';
+  /** Frosted on gradients (`hero`), solid chip on photos (`onPhoto`), icône seule (`ghost`). */
+  variant?: 'default' | 'hero' | 'onPhoto' | 'ghost';
   badge?: number;
   accessibilityLabel?: string;
+  size?: 'md' | 'sm' | 'lg';
 }) {
   const { scheme } = useTheme();
   const colors = useColors();
   const styles = useMemo(() => createStyles(colors), [colors]);
   const chrome = useMemo(() => heroChrome(scheme), [scheme]);
+  const ice = useMemo(() => liquidIce(scheme), [scheme]);
   const isHero = variant === 'hero';
   const isOnPhoto = variant === 'onPhoto';
-  const resolvedBg = bg ?? (isOnPhoto ? '#ffffff' : isHero ? chrome.iconBg : colors.white);
-  const resolvedColor = color ?? (isOnPhoto ? '#1c1613' : inkOnSurface(resolvedBg));
-  const resolvedBorder = isOnPhoto
-    ? 'rgba(28,22,19,0.16)'
-    : isHero
-      ? chrome.iconBorder
-      : colors.border;
+  const isGhost = variant === 'ghost';
+  const resolvedBg = bg ?? (isGhost ? ice.backgroundColor : isOnPhoto ? '#ffffff' : isHero ? chrome.iconBg : colors.white);
+  const resolvedColor = color ?? (isGhost || isOnPhoto ? colors.text : inkOnSurface(resolvedBg));
+  const resolvedBorder = isGhost
+    ? ice.borderColor
+    : isOnPhoto
+      ? 'rgba(28,22,19,0.16)'
+      : isHero
+        ? chrome.iconBorder
+        : colors.border;
+
+  const sm = size === 'sm';
+  const lg = size === 'lg';
 
   return (
     <PressScale
@@ -589,11 +718,14 @@ export function IconCircle({
       accessibilityLabel={accessibilityLabel}
       style={[
         styles.iconCircle,
+        sm && styles.iconCircleSm,
+        lg && styles.iconCircleLg,
         isOnPhoto && styles.iconCircleOnPhoto,
+        isGhost && styles.iconCircleGhost,
         { backgroundColor: resolvedBg, borderColor: resolvedBorder },
       ]}
       scaleTo={0.92}>
-      <Feather name={name} size={18} color={resolvedColor} />
+      <Feather name={name} size={lg ? 20 : sm ? 16 : 18} color={resolvedColor} />
       {badge != null && badge > 0 ? (
         <View style={styles.iconCircleBadge}>
           <Text style={styles.iconCircleBadgeText}>{badge > 9 ? '9+' : badge}</Text>
@@ -642,16 +774,30 @@ export function PromoBanner({
 export const CartTotalFab = memo(function CartTotalFab({
   bottom,
   aboveTabs = false,
+  pulse = 0,
+  measureRef,
 }: {
   /** Explicit bottom offset. When omitted with `aboveTabs`, sits above the floating tab bar. */
   bottom?: number;
   /** Position above the floating tab bar (safe-area aware — iPhone home indicator). */
   aboveTabs?: boolean;
+  /** Increment to bounce the chip when a price lands on it. */
+  pulse?: number;
+  measureRef?: RefObject<View | null>;
 }) {
   const colors = useColors();
   const styles = useMemo(() => createStyles(colors), [colors]);
   const insets = useSafeAreaInsets();
   const { subtotal, listSubtotal, count } = useCart();
+  const bump = useSharedValue(1);
+  useEffect(() => {
+    if (!pulse) return;
+    bump.value = withSequence(
+      withSpring(1.14, { damping: 11, stiffness: 320 }),
+      withSpring(1, { damping: 16, stiffness: 240 }),
+    );
+  }, [bump, pulse]);
+  const bumpStyle = useAnimatedStyle(() => ({ transform: [{ scale: bump.value }] }));
   if (subtotal <= 0) return null;
 
   const showCompare = listSubtotal > subtotal;
@@ -659,7 +805,8 @@ export const CartTotalFab = memo(function CartTotalFab({
     bottom ?? (aboveTabs ? floatingAboveTabBar(insets.bottom) : Math.max(20, insets.bottom + 12));
 
   return (
-    <Reanimated.View entering={enterZoom(80)} style={[styles.totalFab, { bottom: resolvedBottom }]}>
+    <Reanimated.View entering={enterZoom(80)} style={[styles.totalFab, { bottom: resolvedBottom }, bumpStyle]}>
+      <View ref={measureRef} collapsable={false}>
       <PressScale style={styles.totalFabInner} onPress={() => navigateTab(tabPaths.cart)} scaleTo={0.96}>
         <View style={styles.totalFabIcon}>
           <Feather name="shopping-bag" size={13} color={colors.onAccent} />
@@ -675,6 +822,7 @@ export const CartTotalFab = memo(function CartTotalFab({
         </View>
         <Feather name="chevron-right" size={14} color="rgba(255,255,255,0.85)" />
       </PressScale>
+      </View>
     </Reanimated.View>
   );
 });
@@ -683,17 +831,26 @@ function createStyles(colors: AppColors) {
   return StyleSheet.create({
     screenBase: {
       flex: 1,
+      width: '100%',
+      minWidth: 0,
+      minHeight: 0,
+      overflow: 'hidden',
     },
     screenWeb: {
-      maxWidth: 430,
+      maxWidth: MOBILE_FRAME_MAX,
       width: '100%',
       alignSelf: 'center' as const,
+      overflow: 'hidden',
     },
     page: {
       flex: 1,
+      width: '100%',
+      minWidth: 0,
+      minHeight: 0,
+      overflow: 'hidden',
     },
     tabHero: {
-      paddingHorizontal: 20,
+      paddingHorizontal: spacing.screen,
       paddingTop: 8,
       paddingBottom: 40,
       overflow: 'hidden',
@@ -706,12 +863,50 @@ function createStyles(colors: AppColors) {
       top: -40,
       right: -30,
     },
-    smartNavbar: {
+    smartNavbarWrap: {
+      position: 'absolute',
+      top: 0,
+      left: 0,
+      right: 0,
+      zIndex: 40,
+      paddingHorizontal: screenEdge(14),
+      overflow: 'visible',
+    },
+    smartNavbarBar: {
       flexDirection: 'row',
       alignItems: 'center',
       justifyContent: 'space-between',
-      gap: 12,
-      minHeight: 42,
+      gap: 10,
+      minHeight: SMART_NAV_INNER,
+      paddingHorizontal: 10,
+      paddingVertical: 6,
+      borderRadius: 28,
+      borderWidth: 1,
+      overflow: 'hidden',
+      ...(Platform.OS === 'web'
+        ? {
+            backdropFilter: 'blur(20px)',
+            WebkitBackdropFilter: 'blur(20px)',
+            boxShadow: '0 8px 24px rgba(28, 22, 19, 0.12)',
+          }
+        : {
+            shadowColor: '#1c1613',
+            shadowOffset: { width: 0, height: 8 },
+            shadowOpacity: 0.12,
+            shadowRadius: 16,
+            elevation: 12,
+          }),
+    },
+    smartNavbarBarBare: {
+      backgroundColor: 'transparent',
+      borderWidth: 0,
+      borderRadius: 0,
+      overflow: 'visible',
+      paddingHorizontal: 4,
+      paddingVertical: 0,
+      ...(Platform.OS === 'web'
+        ? { backdropFilter: 'none', WebkitBackdropFilter: 'none', boxShadow: 'none' }
+        : { shadowOpacity: 0, elevation: 0 }),
     },
     smartNavbarLeft: {
       flex: 1,
@@ -723,6 +918,77 @@ function createStyles(colors: AppColors) {
       gap: 8,
       flexShrink: 0,
     },
+    smartNavbarChip: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      minHeight: SMART_NAV_INNER,
+      paddingHorizontal: 12,
+      paddingVertical: 4,
+      borderRadius: 28,
+      borderWidth: 1,
+      overflow: 'hidden',
+      ...(Platform.OS === 'web'
+        ? {
+            backdropFilter: 'blur(22px) saturate(170%)',
+            WebkitBackdropFilter: 'blur(22px) saturate(170%)',
+            boxShadow: 'inset 0 1px 0 rgba(255,255,255,0.8), 0 8px 22px rgba(80, 150, 175, 0.14)',
+          }
+        : {
+            shadowColor: '#4a90a4',
+            shadowOffset: { width: 0, height: 6 },
+            shadowOpacity: 0.12,
+            shadowRadius: 12,
+            elevation: 8,
+          }),
+    },
+    smartNavbarChipRound: {
+      width: SMART_NAV_INNER,
+      height: SMART_NAV_INNER,
+      borderRadius: SMART_NAV_INNER / 2,
+      borderWidth: 1,
+      alignItems: 'center',
+      justifyContent: 'center',
+      overflow: 'hidden',
+      ...(Platform.OS === 'web'
+        ? {
+            backdropFilter: 'blur(22px) saturate(170%)',
+            WebkitBackdropFilter: 'blur(22px) saturate(170%)',
+            boxShadow: 'inset 0 1px 0 rgba(255,255,255,0.8), 0 8px 22px rgba(80, 150, 175, 0.14)',
+          }
+        : {
+            shadowColor: '#1c1613',
+            shadowOffset: { width: 0, height: 6 },
+            shadowOpacity: 0.1,
+            shadowRadius: 12,
+            elevation: 8,
+          }),
+    },
+    frostedWrap: {
+      position: 'absolute',
+      top: 0,
+      left: 0,
+      right: 0,
+      zIndex: 20,
+    },
+    frostedBar: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'space-between',
+      paddingHorizontal: spacing.screenMd,
+      paddingBottom: 10,
+      gap: 12,
+      borderBottomLeftRadius: 24,
+      borderBottomRightRadius: 24,
+      overflow: 'hidden',
+      ...(Platform.OS === 'web'
+        ? {
+            backdropFilter: 'blur(18px) saturate(140%)',
+            WebkitBackdropFilter: 'blur(18px) saturate(140%)',
+          }
+        : {}),
+    },
+    frostedLeft: { flex: 1, minWidth: 0, flexDirection: 'row', alignItems: 'center', gap: 8 },
+    frostedRight: { flexDirection: 'row', alignItems: 'center', gap: 8, flexShrink: 0 },
     tabHeroNavbar: {
       marginBottom: 16,
     },
@@ -1087,7 +1353,6 @@ function createStyles(colors: AppColors) {
       width: '100%',
     },
     tileTextBlock: { flex: 1, gap: 2 },
-    // Always light: tiles sit on dimmed photos (theme white flips dark).
     tileTitle: {
       color: '#ffffff',
       fontSize: 14,
@@ -1127,13 +1392,33 @@ function createStyles(colors: AppColors) {
     iconCircle: {
       width: 42,
       height: 42,
-      borderRadius: 14,
+      borderRadius: 21,
       borderWidth: 1,
       borderColor: colors.border,
       alignItems: 'center',
       justifyContent: 'center',
       position: 'relative',
       overflow: 'visible',
+    },
+    iconCircleSm: {
+      width: 36,
+      height: 36,
+      borderRadius: 18,
+    },
+    iconCircleLg: {
+      width: SMART_NAV_INNER,
+      height: SMART_NAV_INNER,
+      borderRadius: SMART_NAV_INNER / 2,
+    },
+    iconCircleGhost: {
+      borderWidth: 1,
+      ...(Platform.OS === 'web'
+        ? {
+            backdropFilter: 'blur(22px) saturate(170%)',
+            WebkitBackdropFilter: 'blur(22px) saturate(170%)',
+            boxShadow: 'inset 0 1px 0 rgba(255,255,255,0.8), 0 8px 22px rgba(80, 150, 175, 0.14)',
+          }
+        : {}),
     },
     iconCircleOnPhoto: Platform.select({
       web: { boxShadow: '0 4px 14px rgba(28,22,19,0.22)' },
@@ -1162,8 +1447,9 @@ function createStyles(colors: AppColors) {
     iconCircleBadgeText: { color: '#ffffff', fontSize: 9, fontWeight: '800' },
     totalFab: {
       position: 'absolute',
-      right: 20,
+      right: spacing.screen,
       zIndex: 20,
+      maxWidth: '72%',
     },
     totalFabInner: {
       backgroundColor: colors.terracotta,

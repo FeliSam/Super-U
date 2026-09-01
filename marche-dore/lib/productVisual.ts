@@ -1,0 +1,62 @@
+import type { ImageSourcePropType } from 'react-native';
+import { pickCatalogStem } from '@/lib/productVisualMatch';
+
+const BY_STEM: Record<string, ImageSourcePropType> = {
+  ananas: require('../assets/images/catalog/ananas.png'),
+  bananes: require('../assets/images/catalog/bananes.png'),
+  carottes: require('../assets/images/catalog/carottes.png'),
+  'cart-lait': require('../assets/images/catalog/cart-lait.png'),
+  'cat-bebe': require('../assets/images/catalog/cat-bebe.png'),
+  'cat-boissons': require('../assets/images/catalog/cat-boissons.png'),
+  'cat-boulangerie': require('../assets/images/catalog/cat-boulangerie.png'),
+  'cat-cuisine': require('../assets/images/catalog/cat-cuisine.png'),
+  'cat-epicerie': require('../assets/images/catalog/cat-epicerie.png'),
+  'cat-fruits': require('../assets/images/catalog/cat-fruits.png'),
+  'cat-glaces': require('../assets/images/catalog/cat-glaces.png'),
+  'cat-hygiene': require('../assets/images/catalog/cat-hygiene.png'),
+  'cat-laitiers': require('../assets/images/catalog/cat-laitiers.png'),
+  'cat-maison': require('../assets/images/catalog/cat-maison.png'),
+  'cat-poissons': require('../assets/images/catalog/cat-poissons.png'),
+  'cat-viandes': require('../assets/images/catalog/cat-viandes.png'),
+  'circle-epices': require('../assets/images/catalog/circle-epices.png'),
+  'circle-fruits': require('../assets/images/catalog/circle-fruits.png'),
+  'circle-legumes': require('../assets/images/catalog/circle-legumes.png'),
+  'cuisine-frites': require('../assets/images/catalog/cuisine-frites.png'),
+  'cuisine-poisson': require('../assets/images/catalog/cuisine-poisson.png'),
+  'cuisine-poulet-pane': require('../assets/images/catalog/cuisine-poulet-pane.png'),
+  'cuisine-poulet-roti': require('../assets/images/catalog/cuisine-poulet-roti.png'),
+  'cuisine-ragout': require('../assets/images/catalog/cuisine-ragout.png'),
+  'cuisine-riz': require('../assets/images/catalog/cuisine-riz.png'),
+  gingembre: require('../assets/images/catalog/gingembre.png'),
+  'glace-assortiment': require('../assets/images/catalog/glace-assortiment.png'),
+  'glace-batonnet': require('../assets/images/catalog/glace-batonnet.png'),
+  'glace-boules': require('../assets/images/catalog/glace-boules.png'),
+  'glace-cafe': require('../assets/images/catalog/glace-cafe.png'),
+  'glace-caramel': require('../assets/images/catalog/glace-caramel.png'),
+  'glace-chocolat': require('../assets/images/catalog/glace-chocolat.png'),
+  'glace-citron': require('../assets/images/catalog/glace-citron.png'),
+  'glace-coco': require('../assets/images/catalog/glace-coco.png'),
+  'glace-cone': require('../assets/images/catalog/glace-cone.png'),
+  'glace-fraise': require('../assets/images/catalog/glace-fraise.png'),
+  'glace-pistache': require('../assets/images/catalog/glace-pistache.png'),
+  'glace-sundae': require('../assets/images/catalog/glace-sundae.png'),
+  'glace-vanille': require('../assets/images/catalog/glace-vanille.png'),
+  gombo: require('../assets/images/catalog/gombo.png'),
+  'mangues-card': require('../assets/images/catalog/mangues-card.png'),
+  miel: require('../assets/images/catalog/miel.png'),
+  papaye: require('../assets/images/catalog/papaye.png'),
+  patates: require('../assets/images/catalog/patates.png'),
+  plantains: require('../assets/images/catalog/plantains.png'),
+  pommes: require('../assets/images/catalog/pommes.png'),
+  poulet: require('../assets/images/catalog/poulet.png'),
+  tomates: require('../assets/images/catalog/tomates.png'),
+};
+
+export function productVisualSource(
+  productId: string,
+  categoryId?: string | null,
+  productName?: string | null,
+): ImageSourcePropType {
+  const stem = pickCatalogStem(productId, categoryId, productName);
+  return BY_STEM[stem] ?? BY_STEM['cat-epicerie'];
+}

@@ -109,6 +109,24 @@ export function heroChrome(scheme: ColorScheme) {
   };
 }
 
+/** Pastille « glace liquide » (adresse, cloche). */
+export function liquidIce(scheme: ColorScheme) {
+  if (scheme === 'dark') {
+    return {
+      backgroundColor: 'rgba(150, 210, 222, 0.18)',
+      borderColor: 'rgba(210, 240, 248, 0.28)',
+      webFilter: 'blur(22px) saturate(170%)',
+      webShadow: 'inset 0 1px 0 rgba(255,255,255,0.28), 0 8px 20px rgba(20, 60, 80, 0.28)',
+    };
+  }
+  return {
+    backgroundColor: 'rgba(210, 240, 250, 0.38)',
+    borderColor: 'rgba(255, 255, 255, 0.82)',
+    webFilter: 'blur(22px) saturate(170%)',
+    webShadow: 'inset 0 1px 0 rgba(255,255,255,0.85), 0 8px 22px rgba(80, 150, 175, 0.16)',
+  };
+}
+
 /** Mutable live palette — updated by ThemeProvider. Prefer `useColors()` in components. */
 export const colors: AppColors = { ...lightColors };
 
@@ -134,8 +152,23 @@ export function floatingAboveTabBar(insetsBottom: number, gap = 14) {
 /** Space to keep tab content scrollable above the floating tab bar (+ FAB room). */
 export const tabBarClearance = 148;
 
+/** Largeur max du cadre boutique (mobile-first, prévisualisation web). */
+export const MOBILE_FRAME_MAX = 430;
+
+/** Keep 20% of historical outer page insets (80% reduction). */
+export const SCREEN_EDGE_RATIO = 0.2;
+
+export function screenEdge(px: number) {
+  return Math.round(px * SCREEN_EDGE_RATIO);
+}
+
 export const spacing = {
-  screen: 20,
+  /** Outer page / list / sheet inset (was 20). */
+  screen: screenEdge(20),
+  /** Outer inset from former 16px screen/sheet edges. */
+  screenMd: screenEdge(16),
+  /** Outer inset from former 24px screen edges. */
+  screenLg: screenEdge(24),
 } as const;
 
 export { bodyFont, displayFont, fontFamilies, type } from '@/constants/typography';

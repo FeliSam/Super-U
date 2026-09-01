@@ -4,7 +4,6 @@ import {
   useWindowDimensions,
   type NativeScrollEvent,
   type NativeSyntheticEvent,
-  type ScrollView,
 } from 'react-native';
 import { Gesture } from 'react-native-gesture-handler';
 import {
@@ -45,6 +44,26 @@ export const SHEET_DISMISS = {
   duration: 140,
   easing: Easing.bezier(0.4, 0, 1, 1),
 } as const;
+
+type SheetScroller = {
+  scrollTo?: (opts: { y: number; animated?: boolean } | number, y?: number) => void;
+  scrollToOffset?: (opts: { offset: number; animated?: boolean }) => void;
+};
+
+function scrollSheetToTop(node: SheetScroller | null | undefined) {
+  if (!node) return;
+  try {
+    if (typeof node.scrollToOffset === 'function') {
+      node.scrollToOffset({ offset: 0, animated: false });
+      return;
+    }
+    if (typeof node.scrollTo === 'function') {
+      node.scrollTo({ y: 0, animated: false });
+    }
+  } catch {
+    /* FlatList / FlashList on web have no ScrollView.scrollTo */
+  }
+}
 
 export type ExpandableSheetOptions = {
   minRatio?: number;
@@ -95,7 +114,7 @@ export function useExpandableSheet(
   const animatingRef = useRef(false);
   const enteringRef = useRef(animateEnter);
   const lastScrollYRef = useRef(0);
-  const sheetScrollRef = useRef<ScrollView>(null);
+  const sheetScrollRef = useRef<SheetScroller>(null);
   /** Always on — disabling scroll on web made the sheet impossible to open. */
   const listScrollEnabled = true;
 
@@ -130,7 +149,7 @@ export function useExpandableSheet(
     scrollExpandedRef.current = false;
     lastScrollYRef.current = 0;
     scrollY.value = 0;
-    sheetScrollRef.current?.scrollTo({ y: 0, animated: false });
+    scrollSheetToTop(sheetScrollRef.current);
   }, [scrollY]);
 
   const expandFromScroll = useCallback(() => {
@@ -148,7 +167,7 @@ export function useExpandableSheet(
     lastScrollYRef.current = 0;
     scrollY.value = 0;
     expanded.value = 0;
-    sheetScrollRef.current?.scrollTo({ y: 0, animated: false });
+    scrollSheetToTop(sheetScrollRef.current);
     sheetTY.value = withSpring(maxTY.value, SHEET_SPRING);
   }, [expanded, sheetTY, maxTY, scrollY, lockExpanded, lockCollapseToHandle]);
 
@@ -165,7 +184,7 @@ export function useExpandableSheet(
       if (!scrollExpandedRef.current) {
         if (y > 0) {
           expandFromScroll();
-          sheetScrollRef.current?.scrollTo({ y: 0, animated: false });
+          scrollSheetToTop(sheetScrollRef.current);
         }
         return;
       }
@@ -371,5 +390,6 @@ export function useExpandableSheet(
     onSheetScrollEndDrag,
     onFiltersScroll,
     onSheetWheel,
+    expandedSV: expanded,
   };
 }

@@ -1,6 +1,6 @@
 import { AppImage } from '@/components/AppImage';
 import { IconCircle, Page, Screen } from '@/components/ui';
-import { displayFont, type AppColors } from '@/constants/theme';
+import { displayFont, type AppColors, spacing } from '@/constants/theme';
 import { useCall } from '@/context/CallContext';
 import { useChat } from '@/context/ChatContext';
 import { useColors } from '@/context/ThemeContext';
@@ -328,7 +328,7 @@ function createStyles(colors: AppColors) {
       flexDirection: 'row',
       alignItems: 'center',
       gap: 10,
-      paddingHorizontal: 16,
+      paddingHorizontal: spacing.screenMd,
       paddingVertical: 10,
       borderBottomWidth: 1,
       borderBottomColor: colors.border,
@@ -351,7 +351,7 @@ function createStyles(colors: AppColors) {
     onlineDot: { width: 7, height: 7, borderRadius: 4, backgroundColor: colors.green },
     headerSub: { color: colors.muted, fontSize: 11, flexShrink: 1 },
     headerSpacer: { width: 40 },
-    thread: { padding: 16, gap: 12, paddingBottom: 20 },
+    thread: { padding: spacing.screenMd, gap: 12, paddingBottom: 20 },
     banner: {
       flexDirection: 'row',
       alignItems: 'center',

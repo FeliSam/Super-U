@@ -1,6 +1,6 @@
 import { AuthGhostButton, AuthPrimaryButton, AuthScreen } from '@/components/auth/AuthUI';
 import { MotionView, PressScale } from '@/components/motion';
-import { bodyFont, displayFont, type AppColors } from '@/constants/theme';
+import { bodyFont, displayFont, type AppColors, spacing } from '@/constants/theme';
 import { useColors } from '@/context/ThemeContext';
 import { Feather } from '@expo/vector-icons';
 import { router } from 'expo-router';
@@ -71,7 +71,7 @@ function createStyles(colors: AppColors) {
   return StyleSheet.create({
     root: {
       flex: 1,
-      paddingHorizontal: 22,
+      paddingHorizontal: spacing.screen,
       justifyContent: 'space-between',
       gap: 18,
     },

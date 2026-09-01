@@ -1,4 +1,5 @@
 import { AppImage } from '@/components/AppImage';
+import { MobileModalFrame } from '@/components/MobileModalFrame';
 import { DeliveryIssueCard } from '@/components/DeliveryIssueCard';
 import { HandoffCodeCard } from '@/components/HandoffCodeCard';
 import { EmptyStateHero } from '@/components/EmptyStateHero';
@@ -8,7 +9,7 @@ import { StarRating } from '@/components/StarRating';
 import { CtaButton, IconCircle, Screen } from '@/components/ui';
 import { PressScale } from '@/components/motion';
 import { cotonouMap, mapStyles, type LngLat } from '@/constants/map';
-import { displayFont, type AppColors } from '@/constants/theme';
+import { displayFont, type AppColors, spacing } from '@/constants/theme';
 import { useCall } from '@/context/CallContext';
 import { useCart } from '@/context/CartContext';
 import { useReviews } from '@/context/ReviewsContext';
@@ -35,6 +36,7 @@ import {
   fulfillmentPhase,
   isCourierAssigned,
   isCourseStarted,
+  isNearClient,
   opsEtaCaption,
   opsPhaseLabel,
   opsProgressPercent,
@@ -310,10 +312,23 @@ function TrackingOrderPane({
   const etaCaption = opsEtaCaption(order);
   const remSec = isCourseStarted(order) ? remainingEnRouteSeconds(order, now) : null;
   const onRoad = isCourseStarted(order) && order.deliveryStatus !== 'delivered';
+  const storePt = order.storeCoordinate ?? cotonouMap.store;
+  const homePt = order.addressCoordinate ?? cotonouMap.home;
+  const poly: LngLat[] =
+    order.routeCoordinates && order.routeCoordinates.length >= 2 ? order.routeCoordinates : [storePt, homePt];
+  const courierAt = courierMapCoordinate(order, poly, storePt, now);
+  const nearClient =
+    onRoad &&
+    order.deliveryStatus !== 'delivered' &&
+    (isNearClient(courierAt, homePt) || (remSec != null && remSec <= 70));
   const etaPrimary = onRoad
-    ? remSec
-      ? `~${formatDurationMin(remSec)}`
-      : opsPhaseLabel(order)
+    ? remSec === 0 || order.deliveryStatus === 'arrived' || (nearClient && (remSec == null || remSec < 40))
+      ? 'À votre porte'
+      : remSec != null && remSec < 50
+        ? 'Imminent'
+        : remSec
+          ? `~${formatDurationMin(remSec)}`
+          : opsPhaseLabel(order)
     : opsPhaseLabel(order);
   const addressLine = formatOrderAddress(order.addressLine, order.addressCity);
   const addressPhone = order.addressPhone ? formatBeninPhone(order.addressPhone) : '';
@@ -343,26 +358,28 @@ function TrackingOrderPane({
 
   return (
     <View style={styles.sheetPane}>
-      <Text style={[styles.sheetEyebrow, { color: colors.muted }]}>
-        {failed
-          ? 'Incident de livraison'
-          : delivered
-            ? 'Livraison terminée'
-            : order.status === 'cancelled'
-              ? 'Commande annulée'
-              : opsPhaseLabel(order)}
-      </Text>
-      {!delivered && !failed && order.status !== 'cancelled' ? (
-        <View style={styles.handoffWrap}>
-          <HandoffCodeCard code={order.handoffCode} />
-        </View>
-      ) : null}
-      <Animated.ScrollView
+      <ScrollView
         showsVerticalScrollIndicator={false}
         style={styles.sheetScroll}
         contentContainerStyle={styles.sheetContent}
         bounces
-        nestedScrollEnabled>
+        nestedScrollEnabled
+        keyboardShouldPersistTaps="handled"
+        directionalLockEnabled>
+        <Text style={[styles.sheetEyebrow, { color: colors.muted }]}>
+          {failed
+            ? 'Incident de livraison'
+            : delivered
+              ? 'Livraison terminée'
+              : order.status === 'cancelled'
+                ? 'Commande annulée'
+                : opsPhaseLabel(order)}
+        </Text>
+        {!delivered && !failed && order.status !== 'cancelled' ? (
+          <View style={styles.handoffWrap}>
+            <HandoffCodeCard code={order.handoffCode} />
+          </View>
+        ) : null}
         {failed ? (
           <DeliveryIssueCard order={order} />
         ) : delivered ? (
@@ -388,6 +405,14 @@ function TrackingOrderPane({
                 <Text style={[styles.tagText, { color: tone.text }]}>{statusLabel(order.status)}</Text>
               </View>
             </View>
+            {nearClient ? (
+              <View style={styles.nearWarn}>
+                <Feather name="alert-circle" size={16} color={colors.terracotta} />
+                <Text style={styles.nearWarnTxt}>
+                  Votre livreur est à moins de 300 m. Préparez le code et sortez pour récupérer le colis.
+                </Text>
+              </View>
+            ) : null}
             <View style={[styles.progressTrack, { backgroundColor: colors.cream }]}>
               <View
                 style={[
@@ -653,7 +678,7 @@ function TrackingOrderPane({
           <Feather name="help-circle" size={15} color={colors.muted} />
           <Text style={styles.helpText}>Besoin d’aide ? Contacter le support</Text>
         </PressScale>
-      </Animated.ScrollView>
+      </ScrollView>
     </View>
   );
 }
@@ -969,8 +994,8 @@ export default function TrackingScreen() {
           </View>
 
           <Modal visible={menuOpen} transparent animationType="fade" onRequestClose={closeMenu}>
-            <View style={styles.menuRoot}>
-              <Pressable style={styles.menuBackdrop} onPress={closeMenu} />
+            <MobileModalFrame align="fill" onDismiss={closeMenu}>
+            <View style={styles.menuRoot} pointerEvents="box-none">
               <View
                 style={[
                   styles.menuPanel,
@@ -1019,6 +1044,7 @@ export default function TrackingScreen() {
                 ) : null}
               </View>
             </View>
+            </MobileModalFrame>
           </Modal>
 
           {/* Bottom sheet — même logique que l’ajout d’adresse */}
@@ -1035,54 +1061,56 @@ export default function TrackingScreen() {
                 <View style={[styles.sheetHandleBar, { backgroundColor: colors.grabber }]} />
               </View>
             </GestureDetector>
-              {trackList.length > 1 ? (
-                <>
-                <ScrollView
-                  horizontal
-                  showsHorizontalScrollIndicator={false}
-                  style={styles.orderTabs}
-                  contentContainerStyle={styles.orderTabsInner}>
-                  {trackList.map((o) => {
-                    const on = o.id === order.id;
-                    return (
-                      <Pressable
-                        key={o.id}
-                        onPress={() => selectTracked(o.id)}
-                        style={[styles.orderTab, on ? styles.orderTabOn : null]}>
-                        <Text style={[styles.orderTabText, on ? styles.orderTabTextOn : null]} numberOfLines={1}>
-                          {formatOrderId(o.id)}
-                        </Text>
-                      </Pressable>
-                    );
-                  })}
-                </ScrollView>
+            {trackList.length > 1 ? (
               <ScrollView
-                ref={pagerRef}
                 horizontal
-                pagingEnabled
-                nestedScrollEnabled
-                keyboardShouldPersistTaps="handled"
                 showsHorizontalScrollIndicator={false}
-                style={styles.orderPager}
-                snapToInterval={pageW}
-                snapToAlignment="start"
-                decelerationRate="fast"
-                disableIntervalMomentum
-                onMomentumScrollEnd={(e: NativeSyntheticEvent<NativeScrollEvent>) => {
-                  const i = Math.round(e.nativeEvent.contentOffset.x / Math.max(pageW, 1));
-                  const next = trackList[i];
-                  if (next && next.id !== order.id) selectTracked(next.id);
-                }}>
-                {trackList.map((pageOrder) => (
-                  <View key={pageOrder.id} style={{ width: pageW, maxWidth: pageW, flexShrink: 0, overflow: 'hidden' }}>
-                    <TrackingOrderPane order={pageOrder} now={now} styles={styles} colors={colors} />
-                  </View>
-                ))}
+                style={styles.orderTabs}
+                contentContainerStyle={styles.orderTabsInner}>
+                {trackList.map((o) => {
+                  const on = o.id === order.id;
+                  return (
+                    <Pressable
+                      key={o.id}
+                      onPress={() => selectTracked(o.id)}
+                      style={[styles.orderTab, on ? styles.orderTabOn : null]}>
+                      <Text style={[styles.orderTabText, on ? styles.orderTabTextOn : null]} numberOfLines={1}>
+                        {formatOrderId(o.id)}
+                      </Text>
+                    </Pressable>
+                  );
+                })}
               </ScrollView>
-                </>
+            ) : null}
+            <View style={styles.sheetBody}>
+              {trackList.length > 1 ? (
+                <ScrollView
+                  ref={pagerRef}
+                  horizontal
+                  pagingEnabled
+                  nestedScrollEnabled
+                  keyboardShouldPersistTaps="handled"
+                  showsHorizontalScrollIndicator={false}
+                  style={styles.orderPager}
+                  snapToInterval={pageW}
+                  snapToAlignment="start"
+                  decelerationRate="fast"
+                  disableIntervalMomentum
+                  onMomentumScrollEnd={(e: NativeSyntheticEvent<NativeScrollEvent>) => {
+                    const i = Math.round(e.nativeEvent.contentOffset.x / Math.max(pageW, 1));
+                    const next = trackList[i];
+                    if (next && next.id !== order.id) selectTracked(next.id);
+                  }}>
+                  {trackList.map((pageOrder) => (
+                    <View key={pageOrder.id} style={{ width: pageW, height: '100%' }}>
+                      <TrackingOrderPane order={pageOrder} now={now} styles={styles} colors={colors} />
+                    </View>
+                  ))}
+                </ScrollView>
               ) : (
                 <TrackingOrderPane order={order} now={now} styles={styles} colors={colors} />
               )}
+            </View>
             </Animated.View>
         </View>
       </GestureRoot>
@@ -1142,6 +1170,7 @@ function createStyles(colors: AppColors) {
       left: 0,
       right: 0,
       bottom: 0,
+      flexDirection: 'column',
       borderTopLeftRadius: 22,
       borderTopRightRadius: 22,
       overflow: 'hidden',
@@ -1152,7 +1181,8 @@ function createStyles(colors: AppColors) {
     sheetHandle: { alignItems: 'center', paddingTop: 10, paddingBottom: 4 },
     sheetHandleBar: { width: 40, height: 4, borderRadius: 999 },
     orderTabs: { flexGrow: 0, flexShrink: 0, maxHeight: 44 },
-    orderTabsInner: { paddingHorizontal: 16, gap: 8, paddingBottom: 8, alignItems: 'center' },
+    sheetBody: { flex: 1, minHeight: 0 },
+    orderTabsInner: { paddingHorizontal: spacing.screenMd, gap: 8, paddingBottom: 8, alignItems: 'center' },
     orderTab: {
       paddingHorizontal: 12,
       paddingVertical: 7,
@@ -1162,19 +1192,39 @@ function createStyles(colors: AppColors) {
     orderTabOn: { backgroundColor: colors.gold },
     orderTabText: { fontSize: 12, fontWeight: '800', color: colors.muted },
     orderTabTextOn: { color: colors.onAccent },
-    orderPager: { flex: 1, width: '100%', overflow: 'hidden' },
-    sheetPane: { flex: 1, width: '100%', overflow: 'hidden' },
-    handoffWrap: { paddingHorizontal: 20, marginBottom: 8, width: '100%', maxWidth: '100%' },
+    orderPager: {
+      flex: 1,
+      width: '100%',
+      minHeight: 0,
+      ...(Platform.OS === 'web' ? ({ touchAction: 'pan-x' } as object) : {}),
+    },
+    sheetPane: { flex: 1, width: '100%', minHeight: 0 },
+    handoffWrap: { marginBottom: 4, width: '100%', maxWidth: '100%' },
     sheetEyebrow: {
       fontSize: 11,
       fontWeight: '700',
       letterSpacing: 0.6,
       textTransform: 'uppercase',
-      paddingHorizontal: 20,
       marginBottom: 6 },
-    sheetScroll: { flex: 1 },
-    sheetContent: { paddingHorizontal: 20, gap: 12, paddingBottom: 20 },
+    sheetScroll: {
+      flex: 1,
+      minHeight: 0,
+      ...(Platform.OS === 'web'
+        ? ({ touchAction: 'pan-y', overflowY: 'auto' as const } as object)
+        : {}),
+    },
+    sheetContent: { paddingHorizontal: spacing.screen, gap: 12, paddingBottom: 28, flexGrow: 0 },
     statusBlock: { gap: 10, marginBottom: 4 },
+    nearWarn: {
+      flexDirection: 'row',
+      alignItems: 'flex-start',
+      gap: 8,
+      backgroundColor: colors.cream,
+      borderRadius: 14,
+      paddingHorizontal: 12,
+      paddingVertical: 10,
+    },
+    nearWarnTxt: { flex: 1, color: colors.text, fontSize: 13, fontWeight: '650', lineHeight: 18 },
     etaRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start', gap: 10 },
     etaTextBlock: { flex: 1 },
     meta: { color: colors.muted, fontSize: 13, fontWeight: '600' },
@@ -1309,7 +1359,6 @@ function createStyles(colors: AppColors) {
     pulseRing: { position: 'absolute', width: 14, height: 14, borderRadius: 7 },
     pulseCore: { width: 8, height: 8, borderRadius: 4 },
     menuRoot: { flex: 1 },
-    menuBackdrop: { ...StyleSheet.absoluteFillObject, backgroundColor: 'rgba(0,0,0,0.2)' },
     menuPanel: {
       position: 'absolute',
       backgroundColor: colors.white,
@@ -1330,10 +1379,10 @@ function createStyles(colors: AppColors) {
       flexDirection: 'row',
       alignItems: 'center',
       justifyContent: 'space-between',
-      paddingHorizontal: 16,
+      paddingHorizontal: spacing.screenMd,
       paddingBottom: 8 },
     emptyHeaderTitle: { ...displayFont('700'), color: colors.text, fontSize: 17 },
-    emptyScroll: { paddingHorizontal: 20, paddingTop: 8, gap: 16 },
+    emptyScroll: { paddingHorizontal: spacing.screen, paddingTop: 8, gap: 16 },
     emptySection: { gap: 10, marginTop: 4 },
     emptySectionHead: {
       flexDirection: 'row',

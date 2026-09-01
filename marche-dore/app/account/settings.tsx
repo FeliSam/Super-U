@@ -1,6 +1,6 @@
 import { IconCircle, Screen, Page } from '@/components/ui';
 import { goBack } from '@/lib/navigation';
-import { displayFont, type AppColors } from '@/constants/theme';
+import { displayFont, type AppColors, spacing } from '@/constants/theme';
 import { useColors, useTheme, type ThemePreference } from '@/context/ThemeContext';
 import { useUiState } from '@/context/UiStateContext';
 import { Feather } from '@expo/vector-icons';
@@ -65,7 +65,7 @@ function createStyles(colors: AppColors) {
       flexDirection: 'row',
       alignItems: 'center',
       justifyContent: 'space-between',
-      paddingHorizontal: 20,
+      paddingHorizontal: spacing.screen,
       paddingVertical: 12 },
     headerSpacer: { width: 40 },
     title: { color: colors.text, fontSize: 17, ...displayFont('700') },

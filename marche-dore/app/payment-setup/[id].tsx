@@ -1,7 +1,7 @@
 import { CtaButton, IconCircle, Screen, Page } from '@/components/ui';
 import { goBack } from '@/lib/navigation';
 import { MotionView } from '@/components/motion';
-import { type AppColors } from '@/constants/theme';
+import { type AppColors, spacing } from '@/constants/theme';
 import { useColors } from '@/context/ThemeContext';
 import {
   maskCard,
@@ -384,12 +384,12 @@ function createStyles(colors: AppColors) {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    paddingHorizontal: 20,
+    paddingHorizontal: spacing.screen,
     paddingBottom: 8,
     gap: 10 },
   headerTitle: { flex: 1, textAlign: 'center', color: colors.text, fontSize: 17, fontWeight: '800' },
   headerSpacer: { width: 40 },
-  content: { paddingHorizontal: 20, gap: 16 },
+  content: { paddingHorizontal: spacing.screen, gap: 16 },
   hero: {
     borderRadius: 22,
     padding: 18,
@@ -446,7 +446,7 @@ function createStyles(colors: AppColors) {
   checkboxOn: { backgroundColor: colors.green, borderColor: colors.green },
   checkText: { flex: 1, color: colors.text, fontSize: 13, lineHeight: 19, fontWeight: '600' },
   footer: {
-    paddingHorizontal: 20,
+    paddingHorizontal: spacing.screen,
     paddingTop: 10,
     borderTopWidth: 1,
     borderTopColor: colors.border,

@@ -1,7 +1,7 @@
 import { AppImage } from '@/components/AppImage';
 import { EmptyStateHero } from '@/components/EmptyStateHero';
 import { IconCircle, Page, ProductCard, Screen } from '@/components/ui';
-import { type AppColors } from '@/constants/theme';
+import { type AppColors, spacing } from '@/constants/theme';
 import { useColors } from '@/context/ThemeContext';
 import { useCart } from '@/context/CartContext';
 import { useFavorites } from '@/context/FavoritesContext';
@@ -354,7 +354,7 @@ function createStyles(colors: AppColors) {
   flex: { flex: 1 },
   scrollContent: { paddingBottom: 40 },
   hero: {
-    paddingHorizontal: 20,
+    paddingHorizontal: spacing.screen,
     paddingBottom: 28,
     gap: 16 },
   heroBar: {
@@ -403,7 +403,7 @@ function createStyles(colors: AppColors) {
     backgroundColor: colors.bg,
     borderTopLeftRadius: 28,
     borderTopRightRadius: 28,
-    paddingHorizontal: 20,
+    paddingHorizontal: spacing.screen,
     paddingTop: 20,
     gap: 16 },
   refreshingEmpty: {

@@ -2,10 +2,11 @@ import { IconCircle, Screen, Page } from '@/components/ui';
 import { goBack } from '@/lib/navigation';
 import { MotionView, PressScale } from '@/components/motion';
 import { SwipeToConfirm } from '@/components/SwipeToConfirm';
-import { displayFont, type AppColors } from '@/constants/theme';
+import { displayFont, type AppColors, spacing } from '@/constants/theme';
 import { useAddresses } from '@/context/AddressesContext';
 import { useColors } from '@/context/ThemeContext';
 import { useCart } from '@/context/CartContext';
+import { useCatalog } from '@/context/CatalogContext';
 import { useCheckoutPayment, type PaymentId } from '@/context/CheckoutPaymentContext';
 import { useOrders } from '@/context/OrdersContext';
 import { usePayments } from '@/context/PaymentsContext';
@@ -16,6 +17,7 @@ import { SUPER_U_BRAND } from '@/data/superU';
 import { formatDistanceKm, formatDurationMin } from '@/lib/deliveryRouting';
 import { formatFcfa } from '@/lib/format';
 import { noZoomInputStyle } from '@/lib/noZoomInput';
+import { ApiError } from '@/lib/api/http';
 import { useDeliveryEstimate } from '@/lib/useDeliveryEstimate';
 import { Feather } from '@expo/vector-icons';
 import { Href, router } from 'expo-router';
@@ -184,6 +186,7 @@ export default function CheckoutScreen() {
   const { subtotal, delivery, discount, count, lines, promoCode, clear, ready: cartReady } = useCart();
   const { isReady, detailFor, setup, clearSetup } = useCheckoutPayment();
   const { placeOrder } = useOrders();
+  const { resync } = useCatalog();
   const { defaultAddress } = useAddresses();
   const { selectedStore } = useStores();
   const { defaultMethod, methodById } = usePayments();
@@ -264,7 +267,9 @@ export default function CheckoutScreen() {
       leavingRef.current = false;
       return false;
     }
-    const order = await placeOrder({
+    let order;
+    try {
+      order = await placeOrder({
       lines,
       subtotal,
       delivery: deliveryFee,
@@ -288,6 +293,15 @@ export default function CheckoutScreen() {
       addressCoordinate: defaultAddress.coordinate,
       storeId: selectedStore.id,
     });
+    } catch (error) {
+      leavingRef.current = false;
+      const message =
+        error instanceof ApiError
+          ? error.message
+          : 'Connectez-vous et vérifiez que l’API SuperU tourne (port 8787).';
+      alertUser('Commande non envoyée', message);
+      return false;
+    }
     if (!order) {
       leavingRef.current = false;
       alertUser(
@@ -296,6 +310,7 @@ export default function CheckoutScreen() {
       );
       return false;
     }
+    void resync({ force: true, full: true });
     clear();
     clearSetup();
     router.replace(`/order-success?id=${order.id}` as Href);
@@ -730,7 +745,7 @@ function createStyles(colors: AppColors) {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    paddingHorizontal: 20,
+    paddingHorizontal: spacing.screen,
     paddingBottom: 10,
     gap: 10 },
   headerCenter: { flex: 1, alignItems: 'center' },
@@ -781,7 +796,7 @@ function createStyles(colors: AppColors) {
     textAlign: 'center',
     marginTop: 10,
   },
-  content: { paddingHorizontal: 20, paddingBottom: 28, gap: 22 },
+  content: { paddingHorizontal: spacing.screen, paddingBottom: 28, gap: 22 },
   section: { gap: 10 },
   sectionHead: {
     flexDirection: 'row',
@@ -1010,7 +1025,7 @@ function createStyles(colors: AppColors) {
     paddingBottom: 4 },
   secureText: { color: colors.muted, fontSize: 12, fontWeight: '600' },
   footer: {
-    paddingHorizontal: 16,
+    paddingHorizontal: spacing.screenMd,
     paddingTop: 0,
     backgroundColor: 'transparent',
     zIndex: 4,

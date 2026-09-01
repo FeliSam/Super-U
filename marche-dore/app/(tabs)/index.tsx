@@ -4,13 +4,17 @@ import {
   ProductCard,
   Screen,
   SearchField,
-  Page } from '@/components/ui';
+  Page,
+  SmartNavbar,
+  SmartNavbarChip,
+  smartNavbarClearance,
+} from '@/components/ui';
 import { warmLibreMap } from '@/components/LibreMap';
 import { MotionView, PressScale } from '@/components/motion';
 import { cotonouMap, mapStyles } from '@/constants/map';
-import { displayFont, heroChrome, tabBarClearance, type AppColors } from '@/constants/theme';
+import { displayFont, heroChrome, spacing, tabBarClearance, type AppColors } from '@/constants/theme';
 import { useAddresses } from '@/context/AddressesContext';
-import { useCatalogVersion } from '@/context/CatalogContext';
+import { useCatalog } from '@/context/CatalogContext';
 import { useColors, useTheme } from '@/context/ThemeContext';
 import { useCart } from '@/context/CartContext';
 import { formatOrderId, useOrders } from '@/context/OrdersContext';
@@ -25,12 +29,9 @@ import {
   chipRoute,
   homeCategories,
   homePromoBanners,
-  products,
-  productsInCategory,
-  promoProducts,
   shuffleProducts,
   type Product } from '@/data/catalog';
-import { buildHomePlan } from '@/lib/homeEngine';
+import { buildHomePlan, dynamicPromoRail, rotateRail } from '@/lib/homeEngine';
 import { ProductFlashGrid } from '@/components/ProductFlashGrid';
 import { PromoCarousel } from '@/components/PromoCarousel';
 import { navigateTab, tabPaths } from '@/lib/navigation';
@@ -41,7 +42,7 @@ import { etaWindowLabel, useDeliveryEstimate } from '@/lib/useDeliveryEstimate';
 import { Feather } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
 import { Href, router } from 'expo-router';
-import { memo, useMemo } from 'react';
+import { memo, useMemo, useRef, useState } from 'react';
 import {
   Image,
   Platform,
@@ -52,11 +53,15 @@ import {
   useWindowDimensions,
   View } from 'react-native';
 import Animated, {
+  Easing,
   Extrapolation,
   interpolate,
   useAnimatedScrollHandler,
   useAnimatedStyle,
-  useSharedValue } from 'react-native-reanimated';
+  useSharedValue,
+  withSpring,
+  withTiming,
+} from 'react-native-reanimated';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 const GRID_IMAGE_HEIGHT = 173;
@@ -67,15 +72,21 @@ const CUISINE_ROWS = 2;
 const GLACES_VISIBLE = 3.5;
 const GLACES_GAP = 12;
 
+const NAV_SPRING = { damping: 20, stiffness: 240, mass: 0.55, overshootClamping: false } as const;
+
 function HomeScreen() {
-  const catalogVersion = useCatalogVersion();
+  const { version: catalogVersion, products, productsInCategory } = useCatalog();
+  const [visitSalt] = useState(() => Date.now());
   const { scheme } = useTheme();
   const colors = useColors();
   const chrome = useMemo(() => heroChrome(scheme), [scheme]);
   const insets = useSafeAreaInsets();
+  const navMax = smartNavbarClearance(insets.top);
   const styles = useMemo(() => createStyles(colors), [colors]);
   const { width: windowWidth } = useWindowDimensions();
   const scrollY = useSharedValue(0);
+  const lastScrollY = useSharedValue(0);
+  const navOffset = useSharedValue(0);
 
   const { count, lines } = useCart();
   const { activeOrders, orders } = useOrders();
@@ -94,7 +105,9 @@ function HomeScreen() {
       : etaWindowLabel(deliveryEta.durationSeconds);
   const { unreadCount } = useNotifications();
   const { homeActiveChipId, searchRecents, interests, setSearchQuery } = useUiState();
-  const { ids: favoriteIds } = useFavorites();
+  const { ids: favoriteIds, count: favCount } = useFavorites();
+  const favoriteIdsRef = useRef(favoriteIds);
+  favoriteIdsRef.current = favoriteIds;
   const { profile } = useProfile();
   const { points: loyaltyPoints } = useLiveLoyalty();
   const orderedIds = useMemo(
@@ -105,13 +118,15 @@ function HomeScreen() {
     () =>
       buildHomePlan({
         recents: searchRecents,
-        favoriteIds,
+        favoriteIds: favoriteIdsRef.current,
         cartIds: lines.map((line) => line.productId),
         orderedIds,
         interests,
         firstName: profile.firstName,
+        hour: new Date().getHours(),
+        sessionSalt: visitSalt,
       }),
-    [searchRecents, favoriteIds, lines, orderedIds, interests, profile.firstName, catalogVersion],
+    [searchRecents, lines, orderedIds, interests, profile.firstName, catalogVersion, visitSalt],
   );
   const activeChip =
     plan.rankedChips.find((c) => c.id === homeActiveChipId) ?? plan.rankedChips[0] ?? homeCategories[0];
@@ -120,24 +135,42 @@ function HomeScreen() {
     () => homePromoBanners.filter(bannerIsLive),
     [catalogVersion],
   );
-  const onSale = useMemo(() => promoProducts(), [catalogVersion]);
+  const onSale = useMemo(
+    () =>
+      dynamicPromoRail({
+        recents: searchRecents,
+        favoriteIds: favoriteIdsRef.current,
+        cartIds: lines.map((line) => line.productId),
+        orderedIds,
+        interests,
+        hour: plan.hour,
+        sessionSalt: visitSalt,
+      }),
+    [searchRecents, lines, orderedIds, interests, plan.hour, visitSalt, catalogVersion],
+  );
   const popular = plan.momentProducts;
   const recommended = plan.rankedFeed;
   const cuisineReady = useMemo(
-    () => productsInCategory('cuisine').slice(0, CUISINE_COLS * CUISINE_ROWS),
-    [catalogVersion],
+    () => rotateRail(productsInCategory('cuisine'), visitSalt + 7, CUISINE_COLS * CUISINE_ROWS),
+    [catalogVersion, visitSalt],
   );
   const cuisineCardWidth = useMemo(() => {
     const contentW = Math.min(windowWidth, 430) - 40;
     return Math.floor((contentW - CUISINE_COL_GAP * (CUISINE_COLS - 1)) / CUISINE_COLS);
   }, [windowWidth]);
-  const glaces = useMemo(() => productsInCategory('glaces'), [catalogVersion]);
+  const glaces = useMemo(
+    () => rotateRail(productsInCategory('glaces'), visitSalt + 13, 8),
+    [catalogVersion, visitSalt],
+  );
   const glaceCardWidth = useMemo(() => {
     const contentW = Math.min(windowWidth, 430) - 40;
     return Math.floor((contentW - GLACES_GAP * Math.floor(GLACES_VISIBLE)) / GLACES_VISIBLE);
   }, [windowWidth]);
   const shuffledPool = useMemo(
-    () => shuffleProducts(products.filter((p) => p.categoryId !== 'cuisine' && p.categoryId !== 'glaces')),
+    () =>
+      shuffleProducts(
+        products.filter((p) => p.categoryId !== 'cuisine' && p.categoryId !== 'glaces'),
+      ).slice(0, 48),
     [catalogVersion],
   );
   const feedItems = useMemo(() => {
@@ -160,8 +193,35 @@ function HomeScreen() {
 
   const onScroll = useAnimatedScrollHandler({
     onScroll: (event) => {
-      scrollY.value = event.contentOffset.y;
-    } });
+      const y = Math.max(0, event.contentOffset.y);
+      const dy = y - lastScrollY.value;
+      lastScrollY.value = y;
+      scrollY.value = y;
+      if (y < 10) {
+        navOffset.value = withTiming(0, { duration: 320, easing: Easing.out(Easing.cubic) });
+        return;
+      }
+      navOffset.value = Math.min(navMax, Math.max(0, navOffset.value + dy));
+    },
+    onEndDrag: (event) => {
+      const y = event.contentOffset.y;
+      const v = event.velocity?.y ?? 0;
+      if (y < 10) {
+        navOffset.value = withSpring(0, NAV_SPRING);
+        return;
+      }
+      navOffset.value = withSpring(v > 0.35 || navOffset.value > navMax * 0.38 ? navMax : 0, NAV_SPRING);
+    },
+    onMomentumEnd: (event) => {
+      const y = event.contentOffset.y;
+      const v = event.velocity?.y ?? 0;
+      if (y < 10) {
+        navOffset.value = withSpring(0, NAV_SPRING);
+        return;
+      }
+      navOffset.value = withSpring(v > 0.15 || navOffset.value > navMax * 0.38 ? navMax : 0, NAV_SPRING);
+    },
+  });
 
   const sheetAnimStyle = useAnimatedStyle(() => {
     const y = scrollY.value;
@@ -193,15 +253,23 @@ function HomeScreen() {
     { icon: 'grid' as const, label: 'Rayons', onPress: () => navigateTab(tabPaths.explore) },
     { icon: 'tag' as const, label: 'Promos', onPress: openPromos },
     { icon: 'shopping-bag' as const, label: 'Panier', onPress: () => navigateTab(tabPaths.cart), badge: count },
-    { icon: 'truck' as const, label: 'Suivi', onPress: () => router.push('/tracking') },
+    activeOrders.length > 0
+      ? { icon: 'truck' as const, label: 'Suivi', onPress: () => router.push('/tracking') }
+      : {
+          icon: 'heart' as const,
+          label: 'Favoris',
+          onPress: () => router.push('/account/favorites'),
+          badge: favCount,
+        },
   ];
 
   return (
     <Screen>
       <Page style={styles.flex}>
-        <View style={styles.hero} pointerEvents="box-none">
-          <LinearGradient colors={chrome.gradient} style={StyleSheet.absoluteFill} pointerEvents="none" />
-          <View style={[styles.heroBar, { paddingTop: Math.max(8, insets.top + 6) }]}>
+        <SmartNavbar
+          split
+          hideOffset={navOffset}
+          left={
             <PressScale
               style={styles.heroLocation}
               onPress={openAddresses}
@@ -209,30 +277,35 @@ function HomeScreen() {
               accessibilityRole="button"
               accessibilityLabel="Choisir une adresse de livraison">
               <Feather name="map-pin" size={14} color={colors.gold} />
-              <Text style={[styles.heroLocationText, { color: chrome.ink }]} numberOfLines={1}>
+              <Text style={[styles.heroLocationText, { color: colors.text }]} numberOfLines={1}>
                 {defaultAddress?.line ?? 'Choisir une adresse'}
               </Text>
-              <Feather name="chevron-down" size={13} color={chrome.muted} />
+              <Feather name="chevron-down" size={13} color={colors.muted} />
             </PressScale>
+          }
+          right={
             <View style={styles.navActionsRow}>
               <IconCircle
                 name="bell"
-                variant="hero"
+                variant="ghost"
+                size="lg"
                 badge={unreadNotifications}
                 accessibilityLabel="Notifications"
                 onPress={() => router.push('/notifications')}
               />
-              <PressScale
-                style={[styles.avatarWrap, { backgroundColor: chrome.iconBg, borderColor: chrome.iconBorder }]}
-                onPress={() => navigateTab(tabPaths.profile)}
-                scaleTo={0.94}
-                accessibilityRole="button"
-                accessibilityLabel="Ouvrir le profil">
-                <Image source={profilePhotoSource(profile.photoUri)} style={styles.avatar} />
-              </PressScale>
+              <SmartNavbarChip round>
+                <PressScale
+                  style={styles.avatarWrap}
+                  onPress={() => navigateTab(tabPaths.profile)}
+                  scaleTo={0.94}
+                  accessibilityRole="button"
+                  accessibilityLabel="Ouvrir le profil">
+                  <Image source={profilePhotoSource(profile.photoUri)} style={styles.avatar} />
+                </PressScale>
+              </SmartNavbarChip>
             </View>
-          </View>
-        </View>
+          }
+        />
 
         <ProductFlashGrid
           products={feedItems}
@@ -240,7 +313,7 @@ function HomeScreen() {
           imageHeight={GRID_IMAGE_HEIGHT}
           style={styles.scrollLayer}
           onScroll={onScroll as (event: unknown) => void}
-          contentContainerStyle={styles.scrollContent}
+          contentContainerStyle={[styles.scrollContent, { paddingTop: smartNavbarClearance(insets.top) }]}
           header={
           <Animated.View style={[styles.bodySheet, sheetAnimStyle]}>
             <Text style={styles.sheetHello} numberOfLines={2}>
@@ -388,7 +461,7 @@ function HomeScreen() {
                 {plan.rankedChips.map((cat, i) => {
                   const active = cat.id === homeActiveChipId;
                   return (
-                    <MotionView key={cat.id} index={i} preset="zoom" delay={Math.min(i * 40, 200)}>
+                    <MotionView key={cat.id} index={i} preset="zoom" delay={Math.min(i * 18, 90)}>
                       <PressScale
                         style={styles.chipHit}
                         onPress={() => router.push(chipRoute(cat))}
@@ -434,7 +507,7 @@ function HomeScreen() {
               <ScrollView horizontal showsHorizontalScrollIndicator={false}>
                 <View style={styles.rowCards}>
                   {onSale.map((p) => (
-                    <ProductCard key={p.id} product={p} width={148} imageHeight={130} compact />
+                    <ProductCard key={`sale-${p.id}`} product={p} width={148} imageHeight={130} compact animate={false} />
                   ))}
                 </View>
               </ScrollView>
@@ -457,7 +530,7 @@ function HomeScreen() {
               <ScrollView horizontal showsHorizontalScrollIndicator={false}>
                 <View style={styles.rowCards}>
                   {popular.map((p) => (
-                    <ProductCard key={p.id} product={p} width={148} imageHeight={130} compact />
+                    <ProductCard key={`mom-${p.id}`} product={p} width={148} imageHeight={130} compact animate={false} />
                   ))}
                 </View>
               </ScrollView>
@@ -543,24 +616,15 @@ export default memo(HomeScreen);
 function createStyles(colors: AppColors) {
   return StyleSheet.create({
     flex: { flex: 1 },
-    hero: {
-      zIndex: 10,
-      overflow: 'hidden' },
-    heroBar: {
-      flexDirection: 'row',
-      alignItems: 'center',
-      justifyContent: 'space-between',
-      paddingHorizontal: 16,
-      paddingBottom: 10,
-      gap: 12 },
     heroLocation: {
       flex: 1,
       flexDirection: 'row',
       alignItems: 'center',
       gap: 6,
       minWidth: 0,
-      minHeight: 38,
-      paddingVertical: 2 },
+      minHeight: 50,
+      paddingVertical: 6,
+    },
     heroLocationText: {
       flexShrink: 1,
       fontSize: 16,
@@ -570,16 +634,19 @@ function createStyles(colors: AppColors) {
       alignItems: 'center',
       gap: 8,
       flexShrink: 0,
-      paddingTop: 2,
     },
     scrollLayer: {
       flex: 1,
       zIndex: 1 },
-    scrollContent: { paddingBottom: tabBarClearance, paddingHorizontal: 20 },
+    scrollContent: { paddingBottom: tabBarClearance, paddingHorizontal: spacing.screen },
     avatarWrap: {
-      padding: 2,
-      borderRadius: 999 },
-    avatar: { width: 38, height: 38, borderRadius: 19 },
+      width: 50,
+      height: 50,
+      alignItems: 'center',
+      justifyContent: 'center',
+      borderRadius: 999,
+    },
+    avatar: { width: 50, height: 50, borderRadius: 25 },
     sheetHello: {
       paddingBottom: 4,
     },
@@ -709,11 +776,11 @@ function createStyles(colors: AppColors) {
       justifyContent: 'center',
       paddingHorizontal: 3 },
     quickBadgeText: { color: colors.onAccent, fontSize: 9, fontWeight: '700' },
-    chipsWrap: { marginHorizontal: -20 },
+    chipsWrap: { marginHorizontal: -spacing.screen },
     chips: {
       gap: 14,
       paddingVertical: 6,
-      paddingHorizontal: 20,
+      paddingHorizontal: spacing.screen,
       paddingRight: 28,
       alignItems: 'flex-start',
     },
