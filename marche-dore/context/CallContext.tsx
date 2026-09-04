@@ -10,6 +10,7 @@ import {
   type CommsCall,
 } from '@/lib/api/comms';
 import { getAuthToken } from '@/lib/api/http';
+import { subscribeForeground } from '@/lib/foreground';
 import { showToast } from '@/lib/toastBus';
 import {
   startCallMedia,
@@ -156,15 +157,28 @@ export function CallProvider({ children }: { children: React.ReactNode }) {
         .catch(() => undefined);
     };
     poll();
-    const t = setInterval(poll, 400);
-    return () => clearInterval(t);
+    let id: ReturnType<typeof setInterval> | null = null;
+    const arm = (ms: number) => {
+      if (id) clearInterval(id);
+      id = setInterval(poll, ms);
+    };
+    const unsub = subscribeForeground((active) => arm(active ? 400 : 2_500));
+    return () => {
+      unsub();
+      if (id) clearInterval(id);
+    };
   }, [resetCall]);
 
   useEffect(() => {
-    if (typeof window === 'undefined') return;
+    // Native: `window` peut exister sans addEventListener (Expo Go) → crash.
+    if (typeof window === 'undefined' || typeof window.addEventListener !== 'function') return;
     const unlock = () => unlockAudio();
     window.addEventListener('pointerdown', unlock, { once: true });
-    return () => window.removeEventListener('pointerdown', unlock);
+    return () => {
+      if (typeof window.removeEventListener === 'function') {
+        window.removeEventListener('pointerdown', unlock);
+      }
+    };
   }, []);
 
   useEffect(() => {

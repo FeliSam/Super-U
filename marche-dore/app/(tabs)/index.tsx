@@ -7,15 +7,15 @@ import {
   Page,
   SmartNavbar,
   SmartNavbarChip,
+  MarcheRefresh,
   smartNavbarClearance,
 } from '@/components/ui';
-import { warmLibreMap } from '@/components/LibreMap';
 import { MotionView, PressScale } from '@/components/motion';
 import { cotonouMap, mapStyles } from '@/constants/map';
-import { displayFont, heroChrome, spacing, tabBarClearance, type AppColors } from '@/constants/theme';
+import { displayFont, spacing, tabBarClearance, type AppColors, PRODUCT_FEED_IMAGE_H } from '@/constants/theme';
 import { useAddresses } from '@/context/AddressesContext';
 import { useCatalog } from '@/context/CatalogContext';
-import { useColors, useTheme } from '@/context/ThemeContext';
+import { useColors } from '@/context/ThemeContext';
 import { useCart } from '@/context/CartContext';
 import { formatOrderId, useOrders } from '@/context/OrdersContext';
 import { opsPhaseLabel } from '@/lib/orderOps';
@@ -29,9 +29,11 @@ import {
   chipRoute,
   homeCategories,
   homePromoBanners,
+  popularIds,
   shuffleProducts,
+  getProducts,
   type Product } from '@/data/catalog';
-import { buildHomePlan, dynamicPromoRail, rotateRail } from '@/lib/homeEngine';
+import { buildHomePlan, dynamicGlaceRail, dynamicPromoRail, glaceRailMeta, mealSlotForHour, rotateRail } from '@/lib/homeEngine';
 import { ProductFlashGrid } from '@/components/ProductFlashGrid';
 import { PromoCarousel } from '@/components/PromoCarousel';
 import { navigateTab, tabPaths } from '@/lib/navigation';
@@ -42,7 +44,7 @@ import { etaWindowLabel, useDeliveryEstimate } from '@/lib/useDeliveryEstimate';
 import { Feather } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
 import { Href, router } from 'expo-router';
-import { memo, useMemo, useRef, useState } from 'react';
+import { memo, useCallback, useMemo, useRef, useState } from 'react';
 import {
   Image,
   Platform,
@@ -64,22 +66,22 @@ import Animated, {
 } from 'react-native-reanimated';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
-const GRID_IMAGE_HEIGHT = 173;
+const GRID_IMAGE_HEIGHT = PRODUCT_FEED_IMAGE_H;
 const CUISINE_COLS = 3;
 const CUISINE_COL_GAP = 3;
 const CUISINE_ROW_GAP = 6;
 const CUISINE_ROWS = 2;
 const GLACES_VISIBLE = 3.5;
 const GLACES_GAP = 12;
+const SHEET_EDGE = Math.round(spacing.screen * 0.2);
 
 const NAV_SPRING = { damping: 20, stiffness: 240, mass: 0.55, overshootClamping: false } as const;
 
 function HomeScreen() {
-  const { version: catalogVersion, products, productsInCategory } = useCatalog();
-  const [visitSalt] = useState(() => Date.now());
-  const { scheme } = useTheme();
+  const { version: catalogVersion, products, productsInCategory, refresh: refreshCatalog } = useCatalog();
+  const [visitSalt, setVisitSalt] = useState(() => Date.now());
+  const [refreshing, setRefreshing] = useState(false);
   const colors = useColors();
-  const chrome = useMemo(() => heroChrome(scheme), [scheme]);
   const insets = useSafeAreaInsets();
   const navMax = smartNavbarClearance(insets.top);
   const styles = useMemo(() => createStyles(colors), [colors]);
@@ -104,7 +106,7 @@ function HomeScreen() {
       ? 'Livraison locale'
       : etaWindowLabel(deliveryEta.durationSeconds);
   const { unreadCount } = useNotifications();
-  const { homeActiveChipId, searchRecents, interests, setSearchQuery } = useUiState();
+  const { homeActiveChipId, searchRecents, recentProductIds, interests, setSearchQuery } = useUiState();
   const { ids: favoriteIds, count: favCount } = useFavorites();
   const favoriteIdsRef = useRef(favoriteIds);
   favoriteIdsRef.current = favoriteIds;
@@ -122,15 +124,16 @@ function HomeScreen() {
         cartIds: lines.map((line) => line.productId),
         orderedIds,
         interests,
+        viewedIds: recentProductIds,
         firstName: profile.firstName,
         hour: new Date().getHours(),
         sessionSalt: visitSalt,
       }),
-    [searchRecents, lines, orderedIds, interests, profile.firstName, catalogVersion, visitSalt],
+    [searchRecents, recentProductIds, lines, orderedIds, interests, profile.firstName, catalogVersion, visitSalt],
   );
   const activeChip =
     plan.rankedChips.find((c) => c.id === homeActiveChipId) ?? plan.rankedChips[0] ?? homeCategories[0];
-  const contentW = Math.min(windowWidth, 430) - 40;
+  const contentW = Math.min(windowWidth, 430) - SHEET_EDGE * 2;
   const liveBanners = useMemo(
     () => homePromoBanners.filter(bannerIsLive),
     [catalogVersion],
@@ -145,32 +148,49 @@ function HomeScreen() {
         interests,
         hour: plan.hour,
         sessionSalt: visitSalt,
-      }),
+      }).slice(0, 6),
     [searchRecents, lines, orderedIds, interests, plan.hour, visitSalt, catalogVersion],
   );
-  const popular = plan.momentProducts;
+  const mealSlot = useMemo(() => mealSlotForHour(plan.hour), [plan.hour]);
   const recommended = plan.rankedFeed;
-  const cuisineReady = useMemo(
-    () => rotateRail(productsInCategory('cuisine'), visitSalt + 7, CUISINE_COLS * CUISINE_ROWS),
-    [catalogVersion, visitSalt],
-  );
+  const cuisineReady = useMemo(() => {
+    const seen = new Set<string>();
+    const pool = mealSlot.categoryIds.flatMap((id) => productsInCategory(id));
+    const unique = pool.filter((p) => {
+      if (seen.has(p.id)) return false;
+      seen.add(p.id);
+      return p.inStock !== false;
+    });
+    return rotateRail(unique, visitSalt + 7, CUISINE_COLS * CUISINE_ROWS);
+  }, [catalogVersion, visitSalt, mealSlot, productsInCategory]);
+  const popularRail = useMemo(() => {
+    const skip = new Set(cuisineReady.map((p) => p.id));
+    const seen = new Set<string>();
+    const pool = [...getProducts(popularIds), ...plan.rankedFeed].filter((p) => {
+      if (skip.has(p.id) || seen.has(p.id) || p.inStock === false) return false;
+      seen.add(p.id);
+      return true;
+    });
+    return rotateRail(pool, visitSalt + 19, 6);
+  }, [catalogVersion, visitSalt, cuisineReady, plan.rankedFeed]);
   const cuisineCardWidth = useMemo(() => {
-    const contentW = Math.min(windowWidth, 430) - 40;
+    const contentW = Math.min(windowWidth, 430) - SHEET_EDGE * 2;
     return Math.floor((contentW - CUISINE_COL_GAP * (CUISINE_COLS - 1)) / CUISINE_COLS);
   }, [windowWidth]);
   const glaces = useMemo(
-    () => rotateRail(productsInCategory('glaces'), visitSalt + 13, 8),
-    [catalogVersion, visitSalt],
+    () => dynamicGlaceRail(productsInCategory('glaces'), visitSalt + plan.hour * 31, 6),
+    [catalogVersion, visitSalt, plan.hour, productsInCategory],
   );
+  const glaceMeta = useMemo(() => glaceRailMeta(glaces), [glaces]);
   const glaceCardWidth = useMemo(() => {
-    const contentW = Math.min(windowWidth, 430) - 40;
+    const contentW = Math.min(windowWidth, 430) - SHEET_EDGE * 2;
     return Math.floor((contentW - GLACES_GAP * Math.floor(GLACES_VISIBLE)) / GLACES_VISIBLE);
   }, [windowWidth]);
   const shuffledPool = useMemo(
     () =>
       shuffleProducts(
         products.filter((p) => p.categoryId !== 'cuisine' && p.categoryId !== 'glaces'),
-      ).slice(0, 48),
+      ).slice(0, 24),
     [catalogVersion],
   );
   const feedItems = useMemo(() => {
@@ -230,8 +250,6 @@ function HomeScreen() {
         {
           translateY: interpolate(y, [0, 140], [0, -16], Extrapolation.CLAMP) },
       ],
-      borderTopLeftRadius: interpolate(y, [0, 120], [28, 16], Extrapolation.CLAMP),
-      borderTopRightRadius: interpolate(y, [0, 120], [28, 16], Extrapolation.CLAMP),
       ...Platform.select({
         ios: {
           shadowOpacity: interpolate(y, [0, 80], [0.14, 0.05], Extrapolation.CLAMP) },
@@ -240,12 +258,27 @@ function HomeScreen() {
         default: {} }) };
   });
 
+  const onRefresh = useCallback(async () => {
+    setRefreshing(true);
+    const started = Date.now();
+    try {
+      await refreshCatalog();
+      setVisitSalt(Date.now());
+    } finally {
+      const wait = 420 - (Date.now() - started);
+      if (wait > 0) await new Promise((r) => setTimeout(r, wait));
+      setRefreshing(false);
+    }
+  }, [refreshCatalog]);
+
   const openPromos = () => {
     router.push('/promotions');
   };
 
   const openAddresses = () => {
-    void warmLibreMap(mapStyles.light, cotonouMap.home, 14.6);
+    void import('@/components/LibreMap')
+      .then((m) => m.warmLibreMap?.(mapStyles.light, cotonouMap.home, 14.6))
+      .catch(() => undefined);
     router.push('/account/addresses');
   };
 
@@ -313,41 +346,45 @@ function HomeScreen() {
           imageHeight={GRID_IMAGE_HEIGHT}
           style={styles.scrollLayer}
           onScroll={onScroll as (event: unknown) => void}
-          contentContainerStyle={[styles.scrollContent, { paddingTop: smartNavbarClearance(insets.top) }]}
+          {...(Platform.OS !== 'web'
+            ? { refreshControl: <MarcheRefresh refreshing={refreshing} onRefresh={onRefresh} /> }
+            : {})}
+          contentContainerStyle={styles.scrollContent}
           header={
           <Animated.View style={[styles.bodySheet, sheetAnimStyle]}>
-            <Text style={styles.sheetHello} numberOfLines={2}>
+            <LinearGradient
+              colors={[colors.cream, colors.white, colors.cream]}
+              locations={[0, 0.38, 1]}
+              start={{ x: 0, y: 0 }}
+              end={{ x: 0, y: 1 }}
+              style={[styles.introChrome, { paddingTop: smartNavbarClearance(insets.top) }]}>
+            <Text style={styles.sheetHello} numberOfLines={1}>
               <Text style={styles.sheetHelloKicker}>
                 {helloLabel}
                 {firstName ? ', ' : ''}
               </Text>
               {firstName ? <Text style={styles.sheetHelloName}>{firstName}</Text> : null}
             </Text>
-            <View
-              style={[
-                styles.heroStats,
-                { backgroundColor: chrome.surface, borderColor: chrome.surfaceBorder },
-              ]}>
+            <View style={styles.heroStats}>
               <View style={styles.heroStat}>
-                <Feather name="clock" size={15} color={colors.gold} />
-                <Text style={[styles.heroStatText, { color: colors.text }]}>{etaLabel}</Text>
+                <Feather name="clock" size={14} color={colors.gold} />
+                <Text style={styles.heroStatText}>{etaLabel}</Text>
               </View>
-              <View style={[styles.heroDivider, { backgroundColor: chrome.divider }]} />
+              <View style={styles.heroDivider} />
               <View style={styles.heroStat}>
-                <Feather name="percent" size={15} color={colors.terracotta} />
-                <Text style={[styles.heroStatText, { color: colors.text }]}>
-                  {plan.promoCount} promos
-                </Text>
+                <Feather name="percent" size={14} color={colors.terracotta} />
+                <Text style={styles.heroStatText}>{plan.promoCount} promos</Text>
               </View>
-              <View style={[styles.heroDivider, { backgroundColor: chrome.divider }]} />
+              <View style={styles.heroDivider} />
               <View style={styles.heroStat}>
-                <Feather name="award" size={15} color={colors.green} />
-                <Text style={[styles.heroStatText, { color: colors.text }]}>{loyaltyPoints} pts</Text>
+                <Feather name="award" size={14} color={colors.green} />
+                <Text style={styles.heroStatText}>{loyaltyPoints} pts</Text>
               </View>
             </View>
 
             <MotionView delay={80} preset="down">
               <SearchField
+                compact
                 onPress={() => {
                   if (plan.continueTerm) setSearchQuery(plan.continueTerm);
                   openSearchScreen();
@@ -361,7 +398,7 @@ function HomeScreen() {
                 {quickActions.map((action) => (
                   <PressScale key={action.label} style={styles.quickTile} onPress={action.onPress} scaleTo={0.95}>
                     <View style={styles.quickIconWrap}>
-                      <Feather name={action.icon} size={19} color={colors.gold} />
+                      <Feather name={action.icon} size={16} color={colors.gold} />
                       {action.badge && action.badge > 0 ? (
                         <View style={styles.quickBadge}>
                           <Text style={styles.quickBadgeText}>
@@ -376,65 +413,87 @@ function HomeScreen() {
               </View>
             </MotionView>
 
-            <MotionView delay={100} preset="down">
-              {activeOrders.length ? (
-                <ScrollView
-                  horizontal
-                  nestedScrollEnabled
-                  showsHorizontalScrollIndicator={false}
-                  decelerationRate="fast"
-                  snapToInterval={orderCardWidth + 10}
-                  snapToAlignment="start"
-                  contentContainerStyle={styles.orderRow}>
-                  {activeOrders.map((order, index) => (
-                    <PressScale
-                      key={order.id}
-                      style={[styles.orderBanner, { width: orderCardWidth }]}
-                      onPress={() => router.push(`/tracking?id=${order.id}` as Href)}
-                      scaleTo={0.985}>
-                      <LinearGradient
-                        colors={[colors.cream, colors.white]}
-                        start={{ x: 0, y: 0 }}
-                        end={{ x: 1, y: 1 }}
-                        style={StyleSheet.absoluteFill}
-                      />
-                      <View style={styles.orderIcon}>
-                        <Feather name="package" size={18} color={colors.gold} />
-                      </View>
-                      <View style={styles.orderText}>
-                        <View style={styles.orderTitleRow}>
-                          <View style={styles.orderLiveDot} />
-                          <Text style={styles.orderTitle}>
-                            {activeOrders.length > 1
-                              ? `En cours · ${index + 1}/${activeOrders.length}`
-                              : 'Commande en cours'}
-                          </Text>
-                        </View>
-                        <Text style={styles.orderSub} numberOfLines={1}>
-                          {formatOrderId(order.id)} · {order.dayLabel} {order.slotLabel}
-                        </Text>
-                        <Text style={styles.orderPhase} numberOfLines={1}>
-                          {opsPhaseLabel(order)}
-                        </Text>
-                      </View>
-                      <View style={styles.orderChevron}>
-                        <Feather name="chevron-right" size={18} color={colors.gold} />
-                      </View>
-                    </PressScale>
-                  ))}
-                </ScrollView>
-              ) : null}
-            </MotionView>
-
             {plan.cartNudge ? (
               <PressScale style={styles.cartNudge} onPress={() => navigateTab(tabPaths.cart)} scaleTo={0.98}>
-                <Feather name="shopping-bag" size={14} color={colors.terracotta} />
-                <Text style={styles.cartNudgeText}>{plan.cartNudge}</Text>
+                <Feather name="shopping-bag" size={13} color={colors.gold} />
+                <Text style={styles.cartNudgeText} numberOfLines={1}>{plan.cartNudge}</Text>
                 <Feather name="chevron-right" size={14} color={colors.gold} />
               </PressScale>
             ) : null}
 
-            {plan.becauseProducts.length ? (
+            {activeOrders.length ? (
+              <ScrollView
+                horizontal
+                nestedScrollEnabled
+                showsHorizontalScrollIndicator={false}
+                decelerationRate="fast"
+                snapToInterval={orderCardWidth + 10}
+                snapToAlignment="start"
+                contentContainerStyle={styles.orderRow}>
+                {activeOrders.map((order, index) => (
+                  <PressScale
+                    key={order.id}
+                    style={[styles.orderBanner, { width: orderCardWidth }]}
+                    onPress={() => router.push(`/tracking?id=${order.id}` as Href)}
+                    scaleTo={0.985}>
+                    <LinearGradient
+                      colors={[colors.cream, colors.white]}
+                      start={{ x: 0, y: 0 }}
+                      end={{ x: 1, y: 1 }}
+                      style={StyleSheet.absoluteFill}
+                    />
+                    <View style={styles.orderIcon}>
+                      <Feather name="package" size={18} color={colors.gold} />
+                    </View>
+                    <View style={styles.orderText}>
+                      <View style={styles.orderTitleRow}>
+                        <View style={styles.orderLiveDot} />
+                        <Text style={styles.orderTitle}>
+                          {activeOrders.length > 1
+                            ? `En cours · ${index + 1}/${activeOrders.length}`
+                            : 'Commande en cours'}
+                        </Text>
+                      </View>
+                      <Text style={styles.orderSub} numberOfLines={1}>
+                        {formatOrderId(order.id)} · {order.dayLabel} {order.slotLabel}
+                      </Text>
+                      <Text style={styles.orderPhase} numberOfLines={1}>
+                        {opsPhaseLabel(order)}
+                      </Text>
+                    </View>
+                    <View style={styles.orderChevron}>
+                      <Feather name="chevron-right" size={18} color={colors.gold} />
+                    </View>
+                  </PressScale>
+                ))}
+              </ScrollView>
+            ) : null}
+            </LinearGradient>
+
+            {plan.tasteProducts.length ? (
+              <View style={styles.section}>
+                <View style={styles.sectionHead}>
+                  <View>
+                    <Text style={styles.sectionTitle}>{plan.tasteTitle}</Text>
+                    <Text style={styles.sectionMeta}>{plan.tasteMeta}</Text>
+                  </View>
+                  <Pressable
+                    onPress={() => {
+                      const chip = plan.rankedChips[0] ?? activeChip;
+                      router.push(chipRoute(chip));
+                    }}>
+                    <Text style={styles.seeAll}>Voir tout</Text>
+                  </Pressable>
+                </View>
+                <ScrollView horizontal showsHorizontalScrollIndicator={false}>
+                  <View style={styles.rowCards}>
+                    {plan.tasteProducts.slice(0, 6).map((p) => (
+                      <ProductCard key={`taste-${p.id}`} product={p} width={148} imageHeight={130} compact animate={false} />
+                    ))}
+                  </View>
+                </ScrollView>
+              </View>
+            ) : plan.becauseProducts.length ? (
               <View style={styles.section}>
                 <View style={styles.sectionHead}>
                   <View>
@@ -444,7 +503,7 @@ function HomeScreen() {
                 </View>
                 <ScrollView horizontal showsHorizontalScrollIndicator={false}>
                   <View style={styles.rowCards}>
-                    {plan.becauseProducts.map((p) => (
+                    {plan.becauseProducts.slice(0, 6).map((p) => (
                       <ProductCard key={`bec-${p.id}`} product={p} width={148} imageHeight={130} compact animate={false} />
                     ))}
                   </View>
@@ -513,35 +572,12 @@ function HomeScreen() {
               </ScrollView>
             </View>
 
-            <View style={styles.section}>
-              <View style={styles.sectionHead}>
-                <View>
-                    <Text style={styles.sectionTitle}>{plan.momentTitle}</Text>
-                    <Text style={styles.sectionMeta}>{plan.momentMeta}</Text>
-                </View>
-                <Pressable
-                  onPress={() => {
-                    const chip = plan.rankedChips.find((c) => c.id === plan.momentChipId) ?? activeChip;
-                    router.push(chipRoute(chip));
-                  }}>
-                  <Text style={styles.seeAll}>Voir tout</Text>
-                </Pressable>
-              </View>
-              <ScrollView horizontal showsHorizontalScrollIndicator={false}>
-                <View style={styles.rowCards}>
-                  {popular.map((p) => (
-                    <ProductCard key={`mom-${p.id}`} product={p} width={148} imageHeight={130} compact animate={false} />
-                  ))}
-                </View>
-              </ScrollView>
-            </View>
-
             {plan.showGlaces && glaces.length > 0 ? (
               <View style={styles.section}>
                 <View style={styles.sectionHead}>
                   <View>
                     <Text style={styles.sectionTitle}>Glaces & Sorbets</Text>
-                    <Text style={styles.sectionMeta}>Fraîches · à croquer</Text>
+                    <Text style={styles.sectionMeta}>{glaceMeta}</Text>
                   </View>
                   <Pressable onPress={() => router.push('/category/glaces')}>
                     <Text style={styles.seeAll}>Voir tout</Text>
@@ -551,7 +587,7 @@ function HomeScreen() {
                   horizontal
                   showsHorizontalScrollIndicator={false}
                   contentContainerStyle={[styles.rowCards, { gap: GLACES_GAP }]}>
-                  {glaces.slice(0, 8).map((p) => (
+                  {glaces.map((p) => (
                     <ProductCard
                       key={p.id}
                       product={p}
@@ -565,41 +601,54 @@ function HomeScreen() {
               </View>
             ) : null}
 
+            {cuisineReady.length ? (
+              <View style={styles.section}>
+                <View style={styles.sectionHead}>
+                  <View>
+                    <Text style={styles.sectionTitle}>{mealSlot.title}</Text>
+                    <Text style={styles.sectionMeta}>{mealSlot.meta}</Text>
+                  </View>
+                  <Pressable onPress={() => router.push(`/category/${mealSlot.categoryId}` as Href)}>
+                    <Text style={styles.seeAll}>Voir tout</Text>
+                  </Pressable>
+                </View>
+                <View
+                  style={[
+                    styles.gridCuisine,
+                    { columnGap: CUISINE_COL_GAP, rowGap: CUISINE_ROW_GAP },
+                  ]}>
+                  {cuisineReady.map((product, i) => (
+                    <ProductCard
+                      key={`meal-${product.id}`}
+                      product={product}
+                      width={cuisineCardWidth}
+                      imageHeight={128}
+                      compact
+                      index={i}
+                      animate={false}
+                    />
+                  ))}
+                </View>
+              </View>
+            ) : null}
+
             <View style={styles.section}>
               <View style={styles.sectionHead}>
-                <Text style={styles.sectionTitle}>Pour vous, maintenant</Text>
-                <Text style={styles.sectionMeta}>Classé selon vos goûts et l’heure</Text>
-              </View>
-              {plan.showCuisine && cuisineReady.length > 0 ? (
-                <View style={styles.cuisineBlock}>
-                  <View style={styles.sectionHead}>
-                    <View>
-                      <Text style={styles.sectionTitle}>Déjà cuisinés</Text>
-                      <Text style={styles.sectionMeta}>Prêts à réchauffer · du jour</Text>
-                    </View>
-                    <Pressable onPress={() => router.push('/category/cuisine')}>
-                      <Text style={styles.seeAll}>Voir tout</Text>
-                    </Pressable>
-                  </View>
-                  <View
-                    style={[
-                      styles.gridCuisine,
-                      { columnGap: CUISINE_COL_GAP, rowGap: CUISINE_ROW_GAP },
-                    ]}>
-                    {cuisineReady.map((product, i) => (
-                      <ProductCard
-                        key={`cuisine-${product.id}`}
-                        product={product}
-                        width={cuisineCardWidth}
-                        imageHeight={96}
-                        compact
-                        index={i}
-                        animate={false}
-                      />
-                    ))}
-                  </View>
+                <View>
+                  <Text style={styles.sectionTitle}>Populaires</Text>
+                  <Text style={styles.sectionMeta}>Les plus demandés du moment</Text>
                 </View>
-              ) : null}
+                <Pressable onPress={() => navigateTab(tabPaths.explore)}>
+                  <Text style={styles.seeAll}>Voir tout</Text>
+                </Pressable>
+              </View>
+              <ScrollView horizontal showsHorizontalScrollIndicator={false}>
+                <View style={styles.rowCards}>
+                  {popularRail.map((p) => (
+                    <ProductCard key={`pop-${p.id}`} product={p} width={148} imageHeight={130} compact animate={false} />
+                  ))}
+                </View>
+              </ScrollView>
             </View>
           </Animated.View>
           }
@@ -614,6 +663,11 @@ function HomeScreen() {
 export default memo(HomeScreen);
 
 function createStyles(colors: AppColors) {
+  const chrome = {
+    backgroundColor: colors.white,
+    borderWidth: 1,
+    borderColor: colors.border,
+  };
   return StyleSheet.create({
     flex: { flex: 1 },
     heroLocation: {
@@ -622,8 +676,8 @@ function createStyles(colors: AppColors) {
       alignItems: 'center',
       gap: 6,
       minWidth: 0,
-      minHeight: 50,
-      paddingVertical: 6,
+      minHeight: 42,
+      paddingVertical: 4,
     },
     heroLocationText: {
       flexShrink: 1,
@@ -638,49 +692,67 @@ function createStyles(colors: AppColors) {
     scrollLayer: {
       flex: 1,
       zIndex: 1 },
-    scrollContent: { paddingBottom: tabBarClearance, paddingHorizontal: spacing.screen },
+    scrollContent: { paddingBottom: tabBarClearance, paddingHorizontal: 0, flexGrow: 1 },
     avatarWrap: {
-      width: 50,
-      height: 50,
+      width: 42,
+      height: 42,
       alignItems: 'center',
       justifyContent: 'center',
       borderRadius: 999,
     },
-    avatar: { width: 50, height: 50, borderRadius: 25 },
+    avatar: { width: 42, height: 42, borderRadius: 21 },
+    introChrome: {
+      gap: 10,
+      paddingHorizontal: spacing.screen - SHEET_EDGE,
+      paddingBottom: 18,
+      borderBottomLeftRadius: 32,
+      borderBottomRightRadius: 32,
+      overflow: 'hidden',
+    },
     sheetHello: {
-      paddingBottom: 4,
+      paddingTop: 10,
+      paddingBottom: 2,
+      paddingHorizontal: 2,
+      marginLeft: 0,
+      marginTop: 6,
     },
     sheetHelloKicker: {
       ...displayFont('600'),
-      fontSize: 22,
-      lineHeight: 28,
-      letterSpacing: -0.3,
+      fontSize: 18,
+      lineHeight: 22,
+      letterSpacing: -0.25,
       color: colors.muted,
     },
     sheetHelloName: {
       ...displayFont('800'),
-      fontSize: 22,
-      lineHeight: 28,
-      letterSpacing: -0.4,
+      fontSize: 20,
+      lineHeight: 22,
+      letterSpacing: -0.35,
       color: colors.gold,
     },
     heroStats: {
       flexDirection: 'row',
       alignItems: 'center',
-      borderRadius: 16,
-      paddingVertical: 12,
-      paddingHorizontal: 14,
-      borderWidth: StyleSheet.hairlineWidth },
-    heroStat: { flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6 },
-    heroStatText: { fontSize: 11, fontWeight: '700' },
-    heroDivider: { width: 1, height: 24 },
+      borderRadius: 14,
+      minHeight: 44,
+      paddingVertical: 10,
+      paddingHorizontal: 12,
+      ...chrome,
+    },
+    heroStat: { flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 5 },
+    heroStatText: {
+      color: colors.text,
+      fontSize: 10,
+      fontWeight: '700',
+      textTransform: 'uppercase',
+      letterSpacing: 0.2,
+    },
+    heroDivider: { width: 1, height: 20, backgroundColor: colors.border },
     bodySheet: {
       backgroundColor: colors.bg,
-      borderTopLeftRadius: 28,
-      borderTopRightRadius: 28,
-      paddingHorizontal: 0,
-      paddingTop: 16,
-      gap: 16,
+      paddingHorizontal: SHEET_EDGE,
+      paddingTop: 0,
+      gap: 10,
       ...Platform.select({
         ios: {
           shadowColor: '#1c1613',
@@ -744,26 +816,41 @@ function createStyles(colors: AppColors) {
       zIndex: 1,
     },
     cartNudge: {
-      marginTop: 6,
+      height: 44,
       flexDirection: 'row',
       alignItems: 'center',
       gap: 8,
-      backgroundColor: colors.blush,
       borderRadius: 14,
-      paddingVertical: 10,
       paddingHorizontal: 12,
+      backgroundColor: colors.blush,
     },
-    cartNudgeText: { flex: 1, color: colors.text, fontSize: 13, fontWeight: '650' },
-    quickGrid: { flexDirection: 'row', gap: 10 },
+    cartNudgeText: {
+      flex: 1,
+      color: colors.text,
+      fontSize: 11,
+      fontWeight: '700',
+      textTransform: 'uppercase',
+      letterSpacing: 0.2,
+    },
+    quickGrid: { flexDirection: 'row', gap: 8 },
     quickTile: {
-    flex: 1,
+      flex: 1,
       alignItems: 'center',
-      gap: 8,
-      backgroundColor: colors.white,
-      borderRadius: 16,
-      paddingVertical: 14 },
+      justifyContent: 'center',
+      gap: 6,
+      borderRadius: 14,
+      paddingVertical: 14,
+      minHeight: 76,
+      ...chrome,
+    },
     quickIconWrap: { position: 'relative' },
-    quickLabel: { color: colors.muted, fontSize: 11, fontWeight: '600' },
+    quickLabel: {
+      color: colors.muted,
+      fontSize: 11,
+      fontWeight: '700',
+      textTransform: 'uppercase',
+      letterSpacing: 0.25,
+    },
     quickBadge: {
       position: 'absolute',
       top: -6,
@@ -776,11 +863,11 @@ function createStyles(colors: AppColors) {
       justifyContent: 'center',
       paddingHorizontal: 3 },
     quickBadgeText: { color: colors.onAccent, fontSize: 9, fontWeight: '700' },
-    chipsWrap: { marginHorizontal: -spacing.screen },
+    chipsWrap: { marginHorizontal: -SHEET_EDGE },
     chips: {
       gap: 14,
       paddingVertical: 6,
-      paddingHorizontal: spacing.screen,
+      paddingHorizontal: SHEET_EDGE,
       paddingRight: 28,
       alignItems: 'flex-start',
     },
@@ -854,16 +941,35 @@ function createStyles(colors: AppColors) {
       color: colors.text,
       ...displayFont('700'),
     },
-    section: { gap: 12 },
-    sectionHead: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start' },
-    sectionTitle: { color: colors.text, fontSize: 18, ...displayFont('700') },
-    sectionMeta: { color: colors.muted, fontSize: 12, fontWeight: '500', marginTop: 2 },
+    section: { gap: 10 },
+    sectionHead: {
+      flexDirection: 'row',
+      justifyContent: 'space-between',
+      alignItems: 'center',
+      minHeight: 40,
+      paddingHorizontal: spacing.screen - SHEET_EDGE,
+    },
+    sectionTitle: {
+      color: colors.text,
+      fontSize: 15,
+      fontWeight: '700',
+      textTransform: 'uppercase',
+      letterSpacing: 0.4,
+      lineHeight: 20,
+    },
+    sectionMeta: { color: colors.muted, fontSize: 12, fontWeight: '500', marginTop: 1 },
     seeAll: { color: colors.gold, fontSize: 13, fontWeight: '700' },
-    rowCards: { flexDirection: 'row', columnGap: 1, gap: 1, paddingRight: 4 },
-    cuisineBlock: { gap: 12, marginTop: 8 },
+    rowCards: {
+      flexDirection: 'row',
+      columnGap: 1,
+      gap: 1,
+      paddingRight: 8,
+    },
     gridCuisine: {
       flexDirection: 'row',
       flexWrap: 'wrap',
+      width: '100%',
+      alignSelf: 'stretch',
     },
     feedHint: {
       color: colors.placeholder,

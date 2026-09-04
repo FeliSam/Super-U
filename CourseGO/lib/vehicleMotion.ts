@@ -62,24 +62,48 @@ export function withLiveTravel<T extends { distanceMeters: number; durationSecon
   };
 }
 
-export function travelSeconds(distanceM: number, kind: VehicleKind, osrmSec?: number | null) {
+/**
+ * ETA restant cohérent avec withLiveTravel :
+ * - route OSRM : proportion du temps déjà ajusté (trafic / feux / véhicule)
+ * - sinon : travelSeconds sur la distance restante (pas de ligne droite pure)
+ */
+export function liveEtaSeconds(
+  remainM: number,
+  kind: VehicleKind | string | null | undefined,
+  road?: { distanceMeters: number; durationSeconds: number; approximated?: boolean } | null,
+): number {
+  if (!(remainM > 0)) return 0;
+  const vehicle = asVehicleKind(kind);
+  if (road && !road.approximated && road.durationSeconds > 0 && road.distanceMeters > 0) {
+    return Math.max(0, Math.round(road.durationSeconds * (remainM / road.distanceMeters)));
+  }
+  return travelSeconds(remainM, vehicle, null, 0);
+}
+
+/** ETA moto sans OSRM : détour urbain ~+28 % + trafic / feux. */
+export function motoEtaSeconds(from: LngLat, to: LngLat) {
+  return travelSeconds(haversineMeters(from, to) * 1.28, 'moto', null, 60);
+}
+
+export function travelSeconds(distanceM: number, kind: VehicleKind, osrmSec?: number | null, minSec = 45) {
+  if (!(distanceM > 0)) return 0;
   const traffic = cotonouTrafficFactor();
   const lights = signalDelaySeconds(distanceM);
-  if (osrmSec && osrmSec > 30) {
+  if (osrmSec && osrmSec > 8) {
     const vehicleMul =
       kind === 'moto' ? 0.82 : kind === 'tricycle' ? 1.12 : kind === 'voiture' ? 1.08 : kind === 'velo' ? 1.55 : 3.4;
-    return Math.max(45, Math.round(osrmSec * vehicleMul * traffic + lights));
+    return Math.max(minSec, Math.round(osrmSec * vehicleMul * traffic + lights));
   }
   const kmh = vehicleCruiseKmh(kind) / traffic;
   const moving = (distanceM / 1000 / Math.max(4, kmh)) * 3600;
-  return Math.max(45, Math.round(moving + lights));
+  return Math.max(minSec, Math.round(moving + lights));
 }
 
 export function tripProgress(startedAt: string | null | undefined, durationSec: number, now = Date.now()) {
   if (!startedAt || !(durationSec > 0)) return null;
   const t0 = new Date(startedAt).getTime();
   if (!Number.isFinite(t0)) return null;
-  return Math.min(0.97, Math.max(0.02, (now - t0) / (durationSec * 1000)));
+  return Math.min(1, Math.max(0, (now - t0) / (durationSec * 1000)));
 }
 
 export function headingDeg(from: LngLat, to: LngLat) {
@@ -110,6 +134,20 @@ export function headingAlongRoute(pos: LngLat, route?: LngLat[] | null): number 
   if (haversineMeters(from, to) < 5) return null;
   const h = headingDeg(from, to);
   return Number.isFinite(h) ? h : null;
+}
+
+export function lerpHeading(from: number, to: number, t: number) {
+  const d = ((to - from + 540) % 360) - 180;
+  return from + d * Math.min(1, Math.max(0, t));
+}
+
+/** Déplace un point le long d’un cap (mètres), pour un regard caméra vers l’avant. */
+export function offsetLngLat(pos: LngLat, bearingDeg: number, meters: number): LngLat {
+  const rad = (bearingDeg * Math.PI) / 180;
+  const lat = pos[1] + (meters * Math.cos(rad)) / 111320;
+  const lng =
+    pos[0] + (meters * Math.sin(rad)) / (111320 * Math.max(0.2, Math.cos((pos[1] * Math.PI) / 180)));
+  return [lng, lat];
 }
 
 export function easeOutCubic(t: number) {

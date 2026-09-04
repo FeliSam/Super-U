@@ -1,9 +1,10 @@
-import { cotonouMap, type LngLat } from '@/constants/map';
 import { appLocation } from '@/constants/location';
-import { type DeliveryAddress } from '@/data/account';
-import { loadAccountJson, saveAccountJson, apiGetAccountState, apiPatchAccountState } from '@/lib/accountSync';
-import { getAuthToken } from '@/lib/api/http';
+import { cotonouMap, mapStyles, type LngLat } from '@/constants/map';
 import { useAuth } from '@/context/AuthContext';
+import { deliveryAddresses, type DeliveryAddress } from '@/data/account';
+import { apiGetAccountState, apiPatchAccountState, loadAccountJson, saveAccountJson } from '@/lib/accountSync';
+import { getAuthToken } from '@/lib/api/http';
+import { listSuperUStores } from '@/lib/api/superU';
 import React, { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
 
 const STORAGE_KEY = 'marche-dore.addresses.v1';
@@ -67,22 +68,39 @@ function sanitizeAddress(raw: unknown): DeliveryAddress | null {
   };
 }
 
+function seedAddresses(): DeliveryAddress[] {
+  return withCoords(deliveryAddresses);
+}
+
+function pickSelected(list: DeliveryAddress[], selected: string) {
+  if (list.some((a) => a.id === selected)) return selected;
+  return list.find((a) => a.default)?.id ?? list[0]?.id ?? '';
+}
+
 export function AddressesProvider({ children }: { children: React.ReactNode }) {
   const { session, ready: authReady } = useAuth();
   const accountId = session?.accountId ?? null;
   const [addresses, setAddresses] = useState<DeliveryAddress[]>([]);
   const [selectedId, setSelectedId] = useState('');
-  const [ready, setReady] = useState(false);
+  const [ready, setReady] = useState(true);
   const hydrated = useRef(false);
   const skipSave = useRef(true);
+
+  useEffect(() => {
+    void listSuperUStores();
+    // Import différé : ne pas charger react-native-maps au boot du root layout.
+    void import('@/components/LibreMap')
+      .then((m) => m.warmLibreMap?.(mapStyles.light, cotonouMap.home, 14.2))
+      .catch(() => undefined);
+  }, []);
 
   useEffect(() => {
     if (!authReady) return;
     let active = true;
     skipSave.current = true;
-    hydrated.current = false;
     (async () => {
       if (!accountId) {
+        if (!active) return;
         setAddresses([]);
         setSelectedId('');
         hydrated.current = true;
@@ -94,19 +112,24 @@ export function AddressesProvider({ children }: { children: React.ReactNode }) {
         ? local.addresses.map(sanitizeAddress).filter((a): a is DeliveryAddress => Boolean(a))
         : [];
       let selected = typeof local?.selectedId === 'string' ? local.selectedId : '';
-      if (getAuthToken()) {
+      if (!list.length && getAuthToken()) {
         const state = await apiGetAccountState();
         const remote = state?.addresses;
-        if (remote && Array.isArray(remote.list)) {
+        if (remote && Array.isArray(remote.list) && remote.list.length) {
           list = remote.list.map(sanitizeAddress).filter((a): a is DeliveryAddress => Boolean(a));
           if (typeof remote.selectedId === 'string') selected = remote.selectedId;
         }
       }
+      if (!list.length && accountId === 'demo-amina') {
+        list = seedAddresses();
+      }
+      if (active) {
+        setAddresses(withCoords(list));
+        setSelectedId(pickSelected(list, selected));
+        hydrated.current = true;
+        setReady(true);
+      }
       if (!active) return;
-      setAddresses(withCoords(list));
-      setSelectedId(selected);
-      hydrated.current = true;
-      setReady(true);
       skipSave.current = false;
     })();
     return () => {

@@ -22,7 +22,22 @@ export type MapMarker = {
 };
 
 export const mapStyles = {
+  /** OpenFreeMap — gratuit, sans clé (MapLibre vectoriel). */
   light: 'https://tiles.openfreemap.org/styles/liberty',
+  bright: 'https://tiles.openfreemap.org/styles/bright',
+  positron: 'https://tiles.openfreemap.org/styles/positron',
+  dark: 'https://tiles.openfreemap.org/styles/dark',
+  fiord: 'https://tiles.openfreemap.org/styles/fiord',
+} as const;
+
+/**
+ * Raster OSM (native UrlTile + fallback web).
+ * Évite CARTO Voyager qui affiche « API KEY REQUIRED » sans clé.
+ * @see https://carto.com/basemaps/apikey/
+ */
+export const mapRasterTiles = {
+  voyager: 'https://a.tile.openstreetmap.fr/osmfr/{z}/{x}/{y}.png',
+  attribution: '© OpenStreetMap',
 } as const;
 
 export const cotonouMap = {
@@ -50,10 +65,30 @@ export function haversineMeters(a: LngLat, b: LngLat) {
   return 2 * R * Math.asin(Math.min(1, Math.sqrt(s)));
 }
 
-/** Temps moto urbain Cotonou (~22 km/h). */
-export function motoEtaSeconds(from: LngLat, to: LngLat) {
-  const kmh = 22;
-  return Math.max(60, Math.round((haversineMeters(from, to) / 1000 / kmh) * 3600));
+export function remainingAlongPolyline(coords: LngLat[], from: LngLat): number {
+  if (!coords.length) return 0;
+  if (coords.length === 1) return haversineMeters(from, coords[0]);
+  const cum = [0];
+  for (let i = 1; i < coords.length; i++) cum.push(cum[i - 1] + haversineMeters(coords[i - 1], coords[i]));
+  const total = cum[cum.length - 1] || 0;
+  let bestI = 0;
+  let bestD = Infinity;
+  for (let i = 0; i < coords.length; i++) {
+    const d = haversineMeters(from, coords[i]);
+    if (d < bestD) {
+      bestD = d;
+      bestI = i;
+    }
+  }
+  return Math.max(0, total - cum[bestI] + bestD * 0.15);
+}
+
+export function remainingToPoint(from: LngLat, to: LngLat, route?: LngLat[] | null) {
+  const air = haversineMeters(from, to);
+  if (!route || route.length < 2) return air * 1.28;
+  const along = remainingAlongPolyline(route, from);
+  if (air > 0 && along > air * 2.2) return air * 1.28;
+  return along;
 }
 
 export function nearCotonou(lng: number, lat: number) {

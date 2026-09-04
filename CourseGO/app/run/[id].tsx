@@ -2,8 +2,8 @@ import { ConfirmModal } from '@/components/ConfirmModal';
 import { HandoffCodeSheet } from '@/components/HandoffCodeSheet';
 import { LibreMap } from '@/components/LibreMap';
 import { PillButton } from '@/components/ui';
-import { mapStyles, type LngLat, type MapMarker } from '@/constants/map';
-import { bodyFont, colors, displayFont, radius, shadow } from '@/constants/theme';
+import { haversineMeters, mapStyles, remainingToPoint, type LngLat, type MapMarker } from '@/constants/map';
+import { bodyFont, colors, displayFont, iceSurface, radius, shadow } from '@/constants/theme';
 import { useBoard } from '@/context/BoardContext';
 import { useLocation } from '@/context/LocationContext';
 import { useStaffAuth } from '@/context/StaffAuthContext';
@@ -11,20 +11,26 @@ import { useAppViewport } from '@/components/PhoneShell';
 import { useRoadRoute } from '@/hooks/useRoadRoute';
 import { useMultiRoadRoute } from '@/hooks/useMultiRoadRoute';
 import { courierThreadId, kmLabel, minLabel, shortOrderId } from '@/lib/format';
+import { showToast } from '@/lib/toastBus';
 import { ApiError } from '@/lib/api/http';
 import { claimDelivery, fetchOrder, setDeliveryStatus, startDeliveryRun } from '@/lib/api/ops';
-import { clientCoord, courierAnchor, DELIVERY_PHASE, storeCoord } from '@/lib/courierTrack';
-import { headingAlongRoute } from '@/lib/vehicleMotion';
+import { clientCoord, courierAnchor, DELIVERY_PHASE, offsetBeside, storeCoord } from '@/lib/courierTrack';
+import { goBack, tabPaths } from '@/lib/navigation';
+import { prefetchRoadRoute } from '@/lib/roadRoute';
+import { headingAlongRoute, liveEtaSeconds } from '@/lib/vehicleMotion';
 import {
   buildCourierTourPlan,
   buildTourMapMarkers,
   googleMapsTourUrl,
   nextDeliveryInTour,
   rememberLastDropoff,
+  rememberLastDropoffPoint,
+  readLastDropoff,
   clearLastDropoff,
   tourRouteSummary,
 } from '@/lib/tourRoute';
 import {
+  MAX_ACTIVE_DELIVERIES,
   NEXT_DELIVERY_LABEL,
   deliveryNavLeg,
   isDeliveryHeld,
@@ -49,15 +55,31 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 const RUN_FIT_PAD = { top: 88, bottom: 280, left: 40, right: 40 } as const;
 
+type ClosedRun = {
+  kind: 'delivered' | 'failed' | 'cancelled' | 'taken' | 'unpacked' | 'missing';
+  title: string;
+  body: string;
+  orderRef?: string;
+};
+
+function closedTone(kind: ClosedRun['kind']) {
+  if (kind === 'delivered') return { icon: 'check-circle' as const, fg: colors.teal, bg: colors.tealSoft };
+  if (kind === 'failed') return { icon: 'x-circle' as const, fg: colors.coral, bg: colors.coralSoft };
+  if (kind === 'cancelled') return { icon: 'slash' as const, fg: colors.muted, bg: colors.bg };
+  if (kind === 'taken') return { icon: 'user-check' as const, fg: colors.teal, bg: colors.tealSoft };
+  if (kind === 'unpacked') return { icon: 'package' as const, fg: colors.amber, bg: colors.amberSoft };
+  return { icon: 'search' as const, fg: colors.muted, bg: colors.bg };
+}
+
 export default function RunScreen() {
-  const { id } = useLocalSearchParams<{ id: string }>();
+  const { id, hop } = useLocalSearchParams<{ id: string; hop?: string }>();
   const delId = decodeURIComponent(id ?? '');
   const { deliveries, tourHop, refresh } = useBoard();
   const { staff } = useStaffAuth();
-  const { mapPosition, heading: gpsHeading } = useLocation();
+  const { mapPosition, heading: gpsHeading, routeCoordinates } = useLocation();
   const insets = useSafeAreaInsets();
   const { height: screenH } = useAppViewport();
-  const sheetMin = Math.round(screenH * 0.42);
+  const sheetMin = Math.round(screenH * 0.42 * 0.85);
   const sheetMax = Math.max(sheetMin, Math.round(screenH * 0.8));
   const [sheetOpen, setSheetOpen] = useState(true);
   const sheetOpenRef = useRef(true);
@@ -99,14 +121,22 @@ export default function RunScreen() {
   const [busy, setBusy] = useState(false);
   const [modal, setModal] = useState<'ok' | 'err' | null>(null);
   const [modalText, setModalText] = useState('');
-  const [closed, setClosed] = useState<string | null>(null);
+  const [closed, setClosed] = useState<ClosedRun | null>(null);
   const [codeOpen, setCodeOpen] = useState(false);
   const [codeError, setCodeError] = useState<string | null>(null);
+  const [arriveOpen, setArriveOpen] = useState(false);
+  const [nextLeg, setNextLeg] = useState<{
+    id: string;
+    orderRef: string;
+    address: string;
+    from: LngLat;
+    fromLabel: string;
+  } | null>(null);
   const [navMode, setNavMode] = useState(false);
-  const [followPaused, setFollowPaused] = useState(false);
   const [resumeTick, setResumeTick] = useState(0);
 
   useEffect(() => {
+    if (nextLeg) return;
     if (d) {
       setClosed(null);
       return;
@@ -121,64 +151,162 @@ export default function RunScreen() {
         const del = String(row.delivery_status ?? '');
         const shop = String(row.status ?? '');
         const courier = row.courier_id ? String(row.courier_id) : '';
-        if (shop === 'delivered' || del === 'delivered') setClosed('Cette commande est déjà livrée.');
-        else if (del === 'failed') setClosed('Cette livraison n’a pas abouti.');
-        else if (shop === 'cancelled' || del === 'cancelled') setClosed('Cette course a été annulée.');
-        else if (courier) setClosed('Cette course a déjà été prise.');
-        else if (String(row.pick_status ?? '') !== 'packed') setClosed('Le colis n’est pas encore prêt.');
+        const ref = shortOrderId(String(row.id ?? row.order_id ?? oid));
+        if (shop === 'delivered' || del === 'delivered') {
+          setClosed({
+            kind: 'delivered',
+            title: 'Commande déjà livrée',
+            body: 'Cette course est terminée. Rien à faire sur le terrain — retrouvez-la dans l’historique.',
+            orderRef: ref,
+          });
+        } else if (del === 'failed') {
+          setClosed({
+            kind: 'failed',
+            title: 'Livraison non aboutie',
+            body: 'Cette course s’est arrêtée avant la remise. Consultez l’historique pour le détail.',
+            orderRef: ref,
+          });
+        } else if (shop === 'cancelled' || del === 'cancelled') {
+          setClosed({
+            kind: 'cancelled',
+            title: 'Course annulée',
+            body: 'Le client ou le magasin a annulé. Cette commande n’est plus à livrer.',
+            orderRef: ref,
+          });
+        } else if (courier) {
+          setClosed({
+            kind: 'taken',
+            title: 'Course déjà prise',
+            body: 'Un autre livreur s’en occupe. Revenez à la file pour une autre mission.',
+            orderRef: ref,
+          });
+        } else if (String(row.pick_status ?? '') !== 'packed') {
+          setClosed({
+            kind: 'unpacked',
+            title: 'Colis pas encore prêt',
+            body: 'Le ramassage n’est pas terminé. Attendez que le magasin valide le colis.',
+            orderRef: ref,
+          });
+        }
       })
       .catch(() => {
-        if (live) setClosed('Course introuvable ou déjà terminée.');
+        if (live) {
+          setClosed({
+            kind: 'missing',
+            title: 'Course introuvable',
+            body: 'Cette mission n’est plus disponible. Elle a peut-être déjà été clôturée.',
+          });
+        }
       });
     return () => {
       live = false;
     };
-  }, [d, delId]);
+  }, [d, delId, nextLeg]);
 
   useEffect(() => {
+    if (nextLeg) return;
     if (!d || !staff?.id) return;
     const status = normalizeDeliveryStatus(d.delivery_status);
     if (status !== 'delivered' && status !== 'failed') return;
     const next = nextDeliveryInTour(deliveries, staff.id, d.id);
     if (next) {
-      router.replace(`/run/${encodeURIComponent(next.id)}`);
+      const fromLabel =
+        d.address_label?.trim() ||
+        [d.address_line, d.address_city].filter(Boolean).join(', ') ||
+        'Dernière remise';
+      rememberLastDropoff(staff.id, d);
+      setNextLeg({
+        id: next.id,
+        orderRef: shortOrderId(next.order_id),
+        address:
+          next.address_label?.trim() ||
+          [next.address_line, next.address_city].filter(Boolean).join(', ') ||
+          'Prochain client',
+        from: clientCoord(d),
+        fromLabel,
+      });
       return;
     }
     clearLastDropoff(staff.id);
     router.replace('/(tabs)/missions');
-  }, [d?.delivery_status, d?.id, deliveries, staff?.id]);
+  }, [d?.delivery_status, d?.id, deliveries, staff?.id, nextLeg]);
+
+  useEffect(() => {
+    if (String(hop) === '1') setNavMode(true);
+  }, [hop, delId]);
 
   const pickup: LngLat = storeCoord(d);
   const drop: LngLat = clientCoord(d);
   const toClient = deliveryNavLeg(d?.delivery_status) === 'client';
   const dest = toClient ? drop : pickup;
 
+  const rememberedDrop = staff?.id ? readLastDropoff(staff.id, d?.store_id) : null;
   const tourPlan = useMemo(
     () =>
       buildCourierTourPlan(deliveries, staff?.id, {
         focusDeliveryId: d?.id,
         courierPosition: mapPosition,
-        lastDrop: tourHop ? [tourHop.lng, tourHop.lat] : null,
-        lastDropLabel: tourHop?.label,
-        lastDropStoreId: tourHop?.storeId,
+        lastDrop: rememberedDrop?.from ?? (tourHop ? [tourHop.lng, tourHop.lat] : null),
+        lastDropLabel: rememberedDrop?.label ?? tourHop?.label,
+        lastDropStoreId: rememberedDrop?.storeId ?? tourHop?.storeId,
       }),
-    [deliveries, staff?.id, d?.id, mapPosition, tourHop],
+    [deliveries, staff?.id, d?.id, mapPosition, tourHop, rememberedDrop?.from?.[0], rememberedDrop?.from?.[1], hop],
   );
 
   const vehicle = staff?.vehicle;
-  const legRoad = useRoadRoute(tourPlan?.navFrom ?? mapPosition, tourPlan?.navTo ?? dest, vehicle);
+  // Origine stable (magasin / dernière remise) — le tronçon restant est coupé sur la carte.
+  const legRoad = useRoadRoute(tourPlan?.routeFrom ?? pickup, tourPlan?.navTo ?? dest, vehicle);
   const tourRoad = useMultiRoadRoute(
     tourPlan && tourPlan.routeWaypoints.length >= 2 ? tourPlan.routeWaypoints : null,
     vehicle,
   );
-  const road =
-    tourPlan && tourPlan.routeWaypoints.length >= 2 ? tourRoad : legRoad;
-  const etaS = legRoad?.durationSeconds ?? road?.durationSeconds ?? d?.route_duration_s;
-  const distM = legRoad?.distanceMeters ?? road?.distanceMeters ?? d?.route_distance_m;
+  // Priorité : géométrie suivie par la simu, puis jambe OSRM, puis tour.
+  const road = useMemo(() => {
+    if (routeCoordinates && routeCoordinates.length >= 2) {
+      return {
+        coordinates: routeCoordinates,
+        distanceMeters:
+          legRoad && !legRoad.approximated
+            ? legRoad.distanceMeters
+            : remainingToPoint(
+                routeCoordinates[0],
+                routeCoordinates[routeCoordinates.length - 1],
+                routeCoordinates,
+              ),
+        durationSeconds: legRoad && !legRoad.approximated ? legRoad.durationSeconds : 0,
+        approximated: false as const,
+      };
+    }
+    if (legRoad && !legRoad.approximated) return legRoad;
+    if (tourRoad && !tourRoad.approximated) return tourRoad;
+    return legRoad ?? tourRoad;
+  }, [routeCoordinates, legRoad, tourRoad]);
+
+  useEffect(() => {
+    if (tourPlan && tourPlan.routeWaypoints.length >= 2) {
+      prefetchRoadRoute(tourPlan.routeWaypoints, vehicle);
+    }
+  }, [tourPlan?.focusDelivery.id, tourPlan?.routeFromKind, tourPlan?.routeFrom[0], tourPlan?.routeFrom[1], vehicle]);
   const tourSummary = tourPlan ? tourRouteSummary(tourPlan) : null;
   const cur = normalizeDeliveryStatus(d?.delivery_status);
   const here = courierAnchor(cur);
   const phase = DELIVERY_PHASE[cur];
+  const remainM =
+    here === 'client' ? 0 : remainingToPoint(mapPosition, dest, road?.coordinates ?? legRoad?.coordinates);
+  const etaS = liveEtaSeconds(remainM, vehicle, road);
+  const distM = remainM;
+
+  /** Pin livreur : chez le client → à ~8 m du point commande. */
+  const courierPinAt = useMemo((): LngLat => {
+    if (here === 'client') {
+      if (haversineMeters(mapPosition, drop) > 35) return offsetBeside(drop, pickup, 8);
+      return mapPosition;
+    }
+    if (here === 'store' && haversineMeters(mapPosition, pickup) > 50) {
+      return offsetBeside(pickup, drop, 12);
+    }
+    return mapPosition;
+  }, [here, mapPosition, drop, pickup]);
 
   const markers = useMemo((): MapMarker[] => {
     if (tourPlan) {
@@ -186,7 +314,7 @@ export default function RunScreen() {
         here === 'client' ? 'Vous · chez le client' : here === 'route' ? 'Vous · en route' : 'Vous · magasin';
       return buildTourMapMarkers(
         tourPlan,
-        mapPosition,
+        courierPinAt,
         (staff?.vehicle as MapMarker['vehicle']) || 'moto',
         you,
       );
@@ -198,22 +326,47 @@ export default function RunScreen() {
       list.push({ id: 'store', coordinate: pickup, kind: 'store', label: d?.store_name || 'Magasin' });
     }
     list.push({ id: 'home', coordinate: drop, kind: 'home', label: 'Client' });
-    list.push({ id: 'me', coordinate: mapPosition, kind: 'courier', vehicle: 'moto', label: you });
+    list.push({
+      id: 'me',
+      coordinate: courierPinAt,
+      kind: 'courier',
+      vehicle: (staff?.vehicle as MapMarker['vehicle']) || 'moto',
+      label: you,
+    });
     return list;
-  }, [tourPlan, pickup, drop, mapPosition, d?.store_name, here, staff?.vehicle, toClient]);
+  }, [tourPlan, pickup, drop, courierPinAt, d?.store_name, here, staff?.vehicle, toClient]);
   const packed = !d || d.pick_status === 'packed';
   const jobId = d?.id ?? delId;
   const note = d?.comment?.trim() ?? '';
   const held = Boolean(d && isDeliveryHeld(d));
+  const heldCount = useMemo(
+    () => deliveries.filter((x) => x.courier_id === staff?.id && isDeliveryHeld(x)).length,
+    [deliveries, staff?.id],
+  );
+  const canAddMoreOrders = held && packed && heldCount > 0 && heldCount < MAX_ACTIVE_DELIVERIES;
   const driving = cur === 'picked_up' || cur === 'en_route';
   const onSite = cur === 'arrived';
+  const nearClientM = haversineMeters(mapPosition, dest);
+  const nearClient = (driving || onSite) && (nearClientM <= 300 || (typeof distM === 'number' && distM <= 300));
 
   useEffect(() => {
     if (!driving) {
       setNavMode(false);
-      setFollowPaused(false);
     }
   }, [driving]);
+
+  const nearToastFor = useRef<string | null>(null);
+  useEffect(() => {
+    if (!nearClient || !jobId) return;
+    if (nearToastFor.current === jobId) return;
+    nearToastFor.current = jobId;
+    showToast({
+      title: 'Moins de 300 m du client',
+      body: 'Préparez la remise et demandez le code.',
+      tone: 'error',
+      durationMs: 7000,
+    });
+  }, [nearClient, jobId]);
 
   const showErr = (message: string) => {
     setModalText(message);
@@ -253,10 +406,30 @@ export default function RunScreen() {
       }
       await refresh();
       if (status === 'delivered' || status === 'failed') {
-        const next =
-          res.nextDeliveryId ||
-          (staff ? nextDeliveryInTour(deliveries, staff.id, jobId)?.id : null);
-        goAfterStop(next);
+        const nextJob =
+          (res.nextDeliveryId ? deliveries.find((x) => x.id === res.nextDeliveryId) : null) ||
+          (staff ? nextDeliveryInTour(deliveries, staff.id, jobId) : null);
+        const nextId = nextJob?.id ?? res.nextDeliveryId ?? null;
+        if (nextId) {
+          setCodeOpen(false);
+          const fromLabel =
+            d?.address_label?.trim() ||
+            [d?.address_line, d?.address_city].filter(Boolean).join(', ') ||
+            'Dernière remise';
+          setNextLeg({
+            id: nextId,
+            orderRef: shortOrderId(nextJob?.order_id ?? nextId),
+            address:
+              nextJob?.address_label?.trim() ||
+              [nextJob?.address_line, nextJob?.address_city].filter(Boolean).join(', ') ||
+              'Prochain client',
+            from: clientCoord(d),
+            fromLabel,
+          });
+          if (nextJob) prefetchRoadRoute([clientCoord(d), clientCoord(nextJob)]);
+          return;
+        }
+        goAfterStop(null);
         return;
       }
     } catch (e) {
@@ -282,14 +455,61 @@ export default function RunScreen() {
     }
   };
 
-  const maps = () => {
-    const next = tourPlan?.focusDelivery ? clientCoord(tourPlan.focusDelivery) : dest;
-    const from = tourPlan?.routeFrom ?? mapPosition;
-    void Linking.openURL(googleMapsTourUrl(from, [next]));
+  const startNextLeg = async () => {
+    if (!nextLeg) return;
+    setBusy(true);
+    try {
+      if (staff?.id) {
+        rememberLastDropoffPoint(staff.id, nextLeg.from, nextLeg.fromLabel);
+      }
+      const nextJob = deliveries.find((x) => x.id === nextLeg.id);
+      if (nextJob) prefetchRoadRoute([nextLeg.from, clientCoord(nextJob)]);
+      await setDeliveryStatus(nextLeg.id, 'en_route');
+      await refresh();
+      const id = nextLeg.id;
+      setNextLeg(null);
+      router.replace(`/run/${encodeURIComponent(id)}?hop=1`);
+    } catch (e) {
+      showErr(e instanceof ApiError ? e.message : (e as Error).message);
+    } finally {
+      setBusy(false);
+    }
   };
 
-  const mapRoute = road?.coordinates?.length ? road.coordinates : [mapPosition, dest];
-  const bearing = (gpsHeading != null && Number.isFinite(gpsHeading) ? gpsHeading : headingAlongRoute(mapPosition, mapRoute)) ?? 0;
+  const maps = () => {
+    const origin = tourPlan?.routeFrom ?? mapPosition;
+    const next = tourPlan?.navTo ?? dest;
+    void Linking.openURL(googleMapsTourUrl(origin, [next]));
+  };
+
+  const mapRoute = useMemo(() => {
+    // Toujours la géométrie du déplacement en premier.
+    if (routeCoordinates && routeCoordinates.length >= 2) return routeCoordinates;
+    if (road?.coordinates && road.coordinates.length >= 2) return road.coordinates;
+    const from = tourPlan?.routeFrom ?? pickup;
+    const to = tourPlan?.navTo ?? dest;
+    if (
+      Number.isFinite(from?.[0]) &&
+      Number.isFinite(from?.[1]) &&
+      Number.isFinite(to?.[0]) &&
+      Number.isFinite(to?.[1])
+    ) {
+      return [from, to] as LngLat[];
+    }
+    return undefined;
+  }, [
+    road?.coordinates,
+    routeCoordinates,
+    tourPlan?.routeFrom?.[0],
+    tourPlan?.routeFrom?.[1],
+    tourPlan?.navTo?.[0],
+    tourPlan?.navTo?.[1],
+    pickup[0],
+    pickup[1],
+    dest[0],
+    dest[1],
+  ]);
+  const bearing = (gpsHeading != null && Number.isFinite(gpsHeading) ? gpsHeading : headingAlongRoute(mapPosition, mapRoute ?? [mapPosition, dest])) ?? 0;
   const mapMarkers = useMemo(
     () =>
       markers.map((m) =>
@@ -300,19 +520,80 @@ export default function RunScreen() {
 
   const threadId = d?.comms_thread_id || courierThreadId(d?.order_id ?? '');
 
-  if (!d && closed) {
+  if (nextLeg) {
     return (
-      <View style={[styles.root, { justifyContent: 'center', padding: 24 }]}>
-        <Text style={styles.title}>{closed}</Text>
-        <Text style={[styles.sub, { marginTop: 8 }]}>L’écran a été mis à jour selon l’état actuel de la commande.</Text>
-        <Pressable
-          style={styles.closedBtn}
-          onPress={() => router.replace('/(tabs)/history')}>
-          <Text style={styles.closedBtnTxt}>Voir l’historique</Text>
-        </Pressable>
-        <Pressable onPress={() => router.replace('/(tabs)/missions')}>
-          <Text style={styles.sub}>Retour aux courses</Text>
-        </Pressable>
+      <View style={[styles.root, styles.closedRoot, { paddingTop: Math.max(insets.top, 12) }]}>
+        <View style={styles.closedBody}>
+          <View style={[styles.closedMark, { backgroundColor: colors.tealSoft }]}>
+            <Feather name="navigation" size={36} color={colors.teal} />
+          </View>
+          <Text style={styles.closedKicker}>COMMANDE SUIVANTE</Text>
+          <Text style={styles.closedTitle}>Livraison {nextLeg.orderRef} commencée</Text>
+          <Text style={styles.closedBodyTxt}>
+            Le colis précédent est remis. Direction le client suivant : {nextLeg.address}.
+          </Text>
+          <View style={styles.closedRef}>
+            <Feather name="map-pin" size={14} color={colors.muted} />
+            <Text style={styles.closedRefTxt}>{nextLeg.address}</Text>
+          </View>
+        </View>
+        <View style={[styles.closedActions, { paddingBottom: Math.max(insets.bottom, 20) }]}>
+          <PillButton
+            label={busy ? '…' : 'Commencer la course'}
+            onPress={() => void startNextLeg()}
+            disabled={busy}
+          />
+        </View>
+        <ConfirmModal
+          visible={modal === 'err'}
+          title="Livraison"
+          body={modalText}
+          cancelLabel="Fermer"
+          onCancel={() => setModal(null)}
+        />
+      </View>
+    );
+  }
+
+  if (!d && closed) {
+    const tone = closedTone(closed.kind);
+    return (
+      <View style={[styles.root, styles.closedRoot, { paddingTop: Math.max(insets.top, 12) }]}>
+        <View style={styles.closedNav}>
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel="Retour"
+            onPress={() => goBack(tabPaths.missions)}
+            style={({ pressed }) => [styles.navBtn, iceSurface(), pressed && { opacity: 0.85 }]}>
+            <Feather name="chevron-left" size={22} color={colors.text} />
+          </Pressable>
+        </View>
+        <View style={styles.closedBody}>
+          <View style={[styles.closedMark, { backgroundColor: tone.bg }]}>
+            <Feather name={tone.icon} size={36} color={tone.fg} />
+          </View>
+          <Text style={styles.closedKicker}>
+            {closed.kind === 'delivered'
+              ? 'TERMINÉ'
+              : closed.kind === 'failed'
+                ? 'ÉCHEC'
+                : closed.kind === 'cancelled'
+                  ? 'ANNULÉ'
+                  : 'INDISPONIBLE'}
+          </Text>
+          <Text style={styles.closedTitle}>{closed.title}</Text>
+          <Text style={styles.closedBodyTxt}>{closed.body}</Text>
+          {closed.orderRef ? (
+            <View style={styles.closedRef}>
+              <Feather name="file-text" size={14} color={colors.muted} />
+              <Text style={styles.closedRefTxt}>{closed.orderRef}</Text>
+            </View>
+          ) : null}
+        </View>
+        <View style={[styles.closedActions, { paddingBottom: Math.max(insets.bottom, 20) }]}>
+          <PillButton label="VOIR L’HISTORIQUE" onPress={() => router.replace('/(tabs)/history')} />
+          <PillButton label="RETOUR AUX COURSES" variant="ghost" onPress={() => router.replace('/(tabs)/missions')} />
+        </View>
       </View>
     );
   }
@@ -322,29 +603,28 @@ export default function RunScreen() {
       <LibreMap
         style={styles.map}
         mapStyle={mapStyles.light}
-        center={here === 'route' ? mapPosition : drop}
+        center={navMode || here === 'route' ? mapPosition : here === 'client' ? courierPinAt : drop}
         zoom={navMode ? 16.8 : here === 'route' ? 14.4 : 13.6}
         route={mapRoute}
         markers={mapMarkers}
-        fitToMarkers={here !== 'route' && !navMode}
+        fitToMarkers={String(hop) === '1' || (here !== 'route' && !navMode)}
         fitIncludeCourier={false}
         fitPadding={RUN_FIT_PAD}
-        followCamera={here === 'route'}
+        followCamera={navMode || here === 'route'}
         navigationMode={navMode && driving}
         bearing={bearing}
         followResumeTick={resumeTick}
-        onFollowBreak={() => setFollowPaused(true)}
         showNavigation={!navMode}
       />
       <View style={[styles.nav, { paddingTop: Math.max(insets.top, 12) }]}>
         <Pressable
           accessibilityRole="button"
           accessibilityLabel="Retour"
-          onPress={() => router.back()}
-          style={({ pressed }) => [styles.navBtn, pressed && { opacity: 0.85 }]}>
+          onPress={() => goBack(tabPaths.missions)}
+          style={({ pressed }) => [styles.navBtn, iceSurface(), pressed && { opacity: 0.85 }]}>
           <Feather name="chevron-left" size={22} color={colors.text} />
         </Pressable>
-        <View style={styles.navCard}>
+        <View style={[styles.navCard, iceSurface()]}>
           <View style={styles.navStatus}>
             <Feather
               name={
@@ -369,7 +649,7 @@ export default function RunScreen() {
           </Text>
         </View>
         <View
-          style={styles.eta}
+          style={[styles.eta, iceSurface()]}
           accessibilityRole="text"
           accessibilityLabel={`Reste ${kmLabel(distM)}, ${minLabel(etaS)}`}>
           <Text style={styles.etaKm}>{kmLabel(distM)}</Text>
@@ -382,31 +662,16 @@ export default function RunScreen() {
             accessibilityRole="button"
             accessibilityLabel={navMode ? 'Quitter le mode navigation' : 'Activer le mode navigation'}
             onPress={() => {
-              if (!navMode) {
-                setFollowPaused(false);
-                setResumeTick((n) => n + 1);
-              }
-              setNavMode((v) => !v);
+              const next = !navMode;
+              setResumeTick((n) => n + 1);
+              setNavMode(next);
             }}
             style={({ pressed }) => [styles.navModeBtn, navMode && styles.navModeBtnOn, pressed && { opacity: 0.88 }]}>
             <Feather name="navigation" size={16} color={navMode ? colors.onAccent : colors.teal} />
             <Text style={[styles.navModeTxt, navMode && styles.navModeTxtOn]}>
               {navMode ? 'Navigation' : 'Mode navigation'}
             </Text>
-          </Pressable>
-          {navMode && followPaused ? (
-            <Pressable
-              accessibilityRole="button"
-              accessibilityLabel="Recentrer"
-              onPress={() => {
-                setFollowPaused(false);
-                setResumeTick((n) => n + 1);
-              }}
-              style={({ pressed }) => [styles.navModeBtn, pressed && { opacity: 0.88 }]}>
-              <Feather name="crosshair" size={16} color={colors.teal} />
-              <Text style={styles.navModeTxt}>Recentrer</Text>
             </Pressable>
-          ) : null}
         </Animated.View>
       ) : null}
       <Animated.View style={[styles.sheet, { height: sheetH, paddingBottom: Math.max(insets.bottom, 16) }]}>
@@ -451,7 +716,9 @@ export default function RunScreen() {
           ) : null}
           {held ? (
             <Text style={styles.cod}>
-              Colis dans le sac ? Un geste : je démarre. Ensuite vous ne revenez plus au magasin.
+              {canAddMoreOrders
+                ? `Vous avez ${heldCount} colis sur ${MAX_ACTIVE_DELIVERIES}. Vous pouvez encore en ajouter dans le même Super U, ou démarrer la tournée.`
+                : 'Colis dans le sac ? Un geste : je démarre. Ensuite vous ne revenez plus au magasin.'}
             </Text>
           ) : null}
           {tourPlan?.routeFromKind === 'store' && !toClient ? (
@@ -506,12 +773,34 @@ export default function RunScreen() {
           {!packed ? (
             <Text style={styles.cod}>Ramassage incomplet · le colis n’est pas encore disponible.</Text>
           ) : held ? (
-            <PillButton label={busy ? '…' : 'Je démarre la tournée'} onPress={() => void startTourNow()} disabled={busy} />
+            <View style={styles.ctaStack}>
+              {canAddMoreOrders ? (
+                <Pressable
+                  accessibilityRole="button"
+                  accessibilityLabel="Ajouter d’autres commandes"
+                  onPress={() => router.push('/(tabs)/missions')}
+                  disabled={busy}
+                  style={({ pressed }) => [styles.addMore, pressed && { opacity: 0.85 }, busy && { opacity: 0.5 }]}>
+                  <Text style={styles.addMoreTxt}>
+                    Ajouter d’autres commandes ({heldCount}/{MAX_ACTIVE_DELIVERIES})
+                  </Text>
+                </Pressable>
+              ) : null}
+              <PillButton
+                label={busy ? '…' : 'Je démarre la tournée'}
+                onPress={() => void startTourNow()}
+                disabled={busy}
+              />
+            </View>
           ) : driving ? (
-            <PillButton label={busy ? '…' : 'Je suis arrivé'} onPress={() => void act('arrived')} disabled={busy} />
+            <PillButton
+              label={busy ? '…' : 'Je suis arrivé'}
+              onPress={() => setArriveOpen(true)}
+              disabled={busy}
+            />
           ) : onSite ? (
             <PillButton
-              label="Je remets le colis"
+              label={busy ? '…' : 'Je remets le colis'}
               onPress={() => {
                 setCodeError(null);
                 setCodeOpen(true);
@@ -575,6 +864,19 @@ export default function RunScreen() {
         }}
       />
       <ConfirmModal
+        visible={arriveOpen}
+        title="Vous êtes arrivé ?"
+        body="Confirmez uniquement si vous êtes chez le client. La remise du colis suivra."
+        cancelLabel="Pas encore"
+        confirmLabel="Oui, je suis arrivé"
+        busy={busy}
+        onCancel={() => setArriveOpen(false)}
+        onConfirm={() => {
+          setArriveOpen(false);
+          void act('arrived');
+        }}
+      />
+      <ConfirmModal
         visible={modal === 'err'}
         title="Livraison"
         body={modalText}
@@ -603,19 +905,15 @@ const styles = StyleSheet.create({
     width: 42,
     height: 42,
     borderRadius: 21,
-    backgroundColor: colors.white,
     alignItems: 'center',
     justifyContent: 'center',
-    ...shadow.card,
   },
   navCard: {
     flex: 1,
     minWidth: 0,
-    backgroundColor: colors.white,
     borderRadius: 18,
     paddingHorizontal: 12,
     paddingVertical: 8,
-    ...shadow.card,
   },
   navStatus: { flexDirection: 'row', alignItems: 'center', gap: 6 },
   title: { ...displayFont('800'), fontSize: 14, color: colors.text, flexShrink: 1 },
@@ -623,12 +921,10 @@ const styles = StyleSheet.create({
   eta: {
     alignItems: 'flex-end',
     justifyContent: 'center',
-    backgroundColor: colors.white,
     borderRadius: 18,
     paddingHorizontal: 12,
     paddingVertical: 8,
     minWidth: 72,
-    ...shadow.card,
   },
   etaKm: { ...bodyFont('600'), fontSize: 11, color: colors.muted },
   etaTxt: { ...displayFont('800'), color: colors.teal, fontSize: 13, marginTop: 1 },
@@ -653,15 +949,58 @@ const styles = StyleSheet.create({
   navModeBtnOn: { backgroundColor: colors.teal },
   navModeTxt: { ...displayFont('800'), fontSize: 13, color: colors.teal },
   navModeTxtOn: { color: colors.onAccent },
-  closedBtn: {
-    alignSelf: 'center',
-    marginTop: 24,
-    backgroundColor: colors.teal,
-    borderRadius: 999,
-    paddingHorizontal: 20,
-    paddingVertical: 12,
+  closedRoot: { backgroundColor: colors.bg },
+  closedNav: { paddingHorizontal: 12, paddingBottom: 8 },
+  closedBody: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: 28,
+    gap: 10,
   },
-  closedBtnTxt: { ...displayFont('800'), fontSize: 13, color: colors.onAccent },
+  closedMark: {
+    width: 88,
+    height: 88,
+    borderRadius: 28,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginBottom: 8,
+  },
+  closedKicker: {
+    ...displayFont('800'),
+    fontSize: 11,
+    letterSpacing: 1.2,
+    color: colors.teal,
+  },
+  closedTitle: {
+    ...displayFont('800'),
+    fontSize: 26,
+    letterSpacing: -0.5,
+    color: colors.text,
+    textAlign: 'center',
+  },
+  closedBodyTxt: {
+    ...bodyFont('500'),
+    fontSize: 15,
+    lineHeight: 22,
+    color: colors.muted,
+    textAlign: 'center',
+    maxWidth: 340,
+  },
+  closedRef: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    marginTop: 8,
+    backgroundColor: colors.white,
+    borderRadius: 999,
+    paddingHorizontal: 14,
+    paddingVertical: 8,
+    borderWidth: 1,
+    borderColor: colors.border,
+  },
+  closedRefTxt: { ...displayFont('700'), fontSize: 13, color: colors.text },
+  closedActions: { paddingHorizontal: 20, gap: 10 },
   sheet: {
     position: 'absolute',
     left: 0,
@@ -708,7 +1047,28 @@ const styles = StyleSheet.create({
   },
   specL: { ...bodyFont('600'), fontSize: 11, color: colors.muted },
   specV: { ...displayFont('800'), fontSize: 18, marginTop: 4, letterSpacing: -0.3, color: colors.text },
-  cod: { ...bodyFont('700'), color: colors.coral },
+  cod: {
+    ...bodyFont('600'),
+    fontSize: 13,
+    lineHeight: 19,
+    color: colors.teal,
+    backgroundColor: colors.tealSoft,
+    borderRadius: 14,
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+  },
+  ctaStack: { gap: 10, width: '100%' },
+  addMore: {
+    height: 54,
+    borderRadius: 999,
+    alignItems: 'center',
+    justifyContent: 'center',
+    width: '100%',
+    backgroundColor: colors.white,
+    borderWidth: 1.5,
+    borderColor: colors.teal,
+  },
+  addMoreTxt: { ...displayFont('800'), fontSize: 15, color: colors.teal, textAlign: 'center' },
   tools: { flexDirection: 'row', gap: 10, marginTop: 4 },
   tool: {
     flex: 1,

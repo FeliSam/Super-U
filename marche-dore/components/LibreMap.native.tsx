@@ -1,15 +1,42 @@
 import type { LibreMapProps } from '@/components/LibreMap.types';
-import { cotonouMap, routeLineGeoJSON } from '@/constants/map';
+import { cotonouMap, type LngLat, type MapMarker } from '@/constants/map';
 import { useColors } from '@/context/ThemeContext';
-import {
-  Camera,
-  GeoJSONSource,
-  Layer,
-  Map,
-  ViewAnnotation,
-} from '@maplibre/maplibre-react-native';
 import { Feather } from '@expo/vector-icons';
-import { Platform, Pressable, StyleSheet, Text, View } from 'react-native';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import { Platform, StyleSheet, Text, View } from 'react-native';
+
+type MapsMod = typeof import('react-native-maps');
+
+let mapsCache: MapsMod | null | undefined;
+
+function loadMaps(): MapsMod | null {
+  if (mapsCache !== undefined) return mapsCache;
+  try {
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    mapsCache = require('react-native-maps') as MapsMod;
+  } catch {
+    mapsCache = null;
+  }
+  return mapsCache;
+}
+
+function validLngLat(c: LngLat | undefined): c is LngLat {
+  return Boolean(c && Number.isFinite(c[0]) && Number.isFinite(c[1]) && Math.abs(c[0]) > 0.01);
+}
+
+function zoomToDelta(zoom: number): number {
+  return Math.max(0.0012, 180 / Math.pow(2, Math.max(1, zoom)));
+}
+
+function toRegion(center: LngLat, zoom: number) {
+  const latitudeDelta = zoomToDelta(zoom);
+  return {
+    latitude: center[1],
+    longitude: center[0],
+    latitudeDelta,
+    longitudeDelta: latitudeDelta * 0.72,
+  };
+}
 
 function Pin({
   color,
@@ -22,7 +49,7 @@ function Pin({
 }) {
   if (kind === 'superu') {
     return (
-      <View style={pinStyles.wrap}>
+      <View style={pinStyles.wrap} pointerEvents="none">
         {label ? (
           <View style={pinStyles.label}>
             <Text style={pinStyles.labelText} numberOfLines={1}>
@@ -41,7 +68,7 @@ function Pin({
   const icon =
     kind === 'store' ? 'shopping-bag' : kind === 'home' ? 'home' : kind === 'courier' ? 'truck' : 'map-pin';
   return (
-    <View style={pinStyles.wrap}>
+    <View style={pinStyles.wrap} pointerEvents="none">
       {label ? (
         <View style={pinStyles.label}>
           <Text style={pinStyles.labelText} numberOfLines={1}>
@@ -83,11 +110,6 @@ const pinStyles = StyleSheet.create({
     justifyContent: 'center',
     borderWidth: 2.5,
     borderColor: '#ffffff',
-    shadowColor: '#e30613',
-    shadowOpacity: 0.45,
-    shadowRadius: 10,
-    shadowOffset: { width: 0, height: 6 },
-    elevation: 6,
   },
   superULetter: {
     color: '#ffffff',
@@ -108,91 +130,163 @@ const pinStyles = StyleSheet.create({
   },
 });
 
-/**
- * Native MapLibre (requires a development build — not Expo Go).
- */
 export function warmLibreMap(_styleUrl?: string, _center?: unknown, _zoom?: number) {
   return Promise.resolve();
 }
 
+function MapFallback({
+  markers,
+  colors,
+}: {
+  markers: MapMarker[];
+  colors: { gold: string; text: string; muted: string };
+}) {
+  return (
+    <View style={styles.fallback}>
+      <Text style={[styles.fallbackTitle, { color: colors.text }]}>Carte</Text>
+      <Text style={[styles.fallbackHint, { color: colors.muted }]}>
+        Aperçu des points (carte native indisponible ici).
+      </Text>
+      {markers.slice(0, 6).map((m) => (
+        <Text key={m.id} style={[styles.fallbackRow, { color: colors.text }]}>
+          · {m.label || m.kind || m.id}
+        </Text>
+      ))}
+    </View>
+  );
+}
+
+/** Native: react-native-maps (Expo Go). MapLibre RN nécessite un build custom. */
 export function LibreMap({
   style,
-  mapStyle,
+  mapStyle: _mapStyle,
   center,
   zoom = cotonouMap.zoom,
   markers = [],
   route,
   interactive = true,
+  followCamera = false,
   onReady,
-  onError,
   onPressMap,
   onPressMarker,
 }: LibreMapProps) {
   const colors = useColors();
-  const routeData = route && route.length >= 2 ? routeLineGeoJSON(route) : null;
+  const mapRef = useRef<{ animateToRegion?: (r: object, d?: number) => void } | null>(null);
+  const userMovedRef = useRef(false);
+  const [maps] = useState(() => loadMaps());
+  const osmTiles = Platform.OS === 'android';
+
+  const placed = useMemo(
+    () => markers.filter((m): m is MapMarker => validLngLat(m.coordinate)),
+    [markers],
+  );
+  const routeCoords = useMemo(() => {
+    const pts = (route ?? []).filter(validLngLat);
+    return pts.map(([lng, lat]) => ({ latitude: lat, longitude: lng }));
+  }, [route]);
+
+  const initialRegion = useMemo(() => toRegion(center, zoom), []);
+
+  useEffect(() => {
+    if (!followCamera || userMovedRef.current || !maps) return;
+    if (!validLngLat(center)) return;
+    mapRef.current?.animateToRegion?.(toRegion(center, zoom), 420);
+  }, [center[0], center[1], zoom, followCamera, maps]);
+
+  useEffect(() => {
+    if (maps) onReady?.();
+  }, [maps, onReady]);
+
+  if (!maps) {
+    return (
+      <View style={[styles.wrap, style]}>
+        <MapFallback markers={placed} colors={colors} />
+      </View>
+    );
+  }
+
+  const MapView = maps.default;
+  const { Marker, Polyline, UrlTile } = maps;
+  if (typeof MapView !== 'function') {
+    return (
+      <View style={[styles.wrap, style]}>
+        <MapFallback markers={placed} colors={colors} />
+      </View>
+    );
+  }
 
   return (
     <View style={[styles.wrap, style]}>
-      <Map
+      <MapView
+        ref={mapRef as never}
         style={styles.map}
-        mapStyle={mapStyle}
-        logo={false}
-        attribution
-        compass={false}
-        dragPan={interactive}
-        touchZoom={interactive}
-        touchRotate={interactive}
-        touchPitch={false}
-        onDidFinishLoadingMap={onReady}
-        onDidFailLoadingMap={() => onError?.('Impossible de charger la carte')}
-        onPress={(e) => {
-          const lngLat = e.nativeEvent?.lngLat;
-          if (lngLat) onPressMap?.(lngLat);
+        initialRegion={initialRegion}
+        mapType={osmTiles ? 'none' : 'standard'}
+        scrollEnabled={interactive}
+        zoomEnabled={interactive}
+        rotateEnabled={interactive}
+        pitchEnabled={false}
+        showsCompass={false}
+        showsUserLocation={false}
+        showsMyLocationButton={false}
+        toolbarEnabled={false}
+        onMapReady={() => onReady?.()}
+        onPanDrag={() => {
+          userMovedRef.current = true;
+        }}
+        onPress={(e: { nativeEvent: { coordinate: { latitude: number; longitude: number } } }) => {
+          const { latitude, longitude } = e.nativeEvent.coordinate;
+          onPressMap?.([longitude, latitude]);
         }}>
-        <Camera
-          initialViewState={{ center, zoom }}
-          center={center}
-          zoom={zoom}
-          duration={500}
-          easing="ease"
-        />
-
-        {routeData ? (
-          <GeoJSONSource id="md-route" data={routeData}>
-            <Layer
-              id="md-route-line"
-              type="line"
-              paint={{
-                'line-color': colors.gold,
-                'line-width': 4,
-                'line-opacity': 0.85,
-                'line-dasharray': [1.2, 1.4],
-              }}
-              layout={{
-                'line-cap': 'round',
-                'line-join': 'round',
-              }}
-            />
-          </GeoJSONSource>
+        {osmTiles && UrlTile ? (
+          <UrlTile
+            urlTemplate="https://a.tile.openstreetmap.fr/osmfr/{z}/{x}/{y}.png"
+            maximumZ={20}
+            flipY={false}
+            zIndex={-1}
+          />
         ) : null}
 
-        {markers.map((m) => (
-          <ViewAnnotation key={m.id} lngLat={m.coordinate} anchor="bottom">
-            <Pressable
-              onPress={() => onPressMarker?.(m.id, m.coordinate)}
-              hitSlop={8}
-              accessibilityRole="button"
-              accessibilityLabel={m.label || m.id}>
-              <Pin color={m.color ?? colors.gold} kind={m.kind} label={m.label} />
-            </Pressable>
-          </ViewAnnotation>
-        ))}
-      </Map>
+        {routeCoords.length >= 2 && Polyline ? (
+          <Polyline
+            coordinates={routeCoords}
+            strokeColor={colors.gold}
+            strokeWidth={4}
+            lineCap="round"
+            lineJoin="round"
+            geodesic={false}
+          />
+        ) : null}
+
+        {Marker
+          ? placed.map((m) => (
+              <Marker
+                key={m.id}
+                coordinate={{ latitude: m.coordinate[1], longitude: m.coordinate[0] }}
+                anchor={{ x: 0.5, y: 1 }}
+                tracksViewChanges={false}
+                onPress={() => onPressMarker?.(m.id, m.coordinate)}>
+                <Pin color={m.color ?? colors.gold} kind={m.kind} label={m.label} />
+              </Marker>
+            ))
+          : null}
+      </MapView>
     </View>
   );
 }
 
 const styles = StyleSheet.create({
-  wrap: { overflow: 'hidden', backgroundColor: '#1a1714' },
+  wrap: { overflow: 'hidden', backgroundColor: '#1a1714', flex: 1 },
   map: { flex: 1 },
+  fallback: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    padding: 24,
+    gap: 6,
+    backgroundColor: '#f3efe8',
+  },
+  fallbackTitle: { fontSize: 18, fontWeight: '700' },
+  fallbackHint: { fontSize: 13, textAlign: 'center', marginBottom: 8 },
+  fallbackRow: { fontSize: 13 },
 });

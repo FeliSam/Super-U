@@ -13,6 +13,7 @@ import {
 import { trackingRowToLive } from './live.ts';
 import { productBarcode } from './productMedia.ts';
 import { hashPassword, newToken, verifyPassword } from './password.ts';
+import { pushToStaff, pushToUser } from './push.ts';
 
 type StaffRow = {
   id: string;
@@ -103,6 +104,15 @@ async function staffWithScore(row: StaffRow) {
 function bearer(header: string | undefined) {
   if (!header?.startsWith('Bearer ')) return undefined;
   return header.slice(7).trim() || undefined;
+}
+
+async function tickStaffSeen(staffId: string, status: string) {
+  await query(
+    `INSERT INTO ops.staff_seen_log (staff_id, minute_at, status)
+     VALUES ($1, date_trunc('minute', NOW()), $2)
+     ON CONFLICT (staff_id, minute_at) DO UPDATE SET status = EXCLUDED.status`,
+    [staffId, status === 'paused' ? 'paused' : 'online'],
+  ).catch(() => undefined);
 }
 
 function routeId(raw: string | undefined) {
@@ -502,6 +512,12 @@ export async function notifyCustomer(params: {
   } catch {
     /* table absente le temps d’une migrate */
   }
+  void pushToUser(params.userId, {
+    title: params.title,
+    body: params.body.slice(0, 160),
+    href: params.href ?? null,
+    kind: params.kind ?? 'order',
+  });
 }
 
 export async function notifyOrderUser(orderId: string, eventType: string) {
@@ -573,6 +589,12 @@ export async function notifyStaff(params: {
   } catch {
     /* table absente le temps d’une migrate */
   }
+  void pushToStaff(params.staffId, {
+    title: params.title,
+    body: (params.body ?? '').slice(0, 160),
+    href: params.href ?? null,
+    kind: params.kind,
+  });
 }
 
 export async function notifyStoreStaff(
@@ -933,10 +955,67 @@ export async function recordClientIncidentAction(params: {
 }
 
 export function registerOpsRoutes(app: Hono) {
+  app.get('/geo/route', async (c) => {
+    const raw = String(c.req.query('points') ?? '').trim();
+    const pts = raw
+      .split(';')
+      .map((p) => p.split(',').map(Number))
+      .filter((p) => p.length >= 2 && Number.isFinite(p[0]) && Number.isFinite(p[1]) && Math.abs(p[0]!) > 0.2)
+      .slice(0, 8);
+    if (pts.length < 2) return c.json({ ok: false, error: 'points' }, 400);
+    const path = pts.map(([lng, lat]) => `${lng},${lat}`).join(';');
+    const profileRaw = String(c.req.query('profile') ?? 'driving').trim();
+    const profile =
+      profileRaw === 'cycling' || profileRaw === 'walking' || profileRaw === 'driving' ? profileRaw : 'driving';
+    const url =
+      `https://router.project-osrm.org/route/v1/${profile}/${path}` +
+      `?overview=full&geometries=geojson&alternatives=false`;
+    try {
+      const res = await fetch(url, { headers: { Accept: 'application/json' }, signal: AbortSignal.timeout(8000) });
+      const data = (await res.json()) as {
+        code?: string;
+        routes?: { distance: number; duration: number; geometry?: { coordinates?: [number, number][] } }[];
+      };
+      const route = data.routes?.[0];
+      const coords = route?.geometry?.coordinates;
+      if (!res.ok || data.code !== 'Ok' || !route || !coords || coords.length < 2) {
+        if (profile !== 'driving') return c.json({ ok: false, error: 'osrm' }, 502);
+        // Miroir OSM.de si le serveur public OSRM est saturé.
+        const mirror =
+          `https://routing.openstreetmap.de/routed-car/route/v1/driving/${path}` +
+          `?overview=full&geometries=geojson&alternatives=false`;
+        const res2 = await fetch(mirror, {
+          headers: { Accept: 'application/json' },
+          signal: AbortSignal.timeout(8000),
+        });
+        const data2 = (await res2.json()) as typeof data;
+        const route2 = data2.routes?.[0];
+        const coords2 = route2?.geometry?.coordinates;
+        if (!res2.ok || data2.code !== 'Ok' || !route2 || !coords2 || coords2.length < 2) {
+          return c.json({ ok: false, error: 'osrm' }, 502);
+        }
+        return c.json({
+          ok: true,
+          coordinates: coords2,
+          distanceMeters: route2.distance,
+          durationSeconds: route2.duration,
+        });
+      }
+      return c.json({
+        ok: true,
+        coordinates: coords,
+        distanceMeters: route.distance,
+        durationSeconds: route.duration,
+      });
+    } catch {
+      return c.json({ ok: false, error: 'osrm' }, 502);
+    }
+  });
+
   app.get('/ops/staff/:id/photo', async (c) => {
     const id = routeId(c.req.param('id'));
     const found = await query<{ photo_data: string | null }>(
-      `SELECT photo_data FROM ops.staff WHERE id = $1 AND is_active = TRUE`,
+      `SELECT photo_data FROM ops.staff WHERE id = $1`,
       [id],
     );
     const parsed = parseStaffPhoto(found.rows[0]?.photo_data);
@@ -977,6 +1056,10 @@ export function registerOpsRoutes(app: Hono) {
     }
     const token = newToken();
     await query('INSERT INTO ops.staff_sessions (token, staff_id) VALUES ($1, $2)', [token, staff.id]);
+    await query(
+      `UPDATE ops.staff SET duty_status = 'online', last_seen_at = NOW() WHERE id = $1`,
+      [staff.id],
+    );
     return c.json({ ok: true, token, staff: await staffWithScore(staff) });
   });
 
@@ -988,9 +1071,13 @@ export function registerOpsRoutes(app: Hono) {
     const phone = String(body?.phone ?? '').trim();
     const password = String(body?.password ?? '');
     const vehicleRaw = String(body?.vehicle ?? 'moto');
-    const vehicle = ['moto', 'voiture', 'velo', 'tricycle'].includes(vehicleRaw) ? vehicleRaw : 'moto';
     const jobRaw = String(body?.job ?? body?.role ?? 'coursier');
     const job = jobRaw === 'ramasseur' || jobRaw === 'picker' ? 'ramasseur' : jobRaw === 'livreur' || jobRaw === 'courier' ? 'livreur' : 'coursier';
+    const vehicleKinds = ['moto', 'voiture', 'velo', 'tricycle', 'pied'] as const;
+    const vehicleDefault = job === 'ramasseur' ? 'pied' : 'moto';
+    const vehicle = vehicleKinds.includes(vehicleRaw as (typeof vehicleKinds)[number])
+      ? (vehicleRaw as (typeof vehicleKinds)[number])
+      : vehicleDefault;
     const canPick = job !== 'livreur';
     const canDeliver = job !== 'ramasseur';
     const role = job === 'ramasseur' ? 'picker' : job === 'livreur' ? 'courier' : 'coursier';
@@ -1600,12 +1687,17 @@ export function registerOpsRoutes(app: Hono) {
        JOIN orders o ON o.id = d.order_id
        WHERE d.courier_id = $1
          AND d.status IN ('delivered', 'failed')
-         AND d.course_id IN (
-           SELECT DISTINCT course_id FROM ops.deliveries
-           WHERE courier_id = $1 AND course_id IS NOT NULL
-             AND status IN ('assigned', 'at_store', 'picked_up', 'en_route', 'arrived')
-         )
          AND d.dropoff_lng IS NOT NULL AND ABS(d.dropoff_lng) > 0.2
+         AND EXISTS (
+           SELECT 1 FROM ops.deliveries a
+           WHERE a.courier_id = $1
+             AND a.status IN ('assigned', 'at_store', 'picked_up', 'en_route', 'arrived')
+             AND (
+               d.course_id IS NULL OR a.course_id IS NULL
+               OR a.course_id = d.course_id
+               OR a.store_id IS NOT DISTINCT FROM d.store_id
+             )
+         )
        ORDER BY COALESCE(d.delivered_at, d.updated_at) DESC
        LIMIT 1`,
       [staff.id],
@@ -2006,6 +2098,19 @@ export function registerOpsRoutes(app: Hono) {
     return c.json({ ok: true });
   });
 
+  app.post('/ops/presence', async (c) => {
+    const staff = await staffFromToken(bearer(c.req.header('Authorization')));
+    if (!staff) return c.json({ ok: false, error: 'unauthorized' }, 401);
+    const body = await c.req.json().catch(() => null);
+    const online = body?.online !== false;
+    await query(
+      `UPDATE ops.staff SET duty_status = $2, last_seen_at = NOW() WHERE id = $1`,
+      [staff.id, online ? 'online' : 'paused'],
+    );
+    await tickStaffSeen(staff.id, online ? 'online' : 'paused');
+    return c.json({ ok: true, online });
+  });
+
   app.post('/ops/location', async (c) => {
     const staff = await staffFromToken(bearer(c.req.header('Authorization')));
     if (!staff) return c.json({ ok: false, error: 'unauthorized' }, 401);
@@ -2030,6 +2135,8 @@ export function registerOpsRoutes(app: Hono) {
         Number.isFinite(Number(body?.speedMps)) ? Number(body.speedMps) : null,
       ],
     );
+    await query(`UPDATE ops.staff SET last_seen_at = NOW() WHERE id = $1`, [staff.id]);
+    await tickStaffSeen(staff.id, 'online');
     return c.json({ ok: true });
   });
 
@@ -2271,6 +2378,46 @@ export function registerOpsRoutes(app: Hono) {
       tipToday: Number(row?.tip_today ?? 0),
       tipAll: Number(row?.tip_all ?? 0),
       weekDays: days.rows.map((r) => ({ date: r.d, amount: Number(r.amt ?? 0) })),
+    });
+  });
+
+  app.get('/ops/ratings', async (c) => {
+    const staff = await staffFromToken(bearer(c.req.header('Authorization')));
+    if (!staff) return c.json({ ok: false, error: 'unauthorized' }, 401);
+    const result = await query<{
+      id: string;
+      order_id: string;
+      rating: number;
+      comment: string;
+      tip_amount: string;
+      created_at: string | Date;
+      customer: string | null;
+      address_label: string | null;
+    }>(
+      `SELECT r.id, r.order_id, r.rating, r.comment, r.tip_amount::text, r.created_at,
+              NULLIF(trim(concat_ws(' ', u.first_name, u.last_name)), '') AS customer,
+              o.address_label
+       FROM ops.order_ratings r
+       JOIN orders o ON o.id = r.order_id
+       JOIN ops.deliveries d ON d.order_id = r.order_id
+       LEFT JOIN users u ON u.id = o.user_id
+       WHERE d.courier_id = $1 AND r.rater_kind = 'customer'
+       ORDER BY r.created_at DESC
+       LIMIT 80`,
+      [staff.id],
+    );
+    return c.json({
+      ok: true,
+      items: result.rows.map((row) => ({
+        id: row.id,
+        orderId: row.order_id,
+        rating: Number(row.rating),
+        comment: row.comment ?? '',
+        tipAmount: Number(row.tip_amount ?? 0),
+        createdAt: row.created_at,
+        customer: row.customer || 'Client',
+        addressLabel: row.address_label,
+      })),
     });
   });
 

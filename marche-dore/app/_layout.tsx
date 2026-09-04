@@ -1,9 +1,11 @@
-import '@/lib/navigationStability';
+﻿import '@/lib/navigationStability';
 import { AnimatedSplash } from '@/components/AnimatedSplash';
 import { AccountPrefsSync } from '@/components/AccountPrefsSync';
 import { OrderNotificationBridge } from '@/components/OrderNotificationBridge';
+import { OrderLiveActivityHost } from '@/components/OrderLiveActivityHost';
 import { prepareApp, warmRemainingAssets } from '@/lib/bootstrap';
 import { lockWebInputZoom } from '@/lib/noZoomInput';
+import { hideSystemBars, watchHiddenSystemBars } from '@/lib/systemBars';
 import { CallOverlay } from '@/components/CallOverlay';
 import { ToastHost } from '@/components/ToastHost';
 import { AuthGate } from '@/components/AuthGate';
@@ -16,6 +18,7 @@ import { ChatProvider } from '@/context/ChatContext';
 import { CheckoutPaymentProvider } from '@/context/CheckoutPaymentContext';
 import { FavoritesProvider } from '@/context/FavoritesContext';
 import { NotificationsProvider } from '@/context/NotificationsContext';
+import { PushNotificationsProvider } from '@/context/PushNotificationsContext';
 import { OrdersProvider } from '@/context/OrdersContext';
 import { PaymentsProvider } from '@/context/PaymentsContext';
 import { ProfileProvider } from '@/context/ProfileContext';
@@ -23,25 +26,22 @@ import { ReviewsProvider } from '@/context/ReviewsContext';
 import { StoresProvider } from '@/context/StoresContext';
 import { ThemeProvider, useTheme } from '@/context/ThemeContext';
 import { UiStateProvider } from '@/context/UiStateContext';
-import { lightColors } from '@/constants/theme';
+import { AppTourProvider } from '@/context/AppTourContext';
+import { AppTourHost } from '@/components/AppTourHost';
+import { lightColors, MOBILE_FRAME_MAX } from '@/constants/theme';
 import { LocalDbBoot } from '@/lib/db/boot';
 import { DarkTheme, DefaultTheme, Stack, ThemeProvider as NavigationThemeProvider } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { Platform, StatusBar as RNStatusBar, View } from 'react-native';
+import { View } from 'react-native';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
+import { peekShopHasSession } from '@/lib/sessionPeek';
 
-export { ErrorBoundary } from 'expo-router';
+export { ErrorBoundary } from '@/components/AppErrorBoundary';
 
 export const unstable_settings = {
-  initialRouteName: '(auth)' };
-
-function hideSystemBars() {
-  StatusBar.setHidden(true, 'none');
-  if (Platform.OS !== 'web') {
-    RNStatusBar.setHidden(true, 'none');
-  }
-}
+  initialRouteName: peekShopHasSession() ? '(tabs)' : '(auth)',
+};
 
 function ThemedAppShell({ children }: { children: React.ReactNode }) {
   const { colors, scheme } = useTheme();
@@ -64,8 +64,8 @@ function ThemedAppShell({ children }: { children: React.ReactNode }) {
     () => ({
       headerShown: false,
       contentStyle: { backgroundColor: colors.bg },
-      animation: 'none' as const,
-      animationDuration: 0,
+      animation: 'fade' as const,
+      animationDuration: 120,
       freezeOnBlur: false,
       detachPreviousScreen: false,
       statusBarHidden: true }),
@@ -88,18 +88,26 @@ function ThemedAppShell({ children }: { children: React.ReactNode }) {
                           <ChatProvider>
                             <CallProvider>
                               <UiStateProvider>
+                                <PushNotificationsProvider>
+                                <AppTourProvider>
                                 <ReviewsProvider>
                                   <AccountPrefsSync />
                                   <OrderNotificationBridge />
+                                  <OrderLiveActivityHost />
                                   <StatusBar hidden style={scheme === 'dark' ? 'light' : 'dark'} />
                                   <AuthGate>
-                                    <Stack detachInactiveScreens={false} screenOptions={stackScreenOptions}>
+                                    <Stack
+                                      detachInactiveScreens={false}
+                                      screenOptions={stackScreenOptions}>
                                       {children}
                                     </Stack>
                                   </AuthGate>
+                                  <AppTourHost />
                                   <CallOverlay />
                                   <ToastHost />
                                 </ReviewsProvider>
+                                </AppTourProvider>
+                                </PushNotificationsProvider>
                               </UiStateProvider>
                             </CallProvider>
                           </ChatProvider>
@@ -129,7 +137,10 @@ export default function RootLayout() {
   }, []);
 
   useEffect(() => {
-    hideSystemBars();
+    return watchHiddenSystemBars();
+  }, []);
+
+  useEffect(() => {
     let active = true;
     prepareApp().finally(() => {
       if (active) setFontsReady(true);
@@ -140,7 +151,7 @@ export default function RootLayout() {
   }, []);
 
   useEffect(() => {
-    const timer = setTimeout(() => setMinSplashElapsed(true), 650);
+    const timer = setTimeout(() => setMinSplashElapsed(true), 280);
     return () => clearTimeout(timer);
   }, []);
 
@@ -156,37 +167,46 @@ export default function RootLayout() {
     <GestureHandlerRootView style={{ flex: 1 }}>
       <ThemeProvider>
         <LocalDbBoot>
-          <View style={{ flex: 1, backgroundColor: lightColors.bg, position: 'relative' }}>
+          <View style={{ flex: 1, alignItems: 'center', backgroundColor: lightColors.bg }}>
+            <View
+              style={{
+                flex: 1,
+                width: '100%',
+                maxWidth: MOBILE_FRAME_MAX,
+                overflow: 'hidden',
+                minWidth: 0,
+                position: 'relative',
+              }}>
             <ThemedAppShell>
-              <Stack.Screen name="(auth)" options={{ headerShown: false, animation: 'fade' }} />
-              <Stack.Screen name="(tabs)" options={{ animation: 'none' }} />
+              <Stack.Screen name="(auth)" options={{ headerShown: false, animation: 'fade', animationDuration: 120 }} />
+              <Stack.Screen name="(tabs)" options={{ animation: 'fade', animationDuration: 120 }} />
               <Stack.Screen
                 name="search"
                 options={{
-                  animation: 'none',
-                  animationDuration: 0,
+                  animation: 'fade',
+                  animationDuration: 120,
                   presentation: 'card' }}
               />
-              <Stack.Screen name="promotions" options={{ animation: 'none', animationDuration: 0 }} />
+              <Stack.Screen name="promotions" options={{ animation: 'fade', animationDuration: 120 }} />
               <Stack.Screen name="help" />
               <Stack.Screen name="contact" />
               <Stack.Screen name="legal" />
               <Stack.Screen name="about" />
               <Stack.Screen
                 name="product/[id]"
-                options={{ animation: 'none', animationDuration: 0 }}
+                options={{ animation: 'fade', animationDuration: 120 }}
               />
               <Stack.Screen name="product/reviews/[id]" />
               <Stack.Screen
                 name="category/[id]"
-                options={{ animation: 'none', animationDuration: 0 }}
+                options={{ animation: 'fade', animationDuration: 120 }}
               />
               <Stack.Screen name="checkout" />
               <Stack.Screen name="order-success" options={{ gestureEnabled: false }} />
               <Stack.Screen name="payment-setup/[id]" />
-              <Stack.Screen name="tracking" options={{ animation: 'none', animationDuration: 0 }} />
-              <Stack.Screen name="orders" options={{ animation: 'none', animationDuration: 0 }} />
-              <Stack.Screen name="order/[id]" options={{ animation: 'none', animationDuration: 0 }} />
+              <Stack.Screen name="tracking" options={{ animation: 'fade', animationDuration: 120 }} />
+              <Stack.Screen name="orders" options={{ animation: 'fade', animationDuration: 120 }} />
+              <Stack.Screen name="order/[id]" options={{ animation: 'fade', animationDuration: 120 }} />
               <Stack.Screen name="notifications/index" />
               <Stack.Screen name="notifications/[id]" />
               <Stack.Screen name="account/personal-info" />
@@ -194,7 +214,7 @@ export default function RootLayout() {
               <Stack.Screen name="account/payment-methods" />
               <Stack.Screen name="account/loyalty" />
               <Stack.Screen name="account/settings" />
-              <Stack.Screen name="account/favorites" options={{ animation: 'none', animationDuration: 0 }} />
+              <Stack.Screen name="account/favorites" options={{ animation: 'fade', animationDuration: 120 }} />
             </ThemedAppShell>
             {!splashDone ? (
               <AnimatedSplash
@@ -202,6 +222,7 @@ export default function RootLayout() {
                 onFinish={onSplashFinish}
               />
             ) : null}
+            </View>
           </View>
         </LocalDbBoot>
       </ThemeProvider>

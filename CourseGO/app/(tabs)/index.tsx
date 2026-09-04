@@ -4,8 +4,8 @@ import { MissionCard, deliveryCardProps, pickCardProps } from '@/components/Miss
 import { NowPresence } from '@/components/NowPresence';
 import { PullBanner, pullRefreshControl } from '@/components/PullRefresh';
 import { IconBtn, PillButton } from '@/components/ui';
-import { cotonouMap, mapStyles, motoEtaSeconds, type LngLat, type MapMarker } from '@/constants/map';
-import { bodyFont, colors, displayFont, radius, shadow, TAB_BAR_HEIGHT, TAB_BAR_MARGIN } from '@/constants/theme';
+import { cotonouMap, mapStyles, remainingToPoint, type LngLat, type MapMarker } from '@/constants/map';
+import { bodyFont, colors, displayFont, iceSurface, radius, shadow, TAB_BAR_HEIGHT, TAB_BAR_MARGIN } from '@/constants/theme';
 import { useBoard } from '@/context/BoardContext';
 import { useLocation } from '@/context/LocationContext';
 import { useStaffAuth } from '@/context/StaffAuthContext';
@@ -23,9 +23,11 @@ import {
   MAX_ACTIVE_DELIVERIES,
 } from '@/lib/opsModel';
 import { livePosKey, mapStoresForNow, suggestedStore } from '@/lib/nearestStore';
+import { liveEtaSeconds, motoEtaSeconds } from '@/lib/vehicleMotion';
 import {
   buildCourierTourPlan,
   buildTourMapMarkers,
+  readLastDropoff,
   tourRouteSummary,
 } from '@/lib/tourRoute';
 import { staffPhotoSource } from '@/lib/staffPhoto';
@@ -47,7 +49,7 @@ export default function HomeScreen() {
   const { staff } = useStaffAuth();
   const { unreadCount } = useStaffNotifications();
   const { jobs, deliveries, tourHop, mapStores, online, canPause, setOnline, refresh, refreshing, lastError } = useBoard();
-  const { mapPosition } = useLocation();
+  const { mapPosition, routeCoordinates } = useLocation();
 
   useFocusEffect(
     useCallback(() => {
@@ -57,7 +59,7 @@ export default function HomeScreen() {
   const insets = useSafeAreaInsets();
   const { height: screenH } = useAppViewport();
   const tabLift = TAB_BAR_HEIGHT + TAB_BAR_MARGIN + Math.max(insets.bottom, 8);
-  const sheetMin = Math.round(screenH * 0.28);
+  const sheetMin = Math.round(screenH * 0.32 * 0.85);
   const sheetMax = Math.max(sheetMin, Math.round(screenH * 0.8));
   const [sheetOpen, setSheetOpen] = useState(true);
   const sheetOpenRef = useRef(true);
@@ -109,15 +111,16 @@ export default function HomeScreen() {
     [mapStores, liveKey, lockedStoreId],
   );
 
+  const localDrop = staff?.id ? readLastDropoff(staff.id, mineDel[0]?.store_id) : null;
   const tourPlan = useMemo(
     () =>
       buildCourierTourPlan(deliveries, staff?.id, {
         courierPosition: mapPosition,
-        lastDrop: tourHop ? [tourHop.lng, tourHop.lat] : null,
-        lastDropLabel: tourHop?.label,
-        lastDropStoreId: tourHop?.storeId,
+        lastDrop: localDrop?.from ?? (tourHop ? [tourHop.lng, tourHop.lat] : null),
+        lastDropLabel: localDrop?.label ?? tourHop?.label,
+        lastDropStoreId: localDrop?.storeId ?? tourHop?.storeId,
       }),
-    [deliveries, staff?.id, mapPosition, tourHop],
+    [deliveries, staff?.id, mapPosition, tourHop, localDrop?.from?.[0], localDrop?.from?.[1]],
   );
 
   const focusDel = tourPlan?.focusDelivery ?? mineDel[0] ?? deliveries.find((d) => d.order_id === minePick[0]?.order_id);
@@ -134,14 +137,33 @@ export default function HomeScreen() {
   const goingToClient = Boolean(focusDel && deliveryNavLeg(focusDel.delivery_status) === 'client');
   const dest: LngLat = goingToClient && clientPt ? clientPt : storePt;
   const vehicle = staff?.vehicle;
-  const legRoad = useRoadRoute(tourPlan?.navFrom ?? mapPosition, tourPlan?.navTo ?? dest, vehicle);
+  const legRoad = useRoadRoute(tourPlan?.routeFrom ?? storePt, tourPlan?.navTo ?? dest, vehicle);
   const tourRoad = useMultiRoadRoute(
     tourPlan && tourPlan.routeWaypoints.length >= 2 ? tourPlan.routeWaypoints : null,
     vehicle,
   );
-  const road =
-    tourPlan && tourPlan.routeWaypoints.length >= 2 ? tourRoad : legRoad;
-  const etaS = road?.durationSeconds ?? legRoad?.durationSeconds;
+  const road = useMemo(() => {
+    if (routeCoordinates && routeCoordinates.length >= 2) {
+      return {
+        coordinates: routeCoordinates,
+        distanceMeters:
+          legRoad && !legRoad.approximated
+            ? legRoad.distanceMeters
+            : remainingToPoint(
+                routeCoordinates[0],
+                routeCoordinates[routeCoordinates.length - 1],
+                routeCoordinates,
+              ),
+        durationSeconds: legRoad && !legRoad.approximated ? legRoad.durationSeconds : 0,
+        approximated: false as const,
+      };
+    }
+    if (legRoad && !legRoad.approximated) return legRoad;
+    if (tourRoad && !tourRoad.approximated) return tourRoad;
+    return legRoad ?? tourRoad;
+  }, [routeCoordinates, legRoad, tourRoad]);
+  const remainM = remainingToPoint(mapPosition, dest, road?.coordinates ?? legRoad?.coordinates);
+  const etaS = liveEtaSeconds(remainM, vehicle, road);
   const tourSummary = tourPlan ? tourRouteSummary(tourPlan) : null;
   const destKicker = !online
     ? 'Pause'
@@ -234,10 +256,32 @@ export default function HomeScreen() {
     [mapStores, mineDel],
   );
 
-  const pickupRoute =
-    road?.coordinates?.length
-      ? road.coordinates
-      : [mapPosition, tourPlan?.navTo ?? dest];
+  const pickupRoute = useMemo(() => {
+    if (routeCoordinates && routeCoordinates.length >= 2) return routeCoordinates;
+    if (road?.coordinates && road.coordinates.length >= 2) return road.coordinates;
+    const from = tourPlan?.routeFrom ?? storePt;
+    const to = tourPlan?.navTo ?? dest;
+    if (
+      Number.isFinite(from?.[0]) &&
+      Number.isFinite(from?.[1]) &&
+      Number.isFinite(to?.[0]) &&
+      Number.isFinite(to?.[1])
+    ) {
+      return [from, to] as LngLat[];
+    }
+    return undefined;
+  }, [
+    routeCoordinates,
+    road?.coordinates,
+    tourPlan?.routeFrom?.[0],
+    tourPlan?.routeFrom?.[1],
+    tourPlan?.navTo?.[0],
+    tourPlan?.navTo?.[1],
+    storePt[0],
+    storePt[1],
+    dest[0],
+    dest[1],
+  ]);
 
   const goCourses = () => router.push('/(tabs)/missions');
 
@@ -260,7 +304,7 @@ export default function HomeScreen() {
       />
 
       <View style={[styles.top, { paddingTop: Math.max(insets.top, 10) }]}>
-        <View style={styles.identity}>
+        <View style={[styles.identity, iceSurface()]}>
           <Image source={staffPhotoSource(staff?.photoUrl)} style={styles.avatar} />
           <View style={{ flex: 1 }}>
             <Text style={styles.hello}>Bonjour,</Text>
@@ -279,20 +323,20 @@ export default function HomeScreen() {
               : 'Passer en ligne'
           }
           onPress={() => setOnline(!online)}
-          style={[styles.statusChip, !online && styles.statusOff]}>
+          style={[styles.statusChip, iceSurface(), !online && styles.statusOff]}>
           <View style={[styles.dot, !online && styles.dotOff]} />
           <Text style={[styles.statusTxt, !online && styles.statusTxtOff]}>
             {online ? 'En ligne' : 'Pause'}
           </Text>
         </Pressable>
-        <IconBtn name="bell" bg={colors.white} badge={unreadCount} onPress={() => router.push('/notifications')} />
+        <IconBtn name="bell" ice badge={unreadCount} onPress={() => router.push('/notifications')} />
       </View>
 
       <Animated.View
         style={[styles.etaCard, { bottom: Animated.add(sheetH, 12) }]}
         pointerEvents="box-none">
         <Pressable
-          style={styles.etaInner}
+          style={[styles.etaInner, iceSurface()]}
           onPress={
             mineDel[0]
               ? () => router.push(`/run/${encodeURIComponent(tourPlan?.focusDelivery.id ?? mineDel[0].id)}`)
@@ -313,12 +357,12 @@ export default function HomeScreen() {
           </View>
           <View style={{ alignItems: 'flex-end' }}>
             <Text style={styles.etaValue}>{minLabel(etaS)}</Text>
-            <Text style={styles.etaKm}>{kmLabel(road?.distanceMeters)}</Text>
+            <Text style={styles.etaKm}>{kmLabel(remainM)}</Text>
           </View>
         </Pressable>
       </Animated.View>
 
-      <Animated.View style={[styles.sheet, { height: sheetH, paddingBottom: tabLift }]}>
+      <Animated.View style={[styles.sheet, { height: sheetH }]}>
         <View {...handlePan.panHandlers} style={styles.handleHit}>
           <View style={styles.handle} />
         </View>
@@ -326,9 +370,12 @@ export default function HomeScreen() {
         <ScrollView
           ref={listRef}
           style={styles.list}
-          contentContainerStyle={styles.listInner}
+          contentContainerStyle={[styles.listInner, { paddingBottom: tabLift + 16 }]}
           scrollEventThrottle={16}
           bounces
+          nestedScrollEnabled
+          showsVerticalScrollIndicator={false}
+          showsHorizontalScrollIndicator={false}
           refreshControl={pullRefreshControl(refreshing, refresh)}>
           <PullBanner visible={refreshing} />
           <NowPresence
@@ -418,11 +465,9 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     gap: 10,
-    backgroundColor: colors.white,
     borderRadius: 999,
     paddingVertical: 6,
     paddingHorizontal: 8,
-    ...shadow.card,
   },
   avatar: { width: 36, height: 36, borderRadius: 18 },
   hello: { ...bodyFont('400'), fontSize: 11, color: colors.muted },
@@ -431,17 +476,15 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     gap: 6,
-    backgroundColor: colors.teal,
     borderRadius: 999,
     paddingHorizontal: 12,
     paddingVertical: 10,
-    ...shadow.card,
   },
-  statusOff: { backgroundColor: '#1f2937' },
-  dot: { width: 8, height: 8, borderRadius: 4, backgroundColor: '#fff' },
+  statusOff: {},
+  dot: { width: 8, height: 8, borderRadius: 4, backgroundColor: colors.teal },
   dotOff: { backgroundColor: '#fbbf24' },
-  statusTxt: { ...displayFont('800'), fontSize: 12, color: colors.onAccent },
-  statusTxtOff: { color: '#fde68a' },
+  statusTxt: { ...displayFont('800'), fontSize: 12, color: colors.teal },
+  statusTxtOff: { color: '#b45309' },
   etaCard: {
     position: 'absolute',
     left: 16,
@@ -452,11 +495,9 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     gap: 12,
-    backgroundColor: colors.white,
     borderRadius: radius.pill,
     paddingVertical: 10,
     paddingHorizontal: 14,
-    ...shadow.card,
   },
   etaKicker: { ...bodyFont('600'), fontSize: 11, color: colors.muted },
   etaValue: { ...displayFont('900'), fontSize: 20, color: colors.teal },
@@ -469,25 +510,36 @@ const styles = StyleSheet.create({
     right: 0,
     bottom: 0,
     zIndex: 8,
+    width: '100%',
+    flexDirection: 'column',
     backgroundColor: colors.white,
     borderTopLeftRadius: radius.sheet,
     borderTopRightRadius: radius.sheet,
-    paddingHorizontal: 16,
     paddingTop: 8,
     overflow: 'hidden',
     ...shadow.tabBar,
   },
-  handleHit: { alignItems: 'center', paddingVertical: 14, marginHorizontal: -16 },
+  handleHit: { alignItems: 'center', paddingVertical: 10 },
   handle: {
     alignSelf: 'center',
     width: 48,
     height: 5,
     borderRadius: 3,
     backgroundColor: colors.placeholder,
-    marginBottom: 8,
+    marginBottom: 4,
   },
-  list: { flex: 1 },
-  listInner: { gap: 12, paddingBottom: 16 },
+  list: {
+    flex: 1,
+    minHeight: 0,
+    width: '100%',
+    alignSelf: 'stretch',
+  },
+  listInner: {
+    flexGrow: 1,
+    gap: 12,
+    paddingHorizontal: 16,
+    width: '100%',
+  },
   heldHint: {
     ...bodyFont('600'),
     fontSize: 13,

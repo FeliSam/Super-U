@@ -7,14 +7,25 @@ import { clientCoord, courierAnchor, offsetBeside, pointAlongRoute, storeCoord }
 import { buildCourierTourPlan } from '@/lib/tourRoute';
 import { isDeliveryActive } from '@/lib/opsModel';
 import { fetchRoadRoute } from '@/lib/roadRoute';
-import { asVehicleKind, headingDeg, osrmProfileFor, travelSeconds, tripProgress } from '@/lib/vehicleMotion';
+import { asVehicleKind, headingDeg, travelSeconds, tripProgress } from '@/lib/vehicleMotion';
 import * as Location from 'expo-location';
 import React, { createContext, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import { Platform } from 'react-native';
 
-type LocValue = { lastPosition: LngLat | null; mapPosition: LngLat; heading: number | null };
+type LocValue = {
+  lastPosition: LngLat | null;
+  mapPosition: LngLat;
+  heading: number | null;
+  /** Géométrie OSRM suivie par la simulation (même tracé à afficher sur la carte). */
+  routeCoordinates: LngLat[] | null;
+};
 
-const Ctx = createContext<LocValue>({ lastPosition: null, mapPosition: courierMapFallback, heading: null });
+const Ctx = createContext<LocValue>({
+  lastPosition: null,
+  mapPosition: courierMapFallback,
+  heading: null,
+  routeCoordinates: null,
+});
 
 function sameSpot(a: LngLat | null, b: LngLat, meters = 10) {
   if (!a) return false;
@@ -42,6 +53,7 @@ export function LocationProvider({ children }: { children: React.ReactNode }) {
   const [gpsPosition, setGpsPosition] = useState<LngLat | null>(null);
   const [simPosition, setSimPosition] = useState<LngLat | null>(null);
   const [heading, setHeading] = useState<number | null>(null);
+  const [routeCoordinates, setRouteCoordinates] = useState<LngLat[] | null>(null);
   const gpsRef = useRef<LngLat | null>(null);
   const simRef = useRef<LngLat | null>(null);
   const lastSent = useRef(0);
@@ -105,9 +117,11 @@ export function LocationProvider({ children }: { children: React.ReactNode }) {
 
     if (Platform.OS === 'web') {
       if (typeof navigator === 'undefined' || !navigator.geolocation) return;
-      void getDeviceLocationWeb().then((here) => {
-        if (!cancelled) applyGps(here);
-      });
+      void getDeviceLocationWeb()
+        .then((here) => {
+          if (!cancelled) applyGps(here);
+        })
+        .catch(() => undefined);
       webWatchId = navigator.geolocation.watchPosition(
         (pos) => {
           if (cancelled) return;
@@ -155,22 +169,30 @@ export function LocationProvider({ children }: { children: React.ReactNode }) {
     let raf = 0;
 
     if (anchor === 'store') {
-      if (!gpsIsMoving()) setSimPosition(offsetBeside(store, home));
+      setRouteCoordinates(null);
+      if (!gpsIsMoving()) setSimPosition(offsetBeside(store, home, 12));
       return () => {
         cancelled = true;
       };
     }
     if (anchor === 'client') {
-      if (!gpsIsMoving()) setSimPosition(offsetBeside(home, store));
+      setRouteCoordinates(null);
+      // Chez le client : à quelques mètres du point de commande (pas 90 m à côté).
+      if (!gpsIsMoving()) setSimPosition(offsetBeside(home, store, 8));
       return () => {
         cancelled = true;
       };
     }
 
-    void fetchRoadRoute([store, home], osrmProfileFor(vehicle)).then((road) => {
+    // Même jambe que la carte : départ tournée (magasin / dernière remise) → client courant.
+    const origin = tourPlan?.routeFrom ?? store;
+    const dest = tourPlan?.navTo ?? home;
+
+    void fetchRoadRoute([origin, dest], vehicle).then((road) => {
       if (cancelled || !road) return;
-      const coords = road.coordinates.length >= 2 ? road.coordinates : [store, home];
-      const dist = road.distanceMeters || haversineMeters(store, home);
+      const coords = road.coordinates.length >= 2 ? road.coordinates : [origin, dest];
+      setRouteCoordinates(coords);
+      const dist = road.distanceMeters || haversineMeters(origin, dest);
       const durationSec = travelSeconds(dist, vehicle, road.durationSeconds);
       const jobId = active?.id ?? '';
       const stamp = active?.en_route_at || active?.picked_up_at;
@@ -205,7 +227,20 @@ export function LocationProvider({ children }: { children: React.ReactNode }) {
       cancelled = true;
       if (raf) cancelAnimationFrame(raf);
     };
-  }, [staff?.id, active?.id, status, store[0], store[1], home[0], home[1], vehicle]);
+  }, [
+    staff?.id,
+    active?.id,
+    status,
+    store[0],
+    store[1],
+    home[0],
+    home[1],
+    vehicle,
+    tourPlan?.routeFrom?.[0],
+    tourPlan?.routeFrom?.[1],
+    tourPlan?.navTo?.[0],
+    tourPlan?.navTo?.[1],
+  ]);
 
   const mapPosition = useMemo<LngLat>(() => {
     if (
@@ -220,7 +255,10 @@ export function LocationProvider({ children }: { children: React.ReactNode }) {
   }, [gpsPosition, simPosition]);
 
   const lastPosition = gpsPosition ?? simPosition;
-  const value = useMemo(() => ({ lastPosition, mapPosition, heading }), [lastPosition, mapPosition, heading]);
+  const value = useMemo(
+    () => ({ lastPosition, mapPosition, heading, routeCoordinates }),
+    [lastPosition, mapPosition, heading, routeCoordinates],
+  );
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>;
 }
 
