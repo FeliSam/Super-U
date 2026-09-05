@@ -1,7 +1,20 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import Constants from 'expo-constants';
-import { Platform } from 'react-native';
 import { showToast } from '@/lib/toastBus';
+import { getApiBaseUrl, isLoopbackApiUrl, loopbackApiHint } from '@/lib/api/apiBase';
+import { setStaffSessionPeek } from '@/lib/sessionPeek';
+
+export {
+  getApiBaseUrl,
+  loadApiBaseOverride,
+  persistApiBaseOverride,
+  getSuggestedApiBaseUrl,
+  subscribeApiBase,
+  isLoopbackApiUrl,
+  loopbackApiHint,
+  discoverLanHost,
+  ensureReachableApiBase,
+  listApiBaseCandidates,
+} from '@/lib/api/apiBase';
 
 export const AUTH_TOKEN_KEY = 'coursego.ops.token.v1';
 export const STAFF_CACHE_KEY = 'coursego.ops.staff.v1';
@@ -34,6 +47,7 @@ export function setAuthToken(token: string | null) {
 export async function persistAuthToken(token: string | null) {
   authToken = token;
   webSet(AUTH_TOKEN_KEY, token);
+  setStaffSessionPeek(Boolean(token));
   try {
     if (token) await AsyncStorage.setItem(AUTH_TOKEN_KEY, token);
     else await AsyncStorage.removeItem(AUTH_TOKEN_KEY);
@@ -59,33 +73,6 @@ export async function loadAuthToken() {
   }
 }
 
-function lanHost(): string | null {
-  if (typeof window !== 'undefined') {
-    const host = window.location?.hostname;
-    if (host && host !== 'localhost' && host !== '127.0.0.1') return host;
-  }
-  if (Platform.OS === 'web') return null;
-  try {
-    const hostUri = Constants.expoConfig?.hostUri ?? Constants.linkingUri ?? '';
-    const host = hostUri.replace(/^[a-z]+:\/\//i, '').split(':')[0]?.split('/')[0];
-    if (host && host !== 'localhost' && host !== '127.0.0.1') return host;
-  } catch {
-    /* ignore */
-  }
-  return null;
-}
-
-function configuredApiUrl() {
-  return (process.env.EXPO_PUBLIC_API_URL || 'http://127.0.0.1:8787').replace(/\/$/, '').replace('localhost', '127.0.0.1');
-}
-
-export function getApiBaseUrl(): string {
-  const configured = configuredApiUrl();
-  const host = lanHost();
-  if (host) return configured.replace(/localhost|127\.0\.0\.1/g, host);
-  return configured;
-}
-
 async function withTimeout(input: RequestInfo, init: RequestInit, ms: number) {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), ms);
@@ -105,19 +92,30 @@ export class ApiError extends Error {
   }
 }
 
+function unreachableMessage() {
+  const api = getApiBaseUrl();
+  const tip = loopbackApiHint(api);
+  if (tip) return `API injoignable (${api}). ${tip}`;
+  return `API injoignable (${api}). Vérifiez npm run dev:api et le Wi‑Fi (même réseau).`;
+}
+
 export function errorMessage(e: unknown): string {
-  if (e instanceof ApiError) return e.message;
+  if (e instanceof ApiError) {
+    if (e.status === 0 || /injoignable|network|failed/i.test(e.message)) {
+      const tip = loopbackApiHint();
+      if (tip && !e.message.includes('127.0.0.1 =')) return `${e.message}. ${tip}`;
+    }
+    return e.message;
+  }
   if (e && typeof e === 'object' && 'message' in e && typeof (e as Error).message === 'string') {
     const m = (e as Error).message;
     if (/abort|timeout/i.test(m)) {
-      return `API trop lente (${configuredApiUrl()}). Vérifiez npm run dev:api (port 8787).`;
+      return `API trop lente (${getApiBaseUrl()}). Vérifiez npm run dev:api (port 8787).`;
     }
-    if (/fetch|network|failed/i.test(m)) {
-      return `API injoignable (${configuredApiUrl()}). À la racine SuperU : npm run dev:api`;
-    }
+    if (/fetch|network|failed/i.test(m)) return unreachableMessage();
     return m;
   }
-  return `API injoignable (${configuredApiUrl()}). À la racine SuperU : npm run dev:api`;
+  return unreachableMessage();
 }
 
 function friendlyError(message: string) {
@@ -161,6 +159,7 @@ function toastApiFailure(path: string, method: string | undefined, err: ApiError
 export async function apiFetch<T>(path: string, init: RequestInit = {}): Promise<T> {
   const headers = new Headers(init.headers);
   if (init.body && !headers.has('Content-Type')) headers.set('Content-Type', 'application/json');
+  headers.set('ngrok-skip-browser-warning', '1');
   if (authToken) headers.set('Authorization', `Bearer ${authToken}`);
   else {
     const stored = webGet(AUTH_TOKEN_KEY);
@@ -186,7 +185,7 @@ export async function apiFetch<T>(path: string, init: RequestInit = {}): Promise
     const err = new ApiError(
       code
         ? `Réponse API invalide (HTTP ${code}). Vérifiez que l’API SuperU tourne sur le port 8787.`
-        : 'API injoignable. À la racine SuperU : npm run dev:api',
+        : unreachableMessage(),
       code,
     );
     toastApiFailure(path, init.method, err);
@@ -199,3 +198,5 @@ export async function apiFetch<T>(path: string, init: RequestInit = {}): Promise
   }
   return data;
 }
+
+void isLoopbackApiUrl;

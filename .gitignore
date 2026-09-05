@@ -10,3 +10,7 @@ pgdata/
 *.log
 expo-env.d.ts
 .cursor/
+tools/ngrok/
+*.exe
+*.zip
+

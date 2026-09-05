@@ -9,11 +9,18 @@
     "marche-admin"
   ],
   "scripts": {
+    "dev": "npx concurrently -k -n api,shop,course,admin -c cyan,green,magenta,yellow \"npm run dev:api\" \"npm run dev:shop\" \"npm run dev:course\" \"npm run dev:admin\"",
     "dev:api": "npm run dev --prefix server",
     "dev:shop": "npm run web --prefix marche-dore",
     "dev:course": "npm run web --prefix CourseGO",
     "dev:admin": "npm run dev --prefix marche-admin",
+    "tunnel:api": "node scripts/tunnel-api.mjs",
+    "api:url": "node scripts/set-api-url.mjs",
+    "ngrok": "node scripts/run-ngrok.mjs",
     "db:up": "docker compose up -d",
     "catalog:map": "node scripts/gen-catalog-images.mjs"
+  },
+  "devDependencies": {
+    "concurrently": "^9.2.4"
   }
 }

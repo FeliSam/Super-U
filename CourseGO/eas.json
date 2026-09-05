@@ -1,0 +1,63 @@
+{
+  "cli": {
+    "version": ">= 16.16.0",
+    "appVersionSource": "remote"
+  },
+  "build": {
+    "development": {
+      "developmentClient": true,
+      "distribution": "internal",
+      "env": {
+        "EXPO_PUBLIC_API_URL": "https://YOUR-TUNNEL.trycloudflare.com"
+      }
+    },
+    "preview": {
+      "distribution": "internal",
+      "android": {
+        "buildType": "apk"
+      },
+      "env": {
+        "EXPO_PUBLIC_API_URL": "https://YOUR-TUNNEL.trycloudflare.com"
+      }
+    },
+    "testflight": {
+      "autoIncrement": true,
+      "distribution": "store",
+      "ios": {
+        "resourceClass": "m-medium"
+      },
+      "env": {
+        "EXPO_PUBLIC_API_URL": "https://YOUR-TUNNEL.trycloudflare.com"
+      }
+    },
+    "production": {
+      "autoIncrement": true,
+      "android": {
+        "buildType": "app-bundle"
+      },
+      "ios": {
+        "resourceClass": "m-medium"
+      },
+      "env": {
+        "EXPO_PUBLIC_API_URL": "https://YOUR-TUNNEL.trycloudflare.com"
+      }
+    }
+  },
+  "submit": {
+    "testflight": {
+      "ios": {
+        "appleTeamId": "K2DMD57HTQ",
+        "ascAppId": "6808354443"
+      }
+    },
+    "production": {
+      "android": {
+        "track": "internal"
+      },
+      "ios": {
+        "appleTeamId": "K2DMD57HTQ",
+        "ascAppId": "6808354443"
+      }
+    }
+  }
+}

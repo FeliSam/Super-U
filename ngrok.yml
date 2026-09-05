@@ -1,0 +1,10 @@
+# Tunnel public → API SuperU locale (port 8787).
+# Usage : npm run tunnel:api
+# Doc : docs/NGROK.md
+version: '2'
+tunnels:
+  api:
+    proto: http
+    addr: 8787
+    schemes:
+      - https
