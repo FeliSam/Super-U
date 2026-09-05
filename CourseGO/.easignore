@@ -1,0 +1,20 @@
+# Keep EAS upload small (EAS uses this instead of .gitignore when present)
+/android
+/ios
+/.expo
+/dist
+/node_modules
+*.log
+.env
+.env.*
+.DS_Store
+*.jks
+*.p8
+*.p12
+*.key
+*.mobileprovision
+*.pem
+_*.json
+_*.txt
+_*.bin
+expo-env.d.ts
