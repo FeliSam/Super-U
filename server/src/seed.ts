@@ -65,8 +65,7 @@ export async function resetWorkspaceKeepProfiles() {
     )`,
   );
   await query(`DELETE FROM users WHERE lower(email) <> $1`, [demoEmail]);
-  const courier = await query(`SELECT id FROM ops.staff WHERE email = 'courier@marchedore.bj'`);
-  if (!courier.rowCount) await seedOpsStaff();
+  await seedOpsStaff();
   return true;
 }
 

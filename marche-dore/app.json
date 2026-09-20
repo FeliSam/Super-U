@@ -1,6 +1,6 @@
 {
   "expo": {
-    "name": "Marché Doré",
+    "name": "MarcheDore",
     "slug": "marche-dore",
     "version": "1.0.0",
     "orientation": "portrait",
@@ -8,7 +8,6 @@
     "scheme": "marchedore",
     "userInterfaceStyle": "automatic",
     "androidStatusBar": {
-      "hidden": true,
       "translucent": true,
       "backgroundColor": "#00000000"
     },
@@ -17,9 +16,9 @@
       "bundleIdentifier": "com.superu.marchedore",
       "buildNumber": "1",
       "infoPlist": {
+        "CFBundleDisplayName": "Marché Doré",
         "ITSAppUsesNonExemptEncryption": false,
-        "UIStatusBarHidden": true,
-        "UIViewControllerBasedStatusBarAppearance": false,
+        "UIViewControllerBasedStatusBarAppearance": true,
         "NSMicrophoneUsageDescription": "Marché Doré utilise le micro pour les appels avec votre coursier.",
         "NSCameraUsageDescription": "Marché Doré utilise la caméra pour vos photos d’avis et de profil.",
         "NSPhotoLibraryUsageDescription": "Marché Doré accède à vos photos pour les ajouter à vos avis.",
@@ -62,12 +61,6 @@
       ],
       "expo-router",
       [
-        "expo-status-bar",
-        {
-          "hidden": true
-        }
-      ],
-      [
         "expo-splash-screen",
         {
           "image": "./assets/images/brand-mark.png",
@@ -83,6 +76,12 @@
         }
       ],
       [
+        "expo-location",
+        {
+          "locationWhenInUsePermission": "Marché Doré utilise votre position pour la livraison et le suivi."
+        }
+      ],
+      [
         "expo-notifications",
         {
           "icon": "./assets/images/brand-mark.png",
@@ -93,16 +92,15 @@
       "expo-asset",
       "expo-image",
       "expo-sqlite",
-      "@react-native-community/datetimepicker"
+      "@react-native-community/datetimepicker",
+      "react-native-maps",
+      "@maplibre/maplibre-react-native"
     ],
     "extra": {
       "privacyPolicyUrl": "https://marchedore.bj/privacy",
       "termsUrl": "https://marchedore.bj/terms",
       "supportEmail": "support@marchedore.bj",
       "router": {},
-      "expo-status-bar": {
-        "hidden": true
-      },
       "eas": {
         "projectId": "20abed55-9ebc-46bc-acd9-14523484f61a"
       }

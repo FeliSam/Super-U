@@ -1,4 +1,4 @@
-import AsyncStorage from '@react-native-async-storage/async-storage';
+﻿import AsyncStorage from '@react-native-async-storage/async-storage';
 import Constants from 'expo-constants';
 import { Platform } from 'react-native';
 
@@ -105,9 +105,10 @@ function configuredFromEnv(): string {
 export function getApiBaseUrl(): string {
   const configured = configuredFromEnv();
 
-  // Build / tunnel HTTPS : ignore une ancienne IP LAN sauvée dans ApiHostEditor
+  // Override utilisateur (ApiHostEditor) : prioritaire.
+  // On ignore seulement 127.0.0.1 si un tunnel HTTPS est configure (inutile sur telephone).
   if (memoryOverride) {
-    if (!(isPublicApiUrl(configured) && isPrivateLanApiUrl(memoryOverride))) {
+    if (!(isPublicApiUrl(configured) && isLoopbackApiUrl(memoryOverride))) {
       return memoryOverride;
     }
   }
@@ -187,7 +188,7 @@ async function probeHealth(base: string, ms: number): Promise<boolean> {
     });
     if (!res.ok) return false;
     const body = (await res.json().catch(() => null)) as { ok?: boolean } | null;
-    return body?.ok === true || res.ok;
+    return body?.ok === true;
   } catch {
     return false;
   } finally {
@@ -202,10 +203,8 @@ export async function ensureReachableApiBase(timeoutMs = 1800): Promise<string |
 
   // Build tunnel : ne pas basculer vers une IP LAN si l’API publique est configurée
   const configured = configuredFromEnv();
-  if (isPublicApiUrl(configured)) {
+  if (isPublicApiUrl(configured) && !memoryOverride) {
     if (await probeHealth(configured, timeoutMs)) {
-      memoryOverride = null;
-      emit();
       return configured;
     }
     return null;

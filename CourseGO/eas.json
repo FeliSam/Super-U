@@ -8,7 +8,7 @@
       "developmentClient": true,
       "distribution": "internal",
       "env": {
-        "EXPO_PUBLIC_API_URL": "https://YOUR-TUNNEL.trycloudflare.com"
+        "EXPO_PUBLIC_API_URL": "http://172.20.10.2:8787"
       }
     },
     "preview": {
@@ -17,7 +17,7 @@
         "buildType": "apk"
       },
       "env": {
-        "EXPO_PUBLIC_API_URL": "https://YOUR-TUNNEL.trycloudflare.com"
+        "EXPO_PUBLIC_API_URL": "https://giveaway-rack-obtrusive.ngrok-free.dev"
       }
     },
     "testflight": {
@@ -27,7 +27,7 @@
         "resourceClass": "m-medium"
       },
       "env": {
-        "EXPO_PUBLIC_API_URL": "https://YOUR-TUNNEL.trycloudflare.com"
+        "EXPO_PUBLIC_API_URL": "https://giveaway-rack-obtrusive.ngrok-free.dev"
       }
     },
     "production": {
@@ -39,7 +39,7 @@
         "resourceClass": "m-medium"
       },
       "env": {
-        "EXPO_PUBLIC_API_URL": "https://YOUR-TUNNEL.trycloudflare.com"
+        "EXPO_PUBLIC_API_URL": "https://giveaway-rack-obtrusive.ngrok-free.dev"
       }
     }
   },
