@@ -9,19 +9,37 @@
     "userInterfaceStyle": "light",
     "ios": {
       "supportsTablet": true,
+      "bundleIdentifier": "com.superu.coursego",
+      "buildNumber": "7",
       "infoPlist": {
+        "ITSAppUsesNonExemptEncryption": false,
+        "UIViewControllerBasedStatusBarAppearance": true,
         "NSLocationWhenInUseUsageDescription": "CourseGo utilise votre position pendant les livraisons en route.",
         "NSCameraUsageDescription": "CourseGo scanne les codes-barres et QR des produits en magasin.",
-        "NSMicrophoneUsageDescription": "CourseGo utilise le micro pour les appels avec le client."
+        "NSMicrophoneUsageDescription": "CourseGo utilise le micro pour les appels avec le client.",
+        "UIBackgroundModes": [
+          "remote-notification"
+        ]
       }
     },
     "android": {
-      "edgeToEdgeEnabled": true,
+      "package": "com.superu.coursego",
+      "versionCode": 1,
       "adaptiveIcon": {
         "backgroundColor": "#058d81",
         "foregroundImage": "./assets/images/icon.png"
       },
-      "permissions": ["ACCESS_COARSE_LOCATION", "ACCESS_FINE_LOCATION", "CAMERA", "RECORD_AUDIO"]
+      "permissions": [
+        "ACCESS_COARSE_LOCATION",
+        "ACCESS_FINE_LOCATION",
+        "CAMERA",
+        "RECORD_AUDIO",
+        "POST_NOTIFICATIONS",
+        "android.permission.ACCESS_COARSE_LOCATION",
+        "android.permission.ACCESS_FINE_LOCATION",
+        "android.permission.CAMERA",
+        "android.permission.RECORD_AUDIO"
+      ]
     },
     "web": {
       "bundler": "metro",
@@ -33,7 +51,9 @@
       [
         "expo-splash-screen",
         {
-          "backgroundColor": "#fafaf9"
+          "backgroundColor": "#fafaf9",
+          "image": "./assets/images/coursego-mark.png",
+          "imageWidth": 200
         }
       ],
       "expo-asset",
@@ -50,11 +70,31 @@
           "cameraPermission": "CourseGo scanne les codes-barres et QR des produits en magasin.",
           "barcodeScannerEnabled": true
         }
-      ]
+      ],
+      [
+        "expo-notifications",
+        {
+          "icon": "./assets/images/coursego-mark.png",
+          "color": "#058d81",
+          "defaultChannel": "default"
+        }
+      ],
+      "expo-font",
+      "react-native-maps",
+      "@maplibre/maplibre-react-native"
     ],
+    "extra": {
+      "privacyPolicyUrl": "https://marchedore.bj/privacy",
+      "termsUrl": "https://marchedore.bj/terms",
+      "supportEmail": "support@marchedore.bj",
+      "router": {},
+      "eas": {
+        "projectId": "ec3a7b59-415b-46e9-960a-10c49848420a"
+      }
+    },
     "experiments": {
-      "typedRoutes": true,
-      "asyncRoutes": false
-    }
+      "typedRoutes": true
+    },
+    "owner": "feliciano6"
   }
 }

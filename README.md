@@ -28,3 +28,10 @@ Ou dans chaque dossier : `npm install` puis `npm run web` / `npm run dev`.
 ## RÃ¨gle
 
 CourseGO nâ€™est pas une 2e boutique. Elle avance `ops.pick_jobs` / `ops.deliveries`. Le serveur met Ã  jour le statut vu par le client.
+
+## TestFlight / EAS
+
+- 	estflight/production : API `https://giveaway-rack-obtrusive.ngrok-free.dev` (lancer `npm run tunnel:ngrok`) ou une API HTTPS prod.
+- Rebuild EAS requis après ajout des plugins `react-native-maps` et `@maplibre/maplibre-react-native`.
+- Staff démo CourseGO : `courier@marchedore.bj` / `picker@marchedore.bj` / `marche2024`.
+

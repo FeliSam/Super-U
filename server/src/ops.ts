@@ -784,7 +784,36 @@ export async function seedOpsStaff() {
        updated_at = NOW()`,
     [courierId],
   );
-  return !existing.rowCount;
+
+  // Demo picker (ramasseur)
+  const pickerExisting = await query<{ id: string }>('SELECT id FROM ops.staff WHERE email = $1', [
+    'picker@marchedore.bj',
+  ]);
+  let pickerId = pickerExisting.rows[0]?.id;
+  if (!pickerId) {
+    pickerId = `st-picker-${randomBytes(3).toString('hex')}`;
+    await query(
+      `INSERT INTO ops.staff (id, email, phone, password_hash, first_name, last_name, role, can_pick, can_deliver, store_id, vehicle, onboard_status)
+       VALUES ($1, 'picker@marchedore.bj', '+229 01 40 00 00 03', $2, 'Aicha', 'Kouassi', 'picker', TRUE, FALSE, 'su-aeroport', 'pied', 'active')`,
+      [pickerId, hash],
+    );
+  } else {
+    await query(
+      `UPDATE ops.staff SET role = 'picker', can_pick = TRUE, can_deliver = FALSE, vehicle = COALESCE(NULLIF(vehicle, ''), 'pied'),
+         onboard_status = 'active', is_active = TRUE, phone = COALESCE(NULLIF(phone, ''), '+229 01 40 00 00 03')
+       WHERE id = $1`,
+      [pickerId],
+    );
+  }
+  for (const storeId of AFFILIATE_STORES) {
+    await query(
+      `INSERT INTO ops.staff_store_affiliations (staff_id, store_id) VALUES ($1, $2)
+       ON CONFLICT DO NOTHING`,
+      [pickerId, storeId],
+    );
+  }
+
+  return !existing.rowCount || !pickerExisting.rowCount;
 }
 
 function liveStaffHref(row: {
