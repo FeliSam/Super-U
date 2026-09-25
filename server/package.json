@@ -12,6 +12,7 @@
     "catalog:import": "tsx scripts/import-catalog.mjs",
     "catalog:import:dry-run": "tsx scripts/import-catalog.mjs --dry-run",
     "catalog:media": "node scripts/import-catalog-media.mjs",
+    "test": "node --import tsx --test tests/critical.api.test.ts",
     "test:smoke": "node --import tsx --test tests/catalogHelpers.test.ts tests/catalogManifest.test.ts",
     "test:integration": "node --import tsx --test tests/*.integration.test.ts",
     "catalog:qa:api": "node scripts/qa-catalog-api.mjs",
