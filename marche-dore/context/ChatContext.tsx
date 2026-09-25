@@ -18,6 +18,7 @@ import { pollWhileForeground } from '@/lib/foreground';
 import { staffPhotoSource } from '@/lib/staffPhoto';
 import type { ChatMessage, Conversation } from '@/data/messages';
 import { useAuth } from '@/context/AuthContext';
+import { isThreadSignal, subscribeLive, useLiveConnected } from '@/lib/live';
 import { useProfile } from '@/context/ProfileContext';
 import React, {
   createContext,
@@ -118,6 +119,7 @@ function conversationFromInbox(row: InboxThread): Conversation {
 
 export function ChatProvider({ children }: { children: React.ReactNode }) {
   const { session, ready: authReady } = useAuth();
+  const liveOn = useLiveConnected();
   const { profile } = useProfile();
   const firstName = profile.firstName || session?.firstName || '';
   const [supportMsgs, setSupportMsgs] = useState<ChatMessage[]>([]);
@@ -183,8 +185,16 @@ export function ChatProvider({ children }: { children: React.ReactNode }) {
       time: welcome?.time ?? 'Maintenant',
     });
     setReady(true);
-    return pollWhileForeground(() => void pullComms(), 8_000);
-  }, [authReady, session?.accountId, pullComms, firstName]);
+    // Flux temps réel ouvert : relecture sur signal + filet de sécurité toutes les 20 s.
+    const stopPoll = pollWhileForeground(() => void pullComms(), liveOn ? 20_000 : 8_000);
+    const unsub = subscribeLive((s) => {
+      if (isThreadSignal(s)) void pullComms();
+    });
+    return () => {
+      stopPoll();
+      unsub();
+    };
+  }, [authReady, session?.accountId, pullComms, firstName, liveOn]);
 
   const conversations = useMemo(() => {
     const support: Conversation = {

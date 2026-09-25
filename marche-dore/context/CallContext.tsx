@@ -11,6 +11,7 @@ import {
 } from '@/lib/api/comms';
 import { getAuthToken } from '@/lib/api/http';
 import { subscribeForeground } from '@/lib/foreground';
+import { isCallSignal, isLiveConnected, subscribeLive } from '@/lib/live';
 import { showToast } from '@/lib/toastBus';
 import {
   startCallMedia,
@@ -160,14 +161,28 @@ export function CallProvider({ children }: { children: React.ReactNode }) {
         .catch(() => undefined);
     };
     poll();
+    // Sans appel en cours et flux temps réel ouvert : la sonnerie arrive par signal, relecture toutes les 3 s.
+    let lastPoll = Date.now();
+    const tick = () => {
+      const idle = phaseRef.current === 'idle' && !startingRef.current;
+      if (idle && isLiveConnected() && Date.now() - lastPoll < 3000) return;
+      lastPoll = Date.now();
+      poll();
+    };
     let id: ReturnType<typeof setInterval> | null = null;
     const arm = (ms: number) => {
       if (id) clearInterval(id);
-      id = setInterval(poll, ms);
+      id = setInterval(tick, ms);
     };
     const unsub = subscribeForeground((active) => arm(active ? 400 : 2_500));
+    const unsubLive = subscribeLive((s) => {
+      if (!isCallSignal(s)) return;
+      lastPoll = Date.now();
+      poll();
+    });
     return () => {
       unsub();
+      unsubLive();
       if (id) clearInterval(id);
     };
   }, [resetCall]);

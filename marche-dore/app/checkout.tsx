@@ -258,7 +258,7 @@ export default function CheckoutScreen() {
     router.push(`/payment-setup/${id}` as Href);
   };
 
-  const commitOrder = async (paymentStatus: 'paid' | 'cod_pending', paymentRef: string | null) => {
+  const commitOrder = async (paymentStatus: 'pending' | 'cod_pending', paymentRef: string | null) => {
     if (!defaultAddress) {
       leavingRef.current = false;
       return false;
@@ -329,7 +329,8 @@ export default function CheckoutScreen() {
       if (pay === 'cod') {
         await commitOrder('cod_pending', null);
       } else {
-        await commitOrder('paid', `skip-${Date.now()}`);
+        // Paiement en ligne pas encore branché : la commande part « en attente de paiement », jamais « payée ».
+        await commitOrder('pending', null);
       }
     } finally {
       placingRef.current = false;
@@ -346,7 +347,7 @@ export default function CheckoutScreen() {
       if (pay === 'cod') {
         await commitOrder('cod_pending', null);
       } else {
-        await commitOrder('paid', `skip-${Date.now()}`);
+        await commitOrder('pending', null);
       }
     } finally {
       placingRef.current = false;

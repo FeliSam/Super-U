@@ -48,13 +48,16 @@ function paymentStatusLabel(order: {
   total: number;
 }) {
   const lines: string[] = [];
-  if (order.paymentStatus === 'paid') lines.push('Payé');
-  else if (order.paymentId === 'cod' || order.paymentStatus === 'cod_pending') {
-    lines.push('À régler à la livraison');
-  }
+  const cod = order.paymentId === 'cod';
+  if (order.paymentStatus === 'paid_cash' || (cod && order.paymentStatus === 'paid')) lines.push('Payé en espèces');
+  else if (order.paymentStatus === 'paid') lines.push('Payé');
+  else if (order.paymentStatus === 'refunded') lines.push('Remboursé');
+  else if (order.paymentStatus === 'partially_refunded') lines.push('Partiellement remboursé');
+  else if (cod || order.paymentStatus === 'cod_pending') lines.push('À régler à la livraison');
+  else lines.push('En attente de paiement');
   if (order.paymentDetail) lines.push(order.paymentDetail);
   lines.push(formatFcfa(order.total));
-  if (order.paymentRef) lines.push(`Réf. ${order.paymentRef}`);
+  if (order.paymentRef && !order.paymentRef.startsWith('skip-')) lines.push(`Réf. ${order.paymentRef}`);
   return lines;
 }
 

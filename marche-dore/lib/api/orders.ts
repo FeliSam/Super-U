@@ -19,6 +19,16 @@ export async function apiPlaceOrder(order: Order) {
   return res.order ?? order;
 }
 
+/** Seul statut accepté côté serveur depuis l'app : l'annulation (tant que la commande n'est pas en préparation). */
+export async function apiPatchOrderStatus(orderId: string, status: OrderStatus) {
+  if (status !== 'cancelled') return null;
+  const res = await apiFetch<{ ok: true; order?: Order }>(`/me/orders/${encodeURIComponent(orderId)}`, {
+    method: 'PATCH',
+    body: JSON.stringify({ status: 'cancelled' }),
+  });
+  return res.order ?? null;
+}
+
 export async function apiRateCourier(orderId: string, rating: number, comment: string, tipAmount = 0) {
   await apiFetch(`/me/orders/${encodeURIComponent(orderId)}/rate-courier`, {
     method: 'POST',

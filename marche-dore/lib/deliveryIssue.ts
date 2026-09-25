@@ -45,8 +45,10 @@ export function asClientIssueAction(raw: unknown): ClientIssueActionId | null {
 }
 
 function isPaid(paymentId?: string | null, paymentStatus?: string | null) {
+  // Remboursement proposé seulement si un paiement en ligne est confirmé (jamais pour les espèces non encaissées
+  // ni pour un paiement « en attente »).
   if (paymentId === 'cod' || paymentStatus === 'cod_pending') return false;
-  return paymentStatus === 'paid' || Boolean(paymentId && paymentId !== 'cod');
+  return paymentStatus === 'paid' || paymentStatus === 'partially_refunded';
 }
 
 export function issueActionsFor(

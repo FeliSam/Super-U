@@ -6,14 +6,32 @@ import { useAuth } from '@/context/AuthContext';
 import { useProfile } from '@/context/ProfileContext';
 import { findNearestSuperU, fetchDrivingRoute, getSuperUById, type RouteProfile } from '@/lib/deliveryRouting';
 import { apiGetOrderLive, apiGetOrders, apiPatchOrderStatus, apiPlaceOrder } from '@/lib/api/orders';
-import { applyOrderLive, isActiveFulfillment, type DeliveryStatus, type PickStatus } from '@/lib/orderOps';
+import { applyOrderLive, isActiveFulfillment, type DeliveryStatus, type OpsEvent, type PickStatus } from '@/lib/orderOps';
 import { ApiError, getAuthToken } from '@/lib/api/http';
 import { loadAccountJson, saveAccountJson } from '@/lib/accountSync';
+import { isLiveConnected, isOrderSignal, restartLive, stopLive, subscribeLive, subscribeLivePos } from '@/lib/live';
 import React, { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
 
 const STORAGE_KEY = 'marche-dore.orders.v2';
 
 export type OrderStatus = 'confirmed' | 'preparing' | 'shipping' | 'delivered' | 'cancelled';
+
+/**
+ * Statut de paiement (source de vérité : le serveur).
+ * - cod_pending : espèces à régler à la livraison ; paid_cash : espèces encaissées (code client à la remise).
+ * - pending : paiement en ligne non confirmé (aucun « payé » sans confirmation serveur).
+ */
+export type PaymentStatus = 'paid' | 'paid_cash' | 'cod_pending' | 'pending' | 'refunded' | 'partially_refunded';
+const PAYMENT_STATUSES: readonly string[] = ['paid', 'paid_cash', 'cod_pending', 'pending', 'refunded', 'partially_refunded'];
+
+function sanitizePaymentStatus(o: { paymentStatus?: unknown; paymentStatusDetail?: unknown }, paymentId: string): PaymentStatus | undefined {
+  // Le serveur publie `paymentStatus: 'paid'` + `paymentStatusDetail: 'paid_cash'` (compatibilité anciens builds).
+  const detail = typeof o.paymentStatusDetail === 'string' ? o.paymentStatusDetail : '';
+  if (PAYMENT_STATUSES.includes(detail)) return detail as PaymentStatus;
+  const s = typeof o.paymentStatus === 'string' ? o.paymentStatus : '';
+  if (PAYMENT_STATUSES.includes(s)) return s as PaymentStatus;
+  return paymentId === 'cod' ? 'cod_pending' : undefined;
+}
 
 /** Timeline de démo par défaut (si durée trajet inconnue). */
 function statusRank(status: OrderStatus) {
@@ -64,7 +82,7 @@ export type Order = {
   paymentId: PaymentId;
   paymentLabel: string;
   paymentDetail: string | null;
-  paymentStatus?: 'paid' | 'cod_pending';
+  paymentStatus?: PaymentStatus;
   paymentRef?: string | null;
   addressLabel: string;
   addressLine: string;
@@ -121,7 +139,7 @@ export type PlaceOrderInput = {
   paymentId: PaymentId;
   paymentLabel: string;
   paymentDetail: string | null;
-  paymentStatus?: 'paid' | 'cod_pending';
+  paymentStatus?: PaymentStatus;
   paymentRef?: string | null;
   comment?: string;
   addressLabel?: string;
@@ -313,7 +331,7 @@ function sanitizeOrder(raw: unknown): Order | null {
     paymentId,
     paymentLabel,
     paymentDetail: typeof o.paymentDetail === 'string' ? o.paymentDetail : null,
-    paymentStatus: o.paymentStatus === 'paid' || o.paymentStatus === 'cod_pending' ? o.paymentStatus : paymentId === 'cod' ? 'cod_pending' : undefined,
+    paymentStatus: sanitizePaymentStatus(o as { paymentStatus?: unknown; paymentStatusDetail?: unknown }, paymentId),
     paymentRef: typeof o.paymentRef === 'string' ? o.paymentRef : null,
     addressLabel: (typeof o.addressLabel === 'string' && o.addressLabel.trim()) || 'Adresse',
     addressLine: typeof o.addressLine === 'string' ? o.addressLine.trim() : '',
@@ -455,6 +473,16 @@ export function OrdersProvider({ children }: { children: React.ReactNode }) {
   const ordersRef = useRef(orders);
   ordersRef.current = orders;
 
+  // Temps réel : un flux par appareil (« ta commande a changé », position du livreur) ; arrêté à la déconnexion.
+  useEffect(() => {
+    if (!authReady) return;
+    if (!accountId || !getAuthToken()) {
+      stopLive();
+      return;
+    }
+    restartLive();
+  }, [authReady, accountId]);
+
   useEffect(() => {
     if (!authReady || !accountId || !getAuthToken()) return;
     let active = true;
@@ -501,17 +529,48 @@ export function OrdersProvider({ children }: { children: React.ReactNode }) {
     };
     void pullList();
     void pullLive();
-    const listTimer = setInterval(() => void pullList(), 12_000);
+    // Flux ouvert : liste toutes les 30 s et suivi toutes les 15 s (filet de sécurité), le reste arrive par
+    // signal. Sans flux : 12 s / 3 s (suivi affiché) ou 9 s comme avant.
+    let listTick = 0;
+    const listTimer = setInterval(() => {
+      listTick += 1;
+      if (listTick % (isLiveConnected() ? 5 : 2) !== 0) return;
+      void pullList();
+    }, 6_000);
     const liveTimer = setInterval(() => {
       liveTick += 1;
-      const focused = Boolean(trackingFocusRef.current);
-      if (!focused && liveTick % 3 !== 0) return;
+      if (isLiveConnected()) {
+        if (liveTick % 5 !== 0) return;
+      } else {
+        const focused = Boolean(trackingFocusRef.current);
+        if (!focused && liveTick % 3 !== 0) return;
+      }
       void pullLive();
     }, 3000);
+    let pending: ReturnType<typeof setTimeout> | null = null;
+    const unsubLive = subscribeLive((s) => {
+      if (!isOrderSignal(s) || pending) return;
+      pending = setTimeout(() => {
+        pending = null;
+        void pullList();
+        void pullLive();
+      }, 300);
+    });
+    // Position du livreur de la commande suivie : relecture du suivi, au plus toutes les 3 s.
+    let lastPosPull = 0;
+    const unsubPos = subscribeLivePos((p) => {
+      if (!p.orderId || p.orderId !== trackingFocusRef.current) return;
+      if (Date.now() - lastPosPull < 3000) return;
+      lastPosPull = Date.now();
+      void pullLive();
+    });
     return () => {
       active = false;
       clearInterval(listTimer);
       clearInterval(liveTimer);
+      if (pending) clearTimeout(pending);
+      unsubLive();
+      unsubPos();
     };
   }, [authReady, accountId]);
 
@@ -524,7 +583,7 @@ export function OrdersProvider({ children }: { children: React.ReactNode }) {
     const store = preferred ?? findNearestSuperU(addressCoordinate).store;
     const driving = await fetchDrivingRoute(store.coordinate, addressCoordinate, 'driving');
 
-    let created: Order | null = null;
+    let created = null as Order | null;
 
     setOrders((prev) => {
       const order: Order = {
@@ -545,7 +604,8 @@ export function OrdersProvider({ children }: { children: React.ReactNode }) {
         paymentId: input.paymentId,
         paymentLabel: input.paymentLabel?.trim() || paymentLabelFor(input.paymentId),
         paymentDetail: input.paymentDetail,
-        paymentStatus: input.paymentStatus ?? (input.paymentId === 'cod' ? 'cod_pending' : 'paid'),
+        // Jamais « payé » côté app : COD = à régler à la livraison, autre moyen = en attente de confirmation.
+        paymentStatus: input.paymentId === 'cod' ? 'cod_pending' : input.paymentStatus === 'paid' ? 'pending' : input.paymentStatus ?? 'pending',
         paymentRef: input.paymentRef ?? null,
         addressLabel: input.addressLabel?.trim() || 'Adresse',
         addressLine: input.addressLine?.trim() || '',
@@ -585,7 +645,7 @@ export function OrdersProvider({ children }: { children: React.ReactNode }) {
       if (remote) {
         const list = remote.map(sanitizeOrder).filter((o): o is Order => Boolean(o));
         setOrders(list);
-        return list.find((o) => normalizeId(o.id) === normalizeId(created.id)) ?? { ...created };
+        return list.find((o) => normalizeId(o.id) === normalizeId(created!.id)) ?? { ...created! };
       }
       if (code.length === 4) {
         setOrders((prev) => prev.map((o) => (o.id === created!.id ? { ...o, handoffCode: code } : o)));
