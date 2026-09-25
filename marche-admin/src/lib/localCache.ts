@@ -48,3 +48,18 @@ export async function writeSnap<T>(snap: CacheSnap<T>): Promise<void> {
     /* quota / private mode */
   }
 }
+
+/** Vide le cache disque (déconnexion) : un autre compte, moins habilité, ne doit pas revoir ces données. */
+export async function clearSnaps(): Promise<void> {
+  try {
+    const db = await openDb();
+    await new Promise<void>((resolve, reject) => {
+      const tx = db.transaction(STORE, 'readwrite');
+      tx.objectStore(STORE).clear();
+      tx.oncomplete = () => resolve();
+      tx.onerror = () => reject(tx.error);
+    });
+  } catch {
+    /* navigation privée */
+  }
+}

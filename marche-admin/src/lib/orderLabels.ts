@@ -62,6 +62,7 @@ export function formatWhen(iso: string | Date) {
 
 export const PAYMENT_STATUS: Record<string, string> = {
   paid: 'Payé (confirmé)',
+  paid_cash: 'Payé en espèces',
   pending: 'En attente de paiement',
   cod_pending: 'À régler à la livraison',
   failed: 'Échoué',
@@ -70,7 +71,7 @@ export const PAYMENT_STATUS: Record<string, string> = {
 };
 
 export function paymentPillClass(status: string | null | undefined) {
-  if (status === 'paid') return 'ok';
+  if (status === 'paid' || status === 'paid_cash') return 'ok';
   if (status === 'refunded' || status === 'partially_refunded') return 'warn';
   if (status === 'failed') return 'out';
   return 'warn';
@@ -87,6 +88,8 @@ export const ORDER_ACTION: Record<string, string> = {
   'release-picker': 'Ramasseur libéré',
   'release-courier': 'Coursier libéré',
   refund: 'Remboursement enregistré',
+  'cash-collected': 'Espèces encaissées à la livraison',
+  'cash-reverted': 'Encaissement espèces annulé',
 };
 
 export const ROLE_SHORT: Record<string, string> = {

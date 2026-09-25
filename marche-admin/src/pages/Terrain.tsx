@@ -6,7 +6,8 @@ import { useCachedResource } from '@/lib/cachedApi';
 import { getCourierPositions, subscribeCourierPositions } from '@/lib/adminStream';
 import { DELIVERY_STATUS, PICK_STATUS, formatWhen } from '@/lib/orderLabels';
 import { roleLabel } from '@/lib/staffLabels';
-import { CourierMap } from '@/components/CourierMap';
+import { CourierMap, type MapStore } from '@/components/CourierMap';
+import { useAppSelector } from '@/app/hooks';
 
 type Mission = {
   id: string | null;
@@ -44,6 +45,8 @@ type QueueRow = {
   customerName: string | null;
   itemCount: number;
   createdAt: string;
+  storeId?: string | null;
+  dropoff?: { lng: number; lat: number } | null;
 };
 
 type RatingRow = {
@@ -70,6 +73,8 @@ type Floor = {
   staff: FloorStaff[];
   queue: QueueRow[];
   ratings: RatingRow[];
+  stores?: MapStore[];
+  piiMasked?: boolean;
 };
 
 type WindowId = 'hour' | 'day' | 'week' | 'month';
@@ -167,8 +172,9 @@ function missionStatusLabel(kind: string, status: string) {
 }
 
 export function TerrainPage() {
-  const { data } = useCachedResource<Floor>('floor', '/admin/floor', 'floor');
+  const { data, refresh } = useCachedResource<Floor>('floor', '/admin/floor', 'floor');
   const navigate = useNavigate();
+  const role = useAppSelector((s) => s.auth.staff?.role ?? null);
   const mapStaff = useMemo(() => (data?.staff ?? []).filter((s) => s.canDeliver || s.canPick), [data]);
   const [filter, setFilter] = useState<'all' | 'live' | 'paused' | 'offline'>('all');
   const [sortKey, setSortKey] = useState<SortKey | null>('status');
@@ -317,7 +323,25 @@ export function TerrainPage() {
         </div>
       </div>
 
-      <CourierMap staff={mapStaff} onOpenOrder={(id) => navigate(`/commandes/${encodeURIComponent(id)}`)} />
+      {data?.piiMasked ? (
+        <p className="warn-note">
+          Données client masquées pour votre rôle (nom abrégé, pas d’adresse ni de commentaire). Les actions de réassignation
+          sont réservées aux managers.
+        </p>
+      ) : null}
+
+      <CourierMap
+        staff={mapStaff}
+        queue={data?.queue ?? []}
+        stores={data?.stores ?? []}
+        role={role}
+        piiMasked={Boolean(data?.piiMasked)}
+        onOpenOrder={(id) => {
+          if (document.fullscreenElement) void document.exitFullscreen().catch(() => undefined);
+          navigate(`/commandes/${encodeURIComponent(id)}`);
+        }}
+        onChanged={() => void refresh(true)}
+      />
 
       <div className="seg" style={{ marginBottom: 14 }}>
         {(

@@ -4,6 +4,7 @@ import { api, formatFcfa } from '@/lib/api';
 import { DELIVERY_STATUS, ORDER_STATUS, formatWhen, orderPillClass } from '@/lib/orderLabels';
 
 type Detail = {
+  piiMasked?: boolean;
   user: {
     id: string;
     email: string;
@@ -83,6 +84,11 @@ export function ClientDetailPage() {
         </div>
       </div>
       {err ? <p className="err">{err}</p> : null}
+      {data.piiMasked ? (
+        <p className="warn-note" data-pii="masked">
+          Données personnelles masquées pour votre rôle (téléphone / e-mail partiels, pas d’adresse ni de date de naissance).
+        </p>
+      ) : null}
 
       <div className="grid stats" style={{ marginBottom: 16 }}>
         <div className="card stat">

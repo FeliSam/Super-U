@@ -44,7 +44,13 @@ export function PaymentsPage() {
   const [tab, setTab] = useState<'payments' | 'flagged'>('payments');
   const [status, setStatus] = useState('');
   const [q, setQ] = useState('');
-  const [data, setData] = useState<{ payments: PaymentRow[]; flagged: FlagRow[]; counts: { status: string; n: number; amount: number }[]; fedapayConfigured: boolean } | null>(null);
+  const [data, setData] = useState<{
+    payments: PaymentRow[];
+    flagged: FlagRow[];
+    counts: { status: string; n: number; amount: number }[];
+    fedapayConfigured: boolean;
+    cod?: { toCollect: { n: number; amount: number }; collected: { n: number; amount: number }; collectedToday: { n: number; amount: number } };
+  } | null>(null);
   const [err, setErr] = useState('');
 
   const load = useCallback(() => {
@@ -73,13 +79,27 @@ export function PaymentsPage() {
         <div>
           <h2>Paiements</h2>
           <p>
-            Transactions FedaPay et remboursements. {data && !data.fedapayConfigured ? 'FedaPay n’est pas configuré sur cette API.' : ''} Les remboursements sont
-            enregistrés ici puis exécutés à la main (FedaPay n’a pas d’API de remboursement).
+            Paiement à la livraison (espèces) et transactions FedaPay. Une commande « à la livraison » passe en « Payé en espèces »
+            quand le coursier valide la remise avec le code client ; elle n’est jamais signalée « à vérifier ».{' '}
+            {data && !data.fedapayConfigured ? 'FedaPay n’est pas configuré sur cette API (paiement à la livraison uniquement).' : ''} Les
+            remboursements sont enregistrés ici puis exécutés à la main.
           </p>
         </div>
       </div>
       {err ? <p className="err">{err}</p> : null}
       <div className="grid stats" style={{ marginBottom: 16 }}>
+        <div className="card stat cod-stat" data-cod="to-collect">
+          <div className="k">Espèces à encaisser</div>
+          <div className="v">{data?.cod?.toCollect.n ?? '—'}</div>
+          <small>{formatFcfa(data?.cod?.toCollect.amount ?? 0)} · commandes à la livraison en cours.</small>
+        </div>
+        <div className="card stat cod-stat" data-cod="collected-today">
+          <div className="k">Espèces encaissées aujourd’hui</div>
+          <div className="v">{data?.cod?.collectedToday.n ?? '—'}</div>
+          <small>
+            {formatFcfa(data?.cod?.collectedToday.amount ?? 0)} · total {data?.cod?.collected.n ?? 0} ({formatFcfa(data?.cod?.collected.amount ?? 0)})
+          </small>
+        </div>
         {['paid', 'pending', 'failed', 'refunded', 'partially_refunded'].map((s) => (
           <div className="card stat" key={s}>
             <div className="k">{PAYMENT_STATUS[s]}</div>
@@ -90,7 +110,7 @@ export function PaymentsPage() {
         <div className="card stat flag-stat">
           <div className="k">Payées non confirmées</div>
           <div className="v">{data?.flagged.length ?? '—'}</div>
-          <small>Commandes à vérifier (réf. skip-, pas de FedaPay).</small>
+          <small>Hors paiement à la livraison : déclarées payées sans paiement FedaPay reçu.</small>
         </div>
       </div>
 

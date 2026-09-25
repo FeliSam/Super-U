@@ -36,6 +36,14 @@ function toToast(ev: AdminEvent): Omit<Toast, 'key'> | null {
     case 'support.message':
       if (p.senderKind !== 'customer') return null;
       return { tone: 'info', title: 'Nouveau message support', body: str(p.pii?.body) || 'Un client a écrit au support.' };
+    case 'alert.raised': {
+      const sev = str(p.severity);
+      if (sev === 'info') return null;
+      const kind = str(p.kind);
+      const to =
+        kind === 'low_stock' ? '/stock' : kind === 'support_unanswered' ? '/support' : p.orderId ? `/commandes/${encodeURIComponent(str(p.orderId))}` : undefined;
+      return { tone: sev === 'critical' ? 'danger' : 'warn', title: str(p.title) || 'Alerte', body: str(p.detail), to };
+    }
     case 'staff.pending':
       return {
         tone: 'warn',

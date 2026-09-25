@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { api } from '@/lib/api';
-import { readSnap, writeSnap, type CacheSnap } from '@/lib/localCache';
+import { clearSnaps, readSnap, writeSnap, type CacheSnap } from '@/lib/localCache';
 
 export type Pulse = {
   stamp: string;
@@ -42,6 +42,12 @@ export async function fetchPulse(force = false): Promise<Pulse> {
   };
   pulseListeners.forEach((fn) => fn(force));
   return pulse;
+}
+
+/** Déconnexion : oublie les réponses en mémoire et sur disque (données client, montants…). */
+export function clearAdminCache() {
+  memory.clear();
+  void clearSnaps();
 }
 
 export function getPulse() {

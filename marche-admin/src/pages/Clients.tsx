@@ -33,7 +33,7 @@ const COLS: { key: SortKey; label: string }[] = [
 
 export function ClientsPage() {
   const nav = useNavigate();
-  const { data } = useCachedResource<{ users: ShopUserRow[]; total: number }>('shop-users', '/admin/shop-users', 'clients');
+  const { data } = useCachedResource<{ users: ShopUserRow[]; total: number; piiMasked?: boolean }>('shop-users', '/admin/shop-users', 'clients');
   const users = data?.users ?? [];
   const total = data?.total ?? users.length;
   const [q, setQ] = useState('');
@@ -82,6 +82,11 @@ export function ClientsPage() {
         </div>
       </div>
       {err ? <p className="err">{err}</p> : null}
+      {data?.piiMasked ? (
+        <p className="warn-note" data-pii="masked">
+          Données personnelles masquées pour votre rôle : nom abrégé, téléphone et e-mail partiels. La recherche porte sur le nom.
+        </p>
+      ) : null}
 
       <div className="grid stats" style={{ marginBottom: 16 }}>
         <div className="card stat">

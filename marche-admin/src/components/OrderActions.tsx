@@ -110,6 +110,7 @@ const PRESENCE_LABEL: Record<string, string> = { online: 'En ligne', paused: 'En
 
 function snapLine(s: Snapshot | null) {
   if (!s) return '—';
+  if (!s.status && !s.pickStatus && !s.deliveryStatus && s.paymentStatus) return PAYMENT_STATUS[s.paymentStatus] ?? s.paymentStatus;
   return [
     ORDER_STATUS[s.status ?? ''] ?? s.status,
     s.pickStatus ? PICK_STATUS[s.pickStatus] ?? s.pickStatus : null,

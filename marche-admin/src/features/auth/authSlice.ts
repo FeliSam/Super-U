@@ -1,5 +1,6 @@
 import { createAsyncThunk, createSlice } from '@reduxjs/toolkit';
 import { api, setToken, getToken } from '@/lib/api';
+import { clearAdminCache } from '@/lib/cachedApi';
 
 export type Staff = {
   id: string;
@@ -65,6 +66,7 @@ const authSlice = createSlice({
     logout(state) {
       setToken(null);
       cacheStaff(null);
+      clearAdminCache();
       state.staff = null;
       state.status = 'idle';
     },

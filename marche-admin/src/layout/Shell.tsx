@@ -31,6 +31,7 @@ import { startAdminCache, warmAdminCache } from '@/lib/cachedApi';
 import { startAdminStream, stopAdminStream } from '@/lib/adminStream';
 import { LiveBadge } from '@/components/LiveBadge';
 import { LiveToasts } from '@/components/LiveToasts';
+import { AlertsBell } from '@/components/AlertsBell';
 
 const SIDE_KEY = 'marche-admin-sidebar';
 
@@ -202,6 +203,7 @@ export function Shell() {
       </aside>
       <main className="main">
         <div className="main-bar">
+          <AlertsBell />
           <LiveBadge />
         </div>
         <LiveToasts />
