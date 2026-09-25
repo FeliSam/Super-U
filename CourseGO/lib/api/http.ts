@@ -44,6 +44,11 @@ export function setAuthToken(token: string | null) {
   authToken = token;
 }
 
+/** Jeton de session courant (mémoire, sinon stockage web). */
+export function getAuthToken(): string | null {
+  return authToken ?? webGet(AUTH_TOKEN_KEY);
+}
+
 export async function persistAuthToken(token: string | null) {
   authToken = token;
   webSet(AUTH_TOKEN_KEY, token);

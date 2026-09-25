@@ -6,6 +6,7 @@ import { useStaffPrefs } from '@/context/StaffPrefsContext';
 import { clientCoord, courierAnchor, offsetBeside, pointAlongRoute, storeCoord } from '@/lib/courierTrack';
 import { useCourierTourPlan } from '@/hooks/useCourierTourPlan';
 import { isDeliveryActive } from '@/lib/opsModel';
+import { startBackgroundTracking, stopBackgroundTracking } from '@/lib/backgroundLocation';
 import { fetchRoadRoute } from '@/lib/roadRoute';
 import { asVehicleKind, headingDeg, travelSeconds, tripProgress } from '@/lib/vehicleMotion';
 import * as Location from 'expo-location';
@@ -240,6 +241,17 @@ export function LocationProvider({ children }: { children: React.ReactNode }) {
     tourPlan?.navTo?.[0],
     tourPlan?.navTo?.[1],
   ]);
+
+  // Livraison en cours → suivi GPS maintenu appli en fond / écran verrouillé (arrêt auto à la remise).
+  const hasActiveDelivery = Boolean(
+    staff?.canDeliver && deliveries.some((d) => d.courier_id === staff?.id && isDeliveryActive(d)),
+  );
+  const trackInBackground = Boolean(staff && hasActiveDelivery && prefs.shareLocation);
+  useEffect(() => {
+    if (Platform.OS === 'web') return;
+    if (trackInBackground) void startBackgroundTracking();
+    else void stopBackgroundTracking();
+  }, [trackInBackground]);
 
   const mapPosition = useMemo<LngLat>(() => {
     if (

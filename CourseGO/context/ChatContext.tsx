@@ -1,5 +1,6 @@
 import { fetchInbox, type InboxThread } from '@/lib/api/comms';
 import { useStaffAuth } from '@/context/StaffAuthContext';
+import { isThreadSignal, subscribeLive, useLiveConnected } from '@/lib/live';
 import React, { createContext, useCallback, useContext, useEffect, useMemo, useState } from 'react';
 
 type ChatValue = {
@@ -27,12 +28,20 @@ export function ChatProvider({ children }: { children: React.ReactNode }) {
     }
   }, [staff]);
 
+  const liveOn = useLiveConnected();
   useEffect(() => {
     void refresh();
     if (!staff) return;
-    const t = setInterval(() => void refresh(), 2000);
-    return () => clearInterval(t);
-  }, [staff, refresh]);
+    // Flux temps réel ouvert : relecture sur signal + filet de sécurité toutes les 20 s.
+    const t = setInterval(() => void refresh(), liveOn ? 20_000 : 2000);
+    const unsub = subscribeLive((s) => {
+      if (isThreadSignal(s)) void refresh();
+    });
+    return () => {
+      clearInterval(t);
+      unsub();
+    };
+  }, [staff, refresh, liveOn]);
 
   const unreadTotal = useMemo(
     () => threads.reduce((n, th) => n + (Number(th.unread) > 0 ? 1 : 0), 0),

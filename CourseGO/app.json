@@ -15,10 +15,13 @@
         "ITSAppUsesNonExemptEncryption": false,
         "UIViewControllerBasedStatusBarAppearance": true,
         "NSLocationWhenInUseUsageDescription": "CourseGo utilise votre position pendant les livraisons en route.",
+        "NSLocationAlwaysAndWhenInUseUsageDescription": "Pendant une livraison, CourseGo partage votre position avec le magasin et le client, même écran verrouillé. Le partage s’arrête à la remise du colis.",
+        "NSLocationAlwaysUsageDescription": "Pendant une livraison, CourseGo partage votre position avec le magasin et le client, même écran verrouillé. Le partage s’arrête à la remise du colis.",
         "NSCameraUsageDescription": "CourseGo scanne les codes-barres et QR des produits en magasin.",
         "NSMicrophoneUsageDescription": "CourseGo utilise le micro pour les appels avec le client.",
         "UIBackgroundModes": [
-          "remote-notification"
+          "remote-notification",
+          "location"
         ]
       }
     },
@@ -41,7 +44,10 @@
         "android.permission.RECORD_AUDIO",
         "android.permission.MODIFY_AUDIO_SETTINGS",
         "android.permission.BLUETOOTH",
-        "android.permission.ACCESS_NETWORK_STATE"
+        "android.permission.ACCESS_NETWORK_STATE",
+        "android.permission.ACCESS_BACKGROUND_LOCATION",
+        "android.permission.FOREGROUND_SERVICE",
+        "android.permission.FOREGROUND_SERVICE_LOCATION"
       ]
     },
     "web": {
@@ -64,7 +70,11 @@
       [
         "expo-location",
         {
-          "locationWhenInUsePermission": "CourseGo utilise votre position pendant les livraisons en route."
+          "locationWhenInUsePermission": "CourseGo utilise votre position pendant les livraisons en route.",
+          "locationAlwaysAndWhenInUsePermission": "Pendant une livraison, CourseGo partage votre position avec le magasin et le client, même écran verrouillé. Le partage s’arrête à la remise du colis.",
+          "isIosBackgroundLocationEnabled": true,
+          "isAndroidBackgroundLocationEnabled": true,
+          "isAndroidForegroundServiceEnabled": true
         }
       ],
       [

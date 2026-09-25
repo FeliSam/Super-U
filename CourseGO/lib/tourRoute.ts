@@ -44,6 +44,26 @@ type LastDrop = {
 };
 
 const lastDropMem = new Map<string, LastDrop>();
+type LastDropListener = (hop: LastDrop | null, courierId: string) => void;
+const lastDropListeners = new Set<LastDropListener>();
+
+function notifyLastDrop(hop: LastDrop | null, courierId: string) {
+  for (const fn of Array.from(lastDropListeners)) {
+    try {
+      fn(hop, courierId);
+    } catch {
+      /* un écouteur défaillant ne bloque pas les autres */
+    }
+  }
+}
+
+/** Écoute les changements de « dernière remise » (départ de la jambe suivante). Retourne le désabonnement. */
+export function subscribeLastDrop(fn: LastDropListener): () => void {
+  lastDropListeners.add(fn);
+  return () => {
+    lastDropListeners.delete(fn);
+  };
+}
 
 function lastDropKey(courierId: string) {
   return `coursego.last-drop.v1.${courierId}`;
@@ -56,6 +76,7 @@ function persistLastDrop(hop: LastDrop) {
   } catch {
     /* ignore */
   }
+  notifyLastDrop(hop, hop.courierId);
 }
 
 export function rememberLastDropoff(courierId: string | undefined, d: DeliveryJob | null | undefined) {
@@ -91,6 +112,7 @@ export function clearLastDropoff(courierId: string | undefined) {
   } catch {
     /* ignore */
   }
+  notifyLastDrop(null, courierId);
 }
 
 export function readLastDropoff(courierId: string | undefined, storeId?: string | null): LastDrop | null {

@@ -6,6 +6,8 @@ import {
   matchLocalStaff,
 } from '@/lib/localAuth';
 import { setStaffSessionPeek } from '@/lib/sessionPeek';
+import { stopBackgroundTracking } from '@/lib/backgroundLocation';
+import { stopLive } from '@/lib/live';
 import { showToast } from '@/lib/toastBus';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import React, { createContext, useCallback, useContext, useEffect, useMemo, useState } from 'react';
@@ -234,6 +236,8 @@ export function StaffAuthProvider({ children }: { children: React.ReactNode }) {
   );
 
   const signOut = useCallback(async () => {
+    stopLive();
+    void stopBackgroundTracking();
     await persistAuthToken(null);
     cacheStaff(null);
     setStaff(null);

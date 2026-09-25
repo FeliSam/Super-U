@@ -13,8 +13,9 @@ import {
 } from '@/lib/api/ops';
 import { pauseBlockedMessage, staffOpenMission } from '@/lib/opsModel';
 import { subscribeLastDrop } from '@/lib/tourRoute';
+import { isOrderSignal, restartLive, stopLive, subscribeLive, useLiveConnected } from '@/lib/live';
 import { showToast } from '@/lib/toastBus';
-import React, { createContext, useCallback, useContext, useEffect, useMemo, useState } from 'react';
+import React, { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import { AppState, Platform } from 'react-native';
 
 type BoardValue = {
@@ -43,6 +44,9 @@ function isHidden() {
 export function BoardProvider({ children }: { children: React.ReactNode }) {
   const { staff } = useStaffAuth();
   const { prefs, patchPrefs, ready } = useStaffPrefs();
+  const staffIdRef = useRef<string | null>(null);
+  staffIdRef.current = staff?.id ?? null;
+  const liveOn = useLiveConnected();
   const [jobs, setJobs] = useState<PickJob[]>([]);
   const [deliveries, setDeliveries] = useState<DeliveryJob[]>([]);
   const [tourHop, setTourHop] = useState<TourHop | null>(null);
@@ -85,7 +89,9 @@ export function BoardProvider({ children }: { children: React.ReactNode }) {
     try {
       const [p, d, s] = await Promise.allSettled([
         staff.canPick ? fetchPickJobs() : Promise.resolve({ jobs: [] as PickJob[] }),
-        staff.canDeliver ? fetchDeliveries() : Promise.resolve({ deliveries: [] as DeliveryJob[] }),
+        staff.canDeliver
+          ? fetchDeliveries()
+          : Promise.resolve({ deliveries: [] as DeliveryJob[], tourHop: null as TourHop | null }),
         fetchMapStores(),
       ]);
       const errors: string[] = [];
@@ -96,7 +102,7 @@ export function BoardProvider({ children }: { children: React.ReactNode }) {
         const rows = d.value.deliveries.filter((row) => !row.courier_id || row.courier_id === staff.id);
         setDeliveries(rows);
         const serverHop = d.value.tourHop ?? null;
-        setTourHop((prev) => {
+        setTourHop((prev: TourHop | null) => {
           if (serverHop) return serverHop;
           const stillOut = rows.some(
             (row) =>
@@ -132,8 +138,8 @@ export function BoardProvider({ children }: { children: React.ReactNode }) {
   }, [refresh]);
 
   useEffect(() => {
-    return subscribeLastDrop((hop) => {
-      if (!hop) return;
+    return subscribeLastDrop((hop, courierId) => {
+      if (!hop || (staffIdRef.current && courierId !== staffIdRef.current)) return;
       setTourHop({
         lng: hop.from[0],
         lat: hop.from[1],
@@ -143,13 +149,40 @@ export function BoardProvider({ children }: { children: React.ReactNode }) {
     });
   }, []);
 
+  // Temps réel : un flux par appareil (signal « ta file / ta mission a changé ») → relecture immédiate.
+  useEffect(() => {
+    if (!staff?.id) {
+      stopLive();
+      return;
+    }
+    restartLive();
+  }, [staff?.id]);
+
+  useEffect(() => {
+    if (!staff) return;
+    let pending: ReturnType<typeof setTimeout> | null = null;
+    const unsub = subscribeLive((s) => {
+      if (!isOrderSignal(s)) return;
+      if (pending) return;
+      pending = setTimeout(() => {
+        pending = null;
+        void refresh({ silent: true });
+      }, 250);
+    });
+    return () => {
+      unsub();
+      if (pending) clearTimeout(pending);
+    };
+  }, [staff, refresh]);
+
   useEffect(() => {
     if (!staff) return;
     const tick = () => {
       if (isHidden()) return;
       void refresh({ silent: true });
     };
-    const t = setInterval(tick, 1200);
+    // Flux ouvert : simple filet de sécurité toutes les 15 s ; sinon relecture rapide comme avant.
+    const t = setInterval(tick, liveOn ? 15_000 : 1200);
     const onVis = () => {
       if (!isHidden()) void refresh({ silent: true });
     };
@@ -166,7 +199,7 @@ export function BoardProvider({ children }: { children: React.ReactNode }) {
         document.removeEventListener('visibilitychange', onVis);
       }
     };
-  }, [staff, refresh]);
+  }, [staff, refresh, liveOn]);
 
   const value = useMemo(
     () => ({

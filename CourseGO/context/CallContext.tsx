@@ -10,6 +10,7 @@ import {
   type CommsCall,
 } from '@/lib/api/comms';
 import { useStaffPrefs } from '@/context/StaffPrefsContext';
+import { isCallSignal, isLiveConnected, subscribeLive } from '@/lib/live';
 import { showToast } from '@/lib/toastBus';
 import {
   startCallMedia,
@@ -164,8 +165,24 @@ export function CallProvider({ children }: { children: React.ReactNode }) {
         .catch(() => undefined);
     };
     poll();
-    const t = setInterval(poll, 400);
-    return () => clearInterval(t);
+    // Sans appel en cours et flux temps réel ouvert : la sonnerie arrive par signal, relecture toutes les 3 s.
+    let lastPoll = Date.now();
+    const tick = () => {
+      const idle = phaseRef.current === 'idle' && !startingRef.current;
+      if (idle && isLiveConnected() && Date.now() - lastPoll < 3000) return;
+      lastPoll = Date.now();
+      poll();
+    };
+    const t = setInterval(tick, 400);
+    const unsub = subscribeLive((s) => {
+      if (!isCallSignal(s)) return;
+      lastPoll = Date.now();
+      poll();
+    });
+    return () => {
+      clearInterval(t);
+      unsub();
+    };
   }, [resetCall]);
 
   // Web-only: unlock AudioContext after first gesture. RN exposes a `window`
