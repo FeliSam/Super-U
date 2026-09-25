@@ -40,12 +40,13 @@ function flowForJob(job: (typeof JOBS)[number]['id']) {
   return job === 'ramasseur' ? [0, 1, 3, 4, 5] : [0, 1, 2, 3, 4, 5];
 }
 
+/** Exemple de saisie (dev uniquement, sans mot de passe). */
 const TEST = {
   firstName: 'Amina',
   lastName: 'Koudjo',
   email: 'amina.koudjo@marchedore.bj',
   phone: '+229 01 40 00 00 08',
-  password: 'marche2024',
+  password: '',
   vehiclePlate: 'AB 4281 RB',
   idNumber: 'CIP-BJ-1996-4410',
   licenseNumber: 'PC-BJ-2018-902',
@@ -54,27 +55,41 @@ const TEST = {
   insuranceRef: 'NSIA-MOTO-7721',
 };
 
+const EMPTY: typeof TEST = {
+  firstName: '',
+  lastName: '',
+  email: '',
+  phone: '',
+  password: '',
+  vehiclePlate: '',
+  idNumber: '',
+  licenseNumber: '',
+  residenceLine: '',
+  residenceCity: '',
+  insuranceRef: '',
+};
+
 export default function RegisterScreen() {
   const { applyStaff } = useStaffAuth();
   const [step, setStep] = useState(0);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
-  const [firstName, setFirstName] = useState(TEST.firstName);
-  const [lastName, setLastName] = useState(TEST.lastName);
-  const [email, setEmail] = useState(TEST.email);
-  const [phone, setPhone] = useState(TEST.phone);
-  const [password, setPassword] = useState(TEST.password);
+  const [firstName, setFirstName] = useState(EMPTY.firstName);
+  const [lastName, setLastName] = useState(EMPTY.lastName);
+  const [email, setEmail] = useState(EMPTY.email);
+  const [phone, setPhone] = useState(EMPTY.phone);
+  const [password, setPassword] = useState(EMPTY.password);
   const [job, setJob] = useState<(typeof JOBS)[number]['id']>('coursier');
   const [vehicle, setVehicle] = useState('moto');
-  const [vehiclePlate, setVehiclePlate] = useState(TEST.vehiclePlate);
+  const [vehiclePlate, setVehiclePlate] = useState(EMPTY.vehiclePlate);
   const [ownsVehicle, setOwnsVehicle] = useState(true);
-  const [idNumber, setIdNumber] = useState(TEST.idNumber);
+  const [idNumber, setIdNumber] = useState(EMPTY.idNumber);
   const [hasLicense, setHasLicense] = useState(true);
-  const [licenseNumber, setLicenseNumber] = useState(TEST.licenseNumber);
-  const [residenceLine, setResidenceLine] = useState(TEST.residenceLine);
-  const [residenceCity, setResidenceCity] = useState(TEST.residenceCity);
+  const [licenseNumber, setLicenseNumber] = useState(EMPTY.licenseNumber);
+  const [residenceLine, setResidenceLine] = useState(EMPTY.residenceLine);
+  const [residenceCity, setResidenceCity] = useState(EMPTY.residenceCity);
   const [hasInsurance, setHasInsurance] = useState(true);
-  const [insuranceRef, setInsuranceRef] = useState(TEST.insuranceRef);
+  const [insuranceRef, setInsuranceRef] = useState(EMPTY.insuranceRef);
   const [storeIds, setStoreIds] = useState<string[]>(['su-aeroport', 'su-akpakpa']);
   const prevJobRef = useRef(job);
   const flow = useMemo(() => flowForJob(job), [job]);
@@ -342,10 +357,12 @@ export default function RegisterScreen() {
           disabled={busy}
         />
 
-        <Pressable onPress={fillTest} style={styles.demo}>
-          <Text style={styles.demoKicker}>Exemple prérempli</Text>
-          <Text style={styles.demoTxt}>Amina Koudjo · {TEST.email}</Text>
-        </Pressable>
+        {__DEV__ ? (
+          <Pressable onPress={fillTest} style={styles.demo}>
+            <Text style={styles.demoKicker}>Exemple prérempli (dev)</Text>
+            <Text style={styles.demoTxt}>Amina Koudjo · {TEST.email}</Text>
+          </Pressable>
+        ) : null}
 
         {step > 0 ? (
           <Pressable onPress={() => setStep((s) => s - 1)}>

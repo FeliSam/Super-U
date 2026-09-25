@@ -38,8 +38,8 @@ avec uniquement le module Personnel. Routes UI /personnel/*.
 API : étendre server/ (pas de 2e process métier).
 
 Démos actuelles À CONSERVER :
-  picker@marchedore.bj  / marche2024  Koffi Adjovi   coursier  su-aeroport  moto
-  courier@marchedore.bj / marche2024  Moussa Ndiaye  coursier  su-aeroport  moto
+  picker@marchedore.bj  / <fourni en privé>  Koffi Adjovi   coursier  su-aeroport  moto
+  courier@marchedore.bj / <fourni en privé>  Moussa Ndiaye  coursier  su-aeroport  moto
 Les deux ont can_pick = true ET can_deliver = true (coursier solo :
 picker_id === courier_id possible sur une commande).
 
@@ -192,8 +192,8 @@ D. ops.staff_documents (
    )
 
 E. Seed SI ABSENT :
-   admin@marchedore.bj     / marche2024  role=admin      can_pick=false can_deliver=false
-   rh@marchedore.bj        / marche2024  role=recruteur  idem
+   admin@marchedore.bj     / <fourni en privé>  role=admin      can_pick=false can_deliver=false
+   rh@marchedore.bj        / <fourni en privé>  role=recruteur  idem
   Ne pas écraser picker@ / courier@.
 
 ================================================================================

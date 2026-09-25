@@ -49,7 +49,8 @@ type AuthContextValue = {
   needsOnboarding: boolean;
   /** Session sans API (comptes locaux / cache). */
   offline: boolean;
-  demoHint: { email: string; password: string };
+  /** Compte démo local (builds de dev uniquement, jamais affiché à l'écran). */
+  demoHint: { email: string; password: string } | null;
   signIn: (identifier: string, password: string) => Promise<AuthResult>;
   signUp: (input: {
     firstName: string;
@@ -70,15 +71,22 @@ type AuthContextValue = {
   toProfile: () => UserProfile | null;
 };
 
-const DEMO_ACCOUNT: AuthAccount = {
-  id: 'demo-amina',
-  email: 'demo@marchedore.bj',
-  phone: seedProfile.phone,
-  password: 'marche2024',
-  firstName: seedProfile.firstName,
-  lastName: seedProfile.lastName,
-  createdAt: '2024-03-01T00:00:00.000Z',
-};
+const DEMO_ACCOUNT_ID = 'demo-amina';
+/** Compte démo hors-ligne : builds de dev uniquement (retiré du bundle de prod via __DEV__). */
+const DEV_DEMO_PASSWORD = process.env.EXPO_PUBLIC_DEV_DEMO_PASSWORD || '';
+const DEMO_ACCOUNT: AuthAccount | null =
+  __DEV__ && DEV_DEMO_PASSWORD
+    ? {
+        id: DEMO_ACCOUNT_ID,
+        email: 'demo@marchedore.bj',
+        phone: seedProfile.phone,
+        password: DEV_DEMO_PASSWORD,
+        firstName: seedProfile.firstName,
+        lastName: seedProfile.lastName,
+        createdAt: '2024-03-01T00:00:00.000Z',
+      }
+    : null;
+const SEED_ACCOUNTS: AuthAccount[] = DEMO_ACCOUNT ? [DEMO_ACCOUNT] : [];
 
 const AuthContext = createContext<AuthContextValue | null>(null);
 
@@ -184,7 +192,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     }
   });
   const [ready, setReady] = useState(() => DEV_OPEN_HOME || session != null || peekShopHasSession());
-  const [accounts, setAccounts] = useState<AuthAccount[]>([DEMO_ACCOUNT]);
+  const [accounts, setAccounts] = useState<AuthAccount[]>(SEED_ACCOUNTS);
   const [offline, setOffline] = useState(Boolean(DEV_OPEN_HOME));
   const hydrated = useRef(false);
 
@@ -205,13 +213,16 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         ]);
         if (!active) return;
 
-        let nextAccounts = [DEMO_ACCOUNT];
+        let nextAccounts = SEED_ACCOUNTS;
         if (rawAccounts) {
           const parsed = JSON.parse(rawAccounts);
           if (Array.isArray(parsed)) {
-            const cleaned = parsed.map(sanitizeAccount).filter(Boolean) as AuthAccount[];
-            const hasDemo = cleaned.some((a) => a.id === DEMO_ACCOUNT.id);
-            nextAccounts = hasDemo ? cleaned : [DEMO_ACCOUNT, ...cleaned];
+            // Anciennes installations : le compte démo persisté est ignoré hors dev.
+            const cleaned = (parsed.map(sanitizeAccount).filter(Boolean) as AuthAccount[]).filter(
+              (a) => DEMO_ACCOUNT || a.id !== DEMO_ACCOUNT_ID,
+            );
+            const hasDemo = cleaned.some((a) => a.id === DEMO_ACCOUNT_ID);
+            nextAccounts = DEMO_ACCOUNT && !hasDemo ? [DEMO_ACCOUNT, ...cleaned] : cleaned;
           }
         }
         setAccounts(nextAccounts);
@@ -288,7 +299,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         }
       } catch (e) {
         logDevError('auth.hydrate', e);
-        setAccounts([DEMO_ACCOUNT]);
+        setAccounts(SEED_ACCOUNTS);
         if (DEV_OPEN_HOME) {
           setSession(makeDevDemoSession());
           setOffline(true);
@@ -514,7 +525,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       isAuthenticated: Boolean(session),
       needsOnboarding: Boolean(session && !session.onboardingDone),
       offline,
-      demoHint: { email: DEMO_ACCOUNT.email, password: DEMO_ACCOUNT.password },
+      demoHint: DEMO_ACCOUNT ? { email: DEMO_ACCOUNT.email, password: DEMO_ACCOUNT.password } : null,
       signIn,
       signUp,
       completeOnboarding,

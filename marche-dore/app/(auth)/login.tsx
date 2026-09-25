@@ -6,14 +6,13 @@ import {
   AuthScreen,
 } from '@/components/auth/AuthUI';
 import { ApiHostEditor } from '@/components/ApiHostEditor';
-import { MotionView, PressScale } from '@/components/motion';
+import { MotionView } from '@/components/motion';
 import { goBack } from '@/lib/navigation';
 import { IconCircle } from '@/components/ui';
 import { BRAND_MARK } from '@/constants/brand';
 import { bodyFont, displayFont, liquidIce, type AppColors } from '@/constants/theme';
 import { useAuth } from '@/context/AuthContext';
 import { useColors, useTheme } from '@/context/ThemeContext';
-import { Feather } from '@expo/vector-icons';
 import { router } from 'expo-router';
 import { useMemo, useState } from 'react';
 import { Image, Platform, StyleSheet, Text, View } from 'react-native';
@@ -25,7 +24,7 @@ export default function LoginScreen() {
   const ice = useMemo(() => liquidIce(scheme), [scheme]);
   const styles = useMemo(() => createStyles(colors, ice), [colors, ice]);
   const insets = useSafeAreaInsets();
-  const { signIn, demoHint, offline } = useAuth();
+  const { signIn, offline } = useAuth();
   const [identifier, setIdentifier] = useState('');
   const [password, setPassword] = useState('');
   const [error, setError] = useState<string | null>(null);
@@ -40,12 +39,6 @@ export default function LoginScreen() {
     } finally {
       setLoading(false);
     }
-  };
-
-  const fillDemo = () => {
-    setIdentifier(demoHint.email);
-    setPassword(demoHint.password);
-    setError(null);
   };
 
   return (
@@ -68,7 +61,7 @@ export default function LoginScreen() {
 
       <MotionView preset="up" index={1} style={styles.card}>
         {offline ? (
-          <AuthErrorBanner message="Mode local possible : API coupée — utilisez demo@marchedore.bj / marche2024." />
+          <AuthErrorBanner message="Serveur injoignable : seuls les comptes déjà utilisés sur cet appareil peuvent se connecter." />
         ) : null}
         <AuthErrorBanner message={error} />
         <AuthField
@@ -93,12 +86,6 @@ export default function LoginScreen() {
           returnKeyType="done"
           onSubmitEditing={() => void submit()}
         />
-
-        <PressScale style={styles.demoChip} onPress={fillDemo} scaleTo={0.98}>
-          <Feather name="zap" size={14} color={colors.gold} />
-          <Text style={styles.demoChipText}>Remplir le compte démo</Text>
-          <Text style={styles.demoChipHint}>{demoHint.email}</Text>
-        </PressScale>
 
         <AuthPrimaryButton label="Se connecter" onPress={() => void submit()} loading={loading} />
       </MotionView>

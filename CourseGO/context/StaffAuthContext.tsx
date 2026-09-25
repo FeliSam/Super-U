@@ -20,7 +20,6 @@ type AuthValue = {
   signIn: (email: string, password: string) => Promise<{ ok: true } | { ok: false; error: string }>;
   signOut: () => Promise<void>;
   applyStaff: (staff: Staff) => void;
-  demoHint: { email: string; phone: string; password: string };
 };
 
 const Ctx = createContext<AuthValue | null>(null);
@@ -191,14 +190,8 @@ export function StaffAuthProvider({ children }: { children: React.ReactNode }) {
 
   const signIn = useCallback(
     async (identifier: string, password: string) => {
-      const digits = identifier.replace(/\D/g, '').replace(/^229/, '');
-      const mapped =
-        digits === '0140000002' || digits === '140000002'
-          ? 'courier@marchedore.bj'
-          : digits === '0140000001' || digits === '140000001'
-            ? 'picker@marchedore.bj'
-            : identifier.trim();
-      const loginId = mapped.includes('@') ? mapped.toLowerCase() : identifier.trim();
+      const trimmed = identifier.trim();
+      const loginId = trimmed.includes('@') ? trimmed.toLowerCase() : trimmed;
 
       try {
         const res = await opsLogin(loginId, password);
@@ -215,7 +208,7 @@ export function StaffAuthProvider({ children }: { children: React.ReactNode }) {
           return { ok: true as const };
         }
         if (e instanceof ApiError && e.status === 401) {
-          // Même hors-ligne : mauvais mdp → encore tenter le compte démo exact
+          // Compte local de dev (jamais en prod : liste vide hors __DEV__)
           if (local) {
             await enterLocal(local);
             return { ok: true as const };
@@ -233,7 +226,7 @@ export function StaffAuthProvider({ children }: { children: React.ReactNode }) {
         }
         return {
           ok: false as const,
-          error: `${errorMessage(e)} — ou compte démo courier@ / marche2024 en local.`,
+          error: errorMessage(e),
         };
       }
     },
@@ -263,7 +256,6 @@ export function StaffAuthProvider({ children }: { children: React.ReactNode }) {
       signIn,
       signOut,
       applyStaff,
-      demoHint: { email: 'courier@marchedore.bj', phone: '01 40 00 00 02', password: 'marche2024' },
     }),
     [ready, staff, offline, sessionNotice, clearSessionNotice, signIn, signOut, applyStaff],
   );

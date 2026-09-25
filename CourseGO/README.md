@@ -10,7 +10,7 @@ Données **ops + comms** via l’API `server/` (`http://localhost:8787`). Pas de
 2. `npm run dev:api`
 3. `npm run dev:course` → http://localhost:8082
 
-Login démo : `picker@marchedore.bj` / `marche2024`
+Identifiants : fournis en privé (aucun compte ni mot de passe dans ce dépôt).
 
 ## Tabs
 

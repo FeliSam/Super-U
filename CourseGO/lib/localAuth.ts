@@ -14,11 +14,15 @@ type LocalAccount = {
   staff: Staff;
 };
 
-const LOCAL_ACCOUNTS: LocalAccount[] = [
+/** Mot de passe des comptes hors-ligne : variable de dev (jamais dans le dépôt). */
+const DEV_LOCAL_PASSWORD = process.env.EXPO_PUBLIC_DEV_DEMO_PASSWORD || '';
+
+/** Comptes hors-ligne : builds de dev uniquement (liste vide en prod). */
+const LOCAL_ACCOUNTS: LocalAccount[] = !__DEV__ || !DEV_LOCAL_PASSWORD ? [] : [
   {
     emails: ['courier@marchedore.bj', 'coursier@marchedore.bj'],
     phones: ['0140000002', '140000002', '2290140000002'],
-    passwords: ['marche2024'],
+    passwords: [DEV_LOCAL_PASSWORD],
     staff: {
       id: 'local-courier',
       email: 'courier@marchedore.bj',
@@ -41,7 +45,7 @@ const LOCAL_ACCOUNTS: LocalAccount[] = [
   {
     emails: ['picker@marchedore.bj', 'preparateur@marchedore.bj'],
     phones: ['0140000001', '140000001', '2290140000001'],
-    passwords: ['marche2024'],
+    passwords: [DEV_LOCAL_PASSWORD],
     staff: {
       id: 'local-picker',
       email: 'picker@marchedore.bj',

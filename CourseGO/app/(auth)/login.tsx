@@ -9,14 +9,14 @@ import { useState } from 'react';
 import { KeyboardAvoidingView, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 
 export default function LoginScreen() {
-  const { signIn, demoHint, sessionNotice, clearSessionNotice, offline } = useStaffAuth();
+  const { signIn, sessionNotice, clearSessionNotice, offline } = useStaffAuth();
   const { pending } = useLocalSearchParams<{ pending?: string }>();
   const pendingNotice =
     pending === '1'
       ? 'Compte créé. Il est en attente de validation par l’équipe Super U : vous pourrez vous connecter dès son activation.'
       : null;
-  const [identifier, setIdentifier] = useState(demoHint.email);
-  const [password, setPassword] = useState(demoHint.password);
+  const [identifier, setIdentifier] = useState('');
+  const [password, setPassword] = useState('');
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const kav = useKeyboardAvoidProps();
@@ -57,7 +57,7 @@ export default function LoginScreen() {
             <Text style={styles.kicker}>Espace staff</Text>
             <Text style={styles.title}>Connexion CourseGo</Text>
             <Text style={styles.sub}>
-              E-mail ou téléphone ops. Sans serveur : compte démo courier@ / marche2024 (mode local).
+              E-mail ou téléphone de votre compte staff. Vos identifiants vous sont remis par votre responsable.
             </Text>
           </View>
 
@@ -66,7 +66,7 @@ export default function LoginScreen() {
               <View style={[styles.errBox, styles.warnBox]}>
                 <Text style={[styles.errKicker, styles.warnKicker]}>Mode local</Text>
                 <Text style={[styles.err, styles.warnTxt]}>
-                  API coupée — vous pouvez quand même entrer avec le compte démo.
+                  Serveur injoignable — réessayez dès que le réseau revient.
                 </Text>
               </View>
             ) : null}
@@ -91,7 +91,7 @@ export default function LoginScreen() {
               autoCorrect={false}
               keyboardType="email-address"
               textContentType="username"
-              placeholder={demoHint.email}
+              placeholder="vous@exemple.com"
               returnKeyType="next"
             />
 
@@ -112,16 +112,6 @@ export default function LoginScreen() {
 
           <Pressable onPress={() => router.push('/(auth)/register')} style={styles.linkBtn}>
             <Text style={styles.link}>Créer un compte livreur</Text>
-          </Pressable>
-          <Pressable
-            onPress={() => {
-              setIdentifier(demoHint.email);
-              setPassword(demoHint.password);
-              setError(null);
-            }}
-            style={styles.demo}>
-            <Text style={styles.demoKicker}>Compte démo</Text>
-            <Text style={styles.demoTxt}>{demoHint.email}</Text>
           </Pressable>
 
           <View style={styles.bottom}>

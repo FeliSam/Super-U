@@ -39,8 +39,8 @@ Règle d’or SuperU :
   - Ne PAS committer sans demande explicite.
 
 Apps déjà en prod locale :
-  Client démo : demo@marchedore.bj / marche2024
-  Staff démo  : picker@marchedore.bj et courier@marchedore.bj / marche2024
+  Client démo : demo@marchedore.bj / <fourni en privé>
+  Staff démo  : picker@marchedore.bj et courier@marchedore.bj / <fourni en privé>
                 (tous deux can_pick + can_deliver, magasin su-aeroport)
 
 Ce dashboard est une 4e surface : « Marché Admin », usage bureau (tablette /
@@ -200,7 +200,7 @@ Rôles AUTORISÉS à ce dashboard (voir aussi prompt personnel) :
   magasinier  stock et ruptures de SON store_id, pas les prix (option)
 
 Seed un compte démo SI absent :
-  admin@marchedore.bj / marche2024
+  admin@marchedore.bj / <fourni en privé>
   role = 'admin', can_pick = false, can_deliver = false, is_active = true
   ATTENTION : contrainte actuelle
     CONSTRAINT staff_can_act_chk CHECK (can_pick OR can_deliver)

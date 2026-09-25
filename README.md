@@ -4,10 +4,12 @@ Un dépôt, une API, une base Postgres. Deux apps Expo 57.
 
 | Dossier | Rôle | Port web | Auth |
 | --- | --- | --- | --- |
-| `marche-dore/` | Boutique client | 8081 | `public.users` — `demo@marchedore.bj` / `marche2024` |
-| `CourseGO/` | Staff picking + livraison | 8082 | `ops.staff` — `picker@marchedore.bj` ou `courier@marchedore.bj` / `marche2024` |
-| `marche-admin/` | Back-office catalogue, stock et personnel | 8083 | `ops.staff` — `admin@marchedore.bj` ou `rh@marchedore.bj` / `marche2024` |
+| `marche-dore/` | Boutique client | 8081 | `public.users` (comptes clients) |
+| `CourseGO/` | Staff picking + livraison | 8082 | `ops.staff` terrain |
+| `marche-admin/` | Back-office catalogue, stock et personnel | 8083 | `ops.staff` back-office |
 | `server/` | API Hono | 8787 | — |
+
+Les identifiants (démo, staff, admin) sont fournis en privé : ils ne figurent pas dans ce dépôt.
 
 Les PNG catalogue vivent dans `marche-dore/assets/images/catalog/`. L’API les sert sur `/catalog/media/:id`. CourseGO les `require()` aussi en local (même dossier).
 
@@ -31,7 +33,7 @@ CourseGO n’est pas une 2e boutique. Elle avance `ops.pick_jobs` / `ops.deliver
 
 ## TestFlight / EAS
 
-- 	estflight/production : API `https://giveaway-rack-obtrusive.ngrok-free.dev` (lancer `npm run tunnel:ngrok`) ou une API HTTPS prod.
-- Rebuild EAS requis apr�s ajout des plugins `react-native-maps` et `@maplibre/maplibre-react-native`.
-- Staff d�mo CourseGO : `courier@marchedore.bj` / `picker@marchedore.bj` / `marche2024`.
+- `testflight` / `production` : API `https://giveaway-rack-obtrusive.ngrok-free.dev` (lancer `npm run tunnel:ngrok`) ou une API HTTPS prod.
+- Rebuild EAS requis après ajout des plugins `react-native-maps` et `@maplibre/maplibre-react-native`.
+- Identifiants staff CourseGO : fournis en privé.
 

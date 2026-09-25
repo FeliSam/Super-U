@@ -21,13 +21,13 @@ Deux apps, UNE vérité Postgres.
 
 1) marche-dore  = app CLIENT (courses alimentaires, panier, checkout, suivi).
    Auth : public.users + public.sessions.
-   Démo client : demo@marchedore.bj / marche2024
+   Démo client : demo@marchedore.bj / <fourni en privé>
 
 2) CourseGO = app STAFF (coursier qui rassemble ET livre).
    Auth : ops.staff + ops.staff_sessions. JAMAIS le login client.
    Démo staff (les DEUX sont coursiers complets, can_pick + can_deliver) :
-     picker@marchedore.bj  / marche2024   → Koffi Adjovi, magasin su-aeroport, moto
-     courier@marchedore.bj / marche2024   → Bodouin Dognon, magasin su-aeroport, moto
+     picker@marchedore.bj  / <fourni en privé>   → Koffi Adjovi, magasin su-aeroport, moto
+     courier@marchedore.bj / <fourni en privé>   → Bodouin Dognon, magasin su-aeroport, moto
 
 Le même ops.staff.id PEUT être picker_id ET courier_id d’une même commande
 (coursier solo). La vue ops.v_delivery_board expose same_handler = true dans ce cas.

@@ -7,8 +7,8 @@ export function LoginPage() {
   const dispatch = useAppDispatch();
   const nav = useNavigate();
   const { status, error } = useAppSelector((s) => s.auth);
-  const [email, setEmail] = useState('admin@marchedore.bj');
-  const [password, setPassword] = useState('marche2024');
+  const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
 
   return (
     <div className="login-wrap">
@@ -35,7 +35,7 @@ export function LoginPage() {
           {status === 'loading' ? 'Entrée…' : 'Entrer dans le magasin'}
         </button>
         <p style={{ fontSize: 12, color: 'var(--muted)', marginTop: 14 }}>
-          Compte démo admin@marchedore.bj · RH rh@marchedore.bj / marche2024. Le login client boutique ne fonctionne pas ici.
+          Accès réservé au personnel : vos identifiants vous sont remis par un administrateur. Le login client boutique ne fonctionne pas ici.
         </p>
       </form>
     </div>

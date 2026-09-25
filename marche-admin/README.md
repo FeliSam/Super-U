@@ -4,11 +4,10 @@ Back-office web (Vite + React + Redux) : catalogue / stock **et** personnel RH.
 
 - URL : http://localhost:8083
 - API : http://localhost:8787 (même Postgres que la boutique)
-- Admin : `admin@marchedore.bj` / `marche2024` (catalogue + RH)
-- Recruteur : `rh@marchedore.bj` / `marche2024` (personnel seulement, pas de prix)
-- Terrain CourseGO : `picker@` / `courier@` / `marche2024` — 403 sur le catalogue
+- Identifiants : fournis en privé (aucun compte ni mot de passe dans ce dépôt).
+- Les comptes terrain CourseGO reçoivent un 403 sur le catalogue.
 
-Pas de login client (`demo@…`). Trois mondes distincts : `public.users` (boutique), `ops.staff` terrain, `ops.staff` back-office.
+Pas de login client ici. Trois mondes distincts : `public.users` (boutique), `ops.staff` terrain, `ops.staff` back-office.
 
 ## Rôles (extrait)
 
