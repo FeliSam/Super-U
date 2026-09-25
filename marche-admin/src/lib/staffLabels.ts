@@ -15,7 +15,7 @@ export const ROLE_HELP: Record<string, string> = {
   coursier: 'Terrain : rassemble les courses et les livre. Connexion CourseGO.',
   picker: 'Magasin : scan et ramassage uniquement. Pas de tournée moto.',
   courier: 'Livraison uniquement, sans passage en ramassage.',
-  dispatcher: 'Affecte les courses (tableau live plus tard). Pas de CourseGO moto.',
+  dispatcher: 'Suit le terrain (page Terrain) : présence, ramassages et livraisons live.',
   manager: 'Chef de magasin : catalogue et RH de son Super U.',
   magasinier: 'Stocks et rayons de son magasin. Pas de RH.',
   admin: 'Siège : tous magasins, catalogue, RH, prix.',

@@ -1,6 +1,7 @@
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { api } from '@/lib/api';
+import { useLiveSync } from '@/lib/live';
 import { roleLabel } from '@/lib/staffLabels';
 import type { HrStaff } from '@/pages/Personnel';
 
@@ -8,11 +9,16 @@ export function RecrutementPage() {
   const [rows, setRows] = useState<HrStaff[]>([]);
   const [err, setErr] = useState('');
 
-  useEffect(() => {
+  const load = useCallback(() => {
     api<{ staff: HrStaff[] }>('/admin/staff?onboard=draft,invited')
       .then((r) => setRows(r.staff))
       .catch((e: Error) => setErr(e.message));
   }, []);
+
+  useEffect(() => {
+    load();
+  }, [load]);
+  useLiveSync(load);
 
   return (
     <>

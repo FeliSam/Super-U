@@ -1,7 +1,8 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { ArrowDown, ArrowUp, ArrowUpDown, Search, ShoppingBag } from 'lucide-react';
-import { api, formatFcfa } from '@/lib/api';
+import { formatFcfa } from '@/lib/api';
+import { needleOf, textMatch, useCachedResource } from '@/lib/cachedApi';
 import { DELIVERY_STATUS, ORDER_STATUS, PICK_STATUS, formatWhen, orderPillClass } from '@/lib/orderLabels';
 
 type Counts = {
@@ -71,34 +72,53 @@ const TABS: { id: keyof Counts; label: string }[] = [
   { id: 'cancelled', label: 'Annulées' },
 ];
 
+function inTab(o: AdminOrderRow, tab: keyof Counts) {
+  if (tab === 'all') return true;
+  if (tab === 'open') return o.status !== 'delivered' && o.status !== 'cancelled';
+  if (tab === 'delivered') return o.status === 'delivered';
+  if (tab === 'cancelled') return o.status === 'cancelled';
+  if (tab === 'failed') return o.deliveryStatus === 'failed';
+  if (tab === 'disputes') return o.incidentCount > 0;
+  if (tab === 'missing') return o.missingCount > 0;
+  return true;
+}
+
 export function OrdersPage() {
   const nav = useNavigate();
   const [q, setQ] = useState('');
   const [tab, setTab] = useState<keyof Counts>('all');
-  const [rows, setRows] = useState<AdminOrderRow[]>([]);
-  const [counts, setCounts] = useState<Counts | null>(null);
-  const [showMoney, setShowMoney] = useState(false);
-  const [err, setErr] = useState('');
+  const { data, refresh } = useCachedResource<{ orders: AdminOrderRow[]; counts?: Counts; showMoney?: boolean }>(
+    'orders',
+    '/admin/orders',
+    'orders',
+  );
+  const allRows = data?.orders ?? [];
+  const showMoney = Boolean(data?.showMoney);
+  const err = '';
   const [sortKey, setSortKey] = useState<SortKey | null>(null);
   const [sortDir, setSortDir] = useState<SortDir>('asc');
 
-  const load = (nextTab = tab, nextQ = q) => {
-    const p = new URLSearchParams();
-    if (nextQ.trim()) p.set('q', nextQ.trim());
-    if (nextTab !== 'all') p.set('tab', nextTab);
-    api<{ orders: AdminOrderRow[]; counts: Counts; showMoney?: boolean }>(`/admin/orders?${p}`)
-      .then((r) => {
-        setRows(r.orders);
-        setCounts(r.counts);
-        setShowMoney(Boolean(r.showMoney));
-      })
-      .catch((e: Error) => setErr(e.message));
-  };
+  const counts = useMemo<Counts>(() => {
+    const base: Counts = { all: allRows.length, open: 0, delivered: 0, cancelled: 0, failed: 0, disputes: 0, missing: 0 };
+    for (const o of allRows) {
+      if (o.status !== 'delivered' && o.status !== 'cancelled') base.open += 1;
+      if (o.status === 'delivered') base.delivered += 1;
+      if (o.status === 'cancelled') base.cancelled += 1;
+      if (o.deliveryStatus === 'failed') base.failed += 1;
+      if (o.incidentCount > 0) base.disputes += 1;
+      if (o.missingCount > 0) base.missing += 1;
+    }
+    return base;
+  }, [allRows]);
 
-  useEffect(() => {
-    load();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  const rows = useMemo(() => {
+    const needle = needleOf(q);
+    return allRows.filter(
+      (o) =>
+        inTab(o, tab) &&
+        textMatch(needle, o.customerName, o.customerPhone, o.id, o.storeName),
+    );
+  }, [allRows, q, tab]);
 
   const sorted = useMemo(() => {
     if (!sortKey) return rows;
@@ -150,12 +170,11 @@ export function OrdersPage() {
                 value={q}
                 onChange={(e) => setQ(e.target.value)}
                 placeholder="Nom client, téléphone, n° commande"
-                onKeyDown={(e) => e.key === 'Enter' && load(tab, q)}
               />
             </span>
           </label>
-          <button className="btn" type="button" onClick={() => load(tab, q)}>
-            Filtrer
+          <button className="btn" type="button" onClick={() => void refresh(true)}>
+            Actualiser
           </button>
         </div>
         <div className="seg" style={{ marginTop: 12, flexWrap: 'wrap' }}>
@@ -164,12 +183,9 @@ export function OrdersPage() {
               key={t.id}
               type="button"
               className={tab === t.id ? 'on' : ''}
-              onClick={() => {
-                setTab(t.id);
-                load(t.id, q);
-              }}>
+              onClick={() => setTab(t.id)}>
               {t.label}
-              {counts ? ` (${counts[t.id]})` : ''}
+              {` (${counts[t.id]})`}
             </button>
           ))}
         </div>

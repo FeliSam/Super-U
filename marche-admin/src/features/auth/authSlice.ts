@@ -1,5 +1,5 @@
 import { createAsyncThunk, createSlice } from '@reduxjs/toolkit';
-import { api, setToken } from '@/lib/api';
+import { api, setToken, getToken } from '@/lib/api';
 
 export type Staff = {
   id: string;
@@ -14,6 +14,26 @@ export type Staff = {
   canHr: boolean;
   canReadHr: boolean;
 };
+
+const STAFF_KEY = 'marche-admin-staff';
+
+function peekStaff(): Staff | null {
+  try {
+    const raw = localStorage.getItem(STAFF_KEY);
+    return raw ? (JSON.parse(raw) as Staff) : null;
+  } catch {
+    return null;
+  }
+}
+
+function cacheStaff(staff: Staff | null) {
+  try {
+    if (staff) localStorage.setItem(STAFF_KEY, JSON.stringify(staff));
+    else localStorage.removeItem(STAFF_KEY);
+  } catch {
+    /* ignore */
+  }
+}
 
 export const loginAdmin = createAsyncThunk(
   'auth/login',
@@ -33,16 +53,18 @@ export const bootstrapAuth = createAsyncThunk('auth/bootstrap', async () => {
   return me.staff;
 });
 
+const peeked = peekStaff();
 const authSlice = createSlice({
   name: 'auth',
   initialState: {
-    staff: null as Staff | null,
-    status: 'idle' as 'idle' | 'loading' | 'ready' | 'error',
+    staff: peeked,
+    status: (peeked && getToken() ? 'ready' : 'idle') as 'idle' | 'loading' | 'ready' | 'error',
     error: '' as string,
   },
   reducers: {
     logout(state) {
       setToken(null);
+      cacheStaff(null);
       state.staff = null;
       state.status = 'idle';
     },
@@ -55,22 +77,26 @@ const authSlice = createSlice({
       })
       .addCase(loginAdmin.fulfilled, (s, a) => {
         s.staff = a.payload.staff;
+        cacheStaff(a.payload.staff);
         s.status = 'ready';
       })
       .addCase(loginAdmin.rejected, (s, a) => {
         setToken(null);
+        cacheStaff(null);
         s.status = 'error';
         s.error = a.error.message || 'Connexion impossible.';
       })
       .addCase(bootstrapAuth.pending, (s) => {
-        s.status = 'loading';
+        if (!s.staff) s.status = 'loading';
       })
       .addCase(bootstrapAuth.fulfilled, (s, a) => {
         s.staff = a.payload;
+        cacheStaff(a.payload);
         s.status = 'ready';
       })
       .addCase(bootstrapAuth.rejected, (s) => {
         setToken(null);
+        cacheStaff(null);
         s.staff = null;
         s.status = 'idle';
       });

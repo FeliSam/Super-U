@@ -1,5 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
-import { api } from '@/lib/api';
+import { api, mediaUrl } from '@/lib/api';
+import { CATEGORY_ART } from '@/lib/categoryArt';
+import { useCachedResource } from '@/lib/cachedApi';
 
 type Cat = { id: string; payload: { title?: string; flex?: number; height?: number } };
 type Chip = {
@@ -10,6 +12,8 @@ type Chip = {
 const BOUTIQUE = 'http://127.0.0.1:8081';
 
 export function CategoriesPage() {
+  const { data: catData } = useCachedResource<{ categories: Cat[] }>('categories', '/admin/categories', 'catalog');
+  const { data: chipData } = useCachedResource<{ chips: Chip[] }>('chips', '/admin/chips', 'catalog');
   const [cats, setCats] = useState<Cat[]>([]);
   const [chips, setChips] = useState<Chip[]>([]);
   const [q, setQ] = useState('');
@@ -18,9 +22,11 @@ export function CategoriesPage() {
   const [saving, setSaving] = useState<string | null>(null);
 
   useEffect(() => {
-    api<{ categories: Cat[] }>('/admin/categories').then((r) => setCats(r.categories));
-    api<{ chips: Chip[] }>('/admin/chips').then((r) => setChips(r.chips));
-  }, []);
+    if (catData?.categories) setCats(catData.categories);
+  }, [catData]);
+  useEffect(() => {
+    if (chipData?.chips) setChips(chipData.chips);
+  }, [chipData]);
 
   const catTitle = useMemo(() => {
     const map = new Map(cats.map((c) => [c.id, String(c.payload.title ?? c.id)]));
@@ -135,6 +141,14 @@ export function CategoriesPage() {
           <ul className="aisle-list">
             {visibleCats.map((c) => (
               <li key={c.id} className="aisle-row">
+                <div className={`aisle-thumb${c.id === 'fruits-legumes' ? ' aisle-thumb-produce' : ''}`}>
+                  {CATEGORY_ART[c.id] ? (
+                    <img
+                      src={mediaUrl(`/catalog/media/${encodeURIComponent(CATEGORY_ART[c.id])}`)}
+                      alt=""
+                    />
+                  ) : null}
+                </div>
                 <code className="aisle-id">{c.id}</code>
                 <label className="field" style={{ margin: 0, minWidth: 0 }}>
                   Nom affiché

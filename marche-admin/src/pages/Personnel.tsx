@@ -1,7 +1,7 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { Plus, Search } from 'lucide-react';
-import { api } from '@/lib/api';
+import { needleOf, textMatch, useCachedResource } from '@/lib/cachedApi';
 import { ONBOARD_LABELS, roleLabel } from '@/lib/staffLabels';
 import { useAppSelector } from '@/app/hooks';
 
@@ -27,27 +27,26 @@ export function PersonnelPage() {
   const [q, setQ] = useState('');
   const [role, setRole] = useState('');
   const [onboard, setOnboard] = useState('');
-  const [rows, setRows] = useState<HrStaff[]>([]);
-  const [err, setErr] = useState('');
-  const [stores, setStores] = useState<{ id: string; payload: { name?: string } }[]>([]);
+  const { data: staffData, refresh } = useCachedResource<{ staff: HrStaff[] }>('staff', '/admin/staff', 'staff');
+  const { data: storeData } = useCachedResource<{ stores: { id: string; payload: { name?: string } }[] }>(
+    'stores',
+    '/admin/stores',
+    'catalog',
+  );
+  const allRows = staffData?.staff ?? [];
+  const stores = storeData?.stores ?? [];
+  const err = '';
 
-  const load = () => {
-    const p = new URLSearchParams();
-    if (q) p.set('q', q);
-    if (role) p.set('role', role);
-    if (onboard) p.set('onboard', onboard);
-    api<{ staff: HrStaff[] }>(`/admin/staff?${p}`)
-      .then((r) => setRows(r.staff))
-      .catch((e: Error) => setErr(e.message));
-  };
-
-  useEffect(() => {
-    load();
-    api<{ stores: { id: string; payload: { name?: string } }[] }>('/admin/stores')
-      .then((r) => setStores(r.stores))
-      .catch(() => undefined);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  const rows = useMemo(() => {
+    const needle = needleOf(q);
+    return allRows.filter((s) => {
+      if (!textMatch(needle, s.firstName, s.lastName, s.email, s.phone)) return false;
+      if (role && s.role !== role) return false;
+      if (onboard === 'suspended' && s.isActive) return false;
+      if (onboard && onboard !== 'suspended' && s.onboardStatus !== onboard) return false;
+      return true;
+    });
+  }, [allRows, q, role, onboard]);
 
   const storeName = useMemo(() => {
     const m = new Map(stores.map((s) => [s.id, String(s.payload?.name ?? s.id)]));
@@ -74,7 +73,7 @@ export function PersonnelPage() {
             Recherche
             <span className="row" style={{ gap: 8 }}>
               <Search size={16} style={{ opacity: 0.5 }} />
-              <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Nom, e-mail, téléphone" onKeyDown={(e) => e.key === 'Enter' && load()} />
+              <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Nom, e-mail, téléphone" />
             </span>
           </label>
           <label className="field">
@@ -98,8 +97,8 @@ export function PersonnelPage() {
               <option value="suspended">Suspendu</option>
             </select>
           </label>
-          <button className="btn ghost" type="button" onClick={load}>
-            Filtrer
+          <button className="btn ghost" type="button" onClick={() => void refresh(true)}>
+            Actualiser
           </button>
         </div>
       </div>

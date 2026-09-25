@@ -1,6 +1,7 @@
 import { NavLink, Outlet, useNavigate } from 'react-router-dom';
 import { motion } from 'framer-motion';
 import {
+  Bike,
   LayoutDashboard,
   Package,
   Warehouse,
@@ -8,6 +9,7 @@ import {
   Sparkles,
   Grid3x3,
   ShoppingBag,
+  ContactRound,
   Users,
   UserPlus,
   Shield,
@@ -22,6 +24,7 @@ import { applyTheme, toggleTheme } from '@/features/ui/uiSlice';
 import { useAppDispatch, useAppSelector } from '@/app/hooks';
 import { useEffect, useMemo, useState } from 'react';
 import { roleLabel } from '@/lib/staffLabels';
+import { startAdminCache, warmAdminCache } from '@/lib/cachedApi';
 
 const SIDE_KEY = 'marche-admin-sidebar';
 
@@ -49,6 +52,27 @@ export function Shell() {
   const hr = Boolean(staff?.canReadHr || staff?.canHr);
   const [collapsed, setCollapsed] = useState(readCollapsed);
 
+  useEffect(() => {
+    startAdminCache();
+    const keys: { key: string; path: string; domain: 'catalog' | 'orders' | 'floor' | 'clients' | 'overview' }[] = [
+      { key: 'categories', path: '/admin/categories', domain: 'catalog' },
+    ];
+    if (catalog) {
+      keys.push(
+        { key: 'products', path: '/admin/products', domain: 'catalog' },
+        { key: 'orders', path: '/admin/orders', domain: 'orders' },
+        { key: 'shop-users', path: '/admin/shop-users', domain: 'clients' },
+        { key: 'banners', path: '/admin/banners', domain: 'catalog' },
+        { key: 'merch', path: '/admin/merch', domain: 'catalog' },
+        { key: 'chips', path: '/admin/chips', domain: 'catalog' },
+        { key: 'floor', path: '/admin/floor', domain: 'floor' },
+        { key: 'overview', path: '/admin/overview', domain: 'overview' },
+        { key: 'stock:su-aeroport', path: '/admin/stock?storeId=su-aeroport', domain: 'catalog' },
+      );
+    }
+    void warmAdminCache(keys);
+  }, [catalog]);
+
   const setCollapsedPersist = (next: boolean) => {
     setCollapsed(next);
     try {
@@ -70,7 +94,13 @@ export function Shell() {
         { to: '/vitrine', label: 'Populaires & tendances', icon: Sparkles },
         { to: '/rayons', label: 'Rayons', icon: Grid3x3 },
         { to: '/commandes', label: 'Commandes', icon: ShoppingBag },
+        { to: '/clients', label: 'Clients Marché Doré', icon: ContactRound },
+        { to: '/terrain', label: 'Terrain', icon: Bike },
       );
+    }
+    if (!catalog && hr) {
+      items.splice(1, 0, { to: '/clients', label: 'Clients Marché Doré', icon: ContactRound });
+      items.splice(2, 0, { to: '/terrain', label: 'Terrain', icon: Bike });
     }
     if (hr) {
       items.push(
@@ -102,12 +132,14 @@ export function Shell() {
             className="side-toggle"
             type="button"
             aria-expanded={!collapsed}
-            aria-label={collapsed ? 'Déplier le menu' : 'Replier le menu'}
-            title={collapsed ? 'Déplier' : 'Replier'}
+            aria-label={collapsed ? 'Ouvrir le menu' : 'Fermer le menu'}
+            title={collapsed ? 'Ouvrir le menu' : 'Fermer le menu'}
             onClick={() => setCollapsedPersist(!collapsed)}>
             {collapsed ? <PanelLeftOpen size={18} /> : <PanelLeftClose size={18} />}
+            <span className="toggle-text">{collapsed ? 'Menu' : 'Fermer'}</span>
           </button>
         </div>
+        <nav className="side-nav">
         {links.map((l) => (
           <NavLink
             key={l.to}
@@ -119,6 +151,7 @@ export function Shell() {
             <span className="nav-label">{l.label}</span>
           </NavLink>
         ))}
+        </nav>
         <div className="side-foot">
           <div className="side-who" title={`${who}\n${roleLine}`}>
             <span className="side-avatar">{initials(staff?.firstName, staff?.lastName)}</span>

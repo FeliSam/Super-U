@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import { api, formatFcfa, mediaUrl } from '@/lib/api';
 import { useAppSelector } from '@/app/hooks';
@@ -11,6 +11,7 @@ type Sibling = {
   categoryId: string;
   payload: { name?: string; unit?: string; price?: number; sku?: string };
   stock: { available: number } | null;
+  imageUrl?: string;
 };
 
 export function ProductEditPage() {
@@ -35,6 +36,11 @@ export function ProductEditPage() {
     inStock: true,
   });
   const [imageUrl, setImageUrl] = useState('');
+  const [previewUrl, setPreviewUrl] = useState('');
+  const [uploading, setUploading] = useState(false);
+  const [syncingFamily, setSyncingFamily] = useState(false);
+  const [applyToFamily, setApplyToFamily] = useState(true);
+  const previewRef = useRef<string | null>(null);
   const [siblings, setSiblings] = useState<Sibling[]>([]);
 
   useEffect(() => {
@@ -80,6 +86,14 @@ export function ProductEditPage() {
 
   const set = (k: string, v: string | boolean) => setForm((f) => ({ ...f, [k]: v }));
 
+  useEffect(() => {
+    return () => {
+      if (previewRef.current) URL.revokeObjectURL(previewRef.current);
+    };
+  }, []);
+
+  const shownImage = previewUrl || (imageUrl ? mediaUrl(imageUrl) : '');
+
   const save = async () => {
     setErr('');
     setOk('');
@@ -117,13 +131,69 @@ export function ProductEditPage() {
       setErr('Enregistrez d’abord le produit, puis ajoutez l’image.');
       return;
     }
+    setErr('');
+    setOk('');
+    if (previewRef.current) URL.revokeObjectURL(previewRef.current);
+    const local = URL.createObjectURL(file);
+    previewRef.current = local;
+    setPreviewUrl(local);
+    setUploading(true);
     const fd = new FormData();
     fd.append('file', file);
+    if (applyToFamily) fd.append('applyFamily', '1');
     try {
-      await api(`/admin/products/${id}/image`, { method: 'POST', body: fd });
-      setOk('Image enregistrée dans le dossier catalogue. Relancer catalog:map pour CourseGO.');
+      const res = await api<{ imageUrl?: string; checksum?: string; appliedTo?: string[]; hint?: string }>(
+        `/admin/products/${id}/image`,
+        {
+          method: 'POST',
+          body: fd,
+        },
+      );
+      const next = res.imageUrl || `/catalog/media/${encodeURIComponent(id)}?v=${Date.now()}`;
+      setImageUrl(next);
+      const copied = res.appliedTo?.length ?? 0;
+      setOk(
+        copied
+          ? `Image enregistrée et appliquée à ${copied} autre(s) format(s). La boutique se synchronise au prochain chargement.`
+          : res.hint || 'Image enregistrée. Aperçu à jour — la boutique se synchronise au prochain chargement catalogue.',
+      );
+      if (copied) {
+        setSiblings((list) =>
+          list.map((item) => ({
+            ...item,
+            imageUrl: `/catalog/media/${encodeURIComponent(item.id)}?v=${Date.now()}`,
+          })),
+        );
+      }
     } catch (e) {
       setErr((e as Error).message);
+    } finally {
+      setUploading(false);
+    }
+  };
+
+  const applyCurrentImageToFamily = async () => {
+    if (!id || isNew) return;
+    setErr('');
+    setOk('');
+    setSyncingFamily(true);
+    try {
+      const res = await api<{ appliedTo?: string[]; hint?: string; imageUrl?: string }>(
+        `/admin/products/${id}/image/family`,
+        { method: 'POST' },
+      );
+      const copied = res.appliedTo?.length ?? 0;
+      setOk(res.hint || (copied ? `Image copiée sur ${copied} format(s).` : 'Aucun autre format.'));
+      setSiblings((list) =>
+        list.map((item) => ({
+          ...item,
+          imageUrl: `/catalog/media/${encodeURIComponent(item.id)}?v=${Date.now()}`,
+        })),
+      );
+    } catch (e) {
+      setErr((e as Error).message);
+    } finally {
+      setSyncingFamily(false);
     }
   };
 
@@ -216,13 +286,52 @@ export function ProductEditPage() {
           </label>
         </div>
         <div className="card">
-          {imageUrl ? <img className="thumb" style={{ width: '100%', height: 180 }} src={mediaUrl(imageUrl)} alt="" /> : null}
-          <p className="sku">Image bundlée : {id || '…'}.png — pas d’URL http dans le payload.</p>
+          {shownImage ? (
+            <img
+              className="thumb"
+              style={{ width: '100%', height: 180, objectFit: 'cover', background: '#f3f1ec' }}
+              src={shownImage}
+              alt={form.name || 'Aperçu produit'}
+            />
+          ) : (
+            <div className="thumb" style={{ width: '100%', height: 180, display: 'grid', placeItems: 'center', color: 'var(--muted)' }}>
+              Aucune image
+            </div>
+          )}
+          <p className="sku">
+            {uploading
+              ? 'Envoi en cours…'
+              : previewUrl
+                ? 'Aperçu local — synchronisation serveur…'
+                : imageUrl.includes('?v=')
+                  ? 'Image personnalisée (synchronisée boutique).'
+                  : `Image catalogue : ${id || '…'}`}
+          </p>
           <input
             type="file"
             accept="image/png,image/webp,image/jpeg"
-            onChange={(e) => e.target.files?.[0] && void upload(e.target.files[0])}
+            disabled={uploading || isNew}
+            onChange={(e) => {
+              const file = e.target.files?.[0];
+              e.target.value = '';
+              if (file) void upload(file);
+            }}
           />
+          {!isNew && siblings.length > 1 ? (
+            <label className="field" style={{ flexDirection: 'row', alignItems: 'flex-start', gap: 10, marginTop: 12 }}>
+              <input
+                type="checkbox"
+                checked={applyToFamily}
+                onChange={(e) => setApplyToFamily(e.target.checked)}
+              />
+              <span>
+                Appliquer cette image à tous les formats de poids
+                <span className="sku" style={{ display: 'block', marginTop: 2 }}>
+                  {siblings.length - 1} autre(s) SKU de la même famille.
+                </span>
+              </span>
+            </label>
+          ) : null}
           <p style={{ marginTop: 16 }}>
             {form.oldPrice ? (
               <>
@@ -237,10 +346,25 @@ export function ProductEditPage() {
       </div>
       {!isNew && siblings.length > 1 ? (
         <div className="card" style={{ marginTop: 16 }}>
-          <h3 style={{ margin: '0 0 12px' }}>Formats de poids</h3>
+          <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12, alignItems: 'flex-start', marginBottom: 12 }}>
+            <div>
+              <h3 style={{ margin: 0 }}>Formats de poids</h3>
+              <p className="sku" style={{ margin: '6px 0 0' }}>
+                Même photo pour toute la famille, ou ouvrez une fiche pour un visuel distinct.
+              </p>
+            </div>
+            <button
+              className="btn ghost"
+              type="button"
+              disabled={syncingFamily || uploading}
+              onClick={() => void applyCurrentImageToFamily()}>
+              {syncingFamily ? 'Copie…' : 'Appliquer l’image à tous'}
+            </button>
+          </div>
           <table>
             <thead>
               <tr>
+                <th>Photo</th>
                 <th>Poids</th>
                 <th>SKU</th>
                 <th>Prix</th>
@@ -251,8 +375,17 @@ export function ProductEditPage() {
             <tbody>
               {siblings.map((item) => {
                 const current = item.id === id;
+                const thumb = mediaUrl(item.imageUrl || `/catalog/media/${encodeURIComponent(item.id)}`);
                 return (
                   <tr key={item.id} style={current ? { background: 'rgba(47, 111, 176, 0.08)' } : undefined}>
+                    <td>
+                      <img
+                        className="thumb"
+                        src={thumb}
+                        alt=""
+                        style={{ width: 40, height: 40, objectFit: 'cover', borderRadius: 8 }}
+                      />
+                    </td>
                     <td>
                       <strong>{item.payload.unit || '—'}</strong>
                     </td>

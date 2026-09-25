@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { ArrowDown, ArrowUp, ArrowUpDown } from 'lucide-react';
 import { api } from '@/lib/api';
+import { useCachedResource } from '@/lib/cachedApi';
 
 type Item = {
   productId: string;
@@ -36,9 +37,15 @@ const REASONS: { value: string; label: string }[] = [
 
 export function StockPage() {
   const [storeId, setStoreId] = useState('su-aeroport');
-  const [stores, setStores] = useState<Store[]>([]);
-  const [items, setItems] = useState<Item[]>([]);
-  const [alerts, setAlerts] = useState(0);
+  const { data: storeData } = useCachedResource<{ stores: Store[] }>('stores', '/admin/stores', 'catalog');
+  const { data: stockData, refresh } = useCachedResource<{ items: Item[]; alerts: number }>(
+    `stock:${storeId}`,
+    `/admin/stock?storeId=${storeId}`,
+    'catalog',
+  );
+  const stores = storeData?.stores ?? [];
+  const items = stockData?.items ?? [];
+  const alerts = stockData?.alerts ?? 0;
   const [q, setQ] = useState('');
   const [filter, setFilter] = useState<StockFilter>('all');
   const [pick, setPick] = useState<Item | null>(null);
@@ -51,20 +58,8 @@ export function StockPage() {
   const [sortKey, setSortKey] = useState<SortKey | null>(null);
   const [sortDir, setSortDir] = useState<SortDir>('asc');
 
-  const load = () => {
-    api<{ items: Item[]; alerts: number }>(`/admin/stock?storeId=${storeId}`).then((r) => {
-      setItems(r.items);
-      setAlerts(r.alerts);
-    });
-  };
-
-  useEffect(() => {
-    api<{ stores: Store[] }>('/admin/stores').then((r) => setStores(r.stores));
-  }, []);
-
   useEffect(() => {
     setPick(null);
-    load();
   }, [storeId]);
 
   const outCount = useMemo(() => items.filter((i) => i.available <= 0).length, [items]);
@@ -120,7 +115,7 @@ export function StockPage() {
       });
       setMsg('Mouvement enregistré. inStock boutique synchronisé.');
       setPick(null);
-      load();
+      void refresh(true);
     } catch (e) {
       setMsg((e as Error).message);
     } finally {

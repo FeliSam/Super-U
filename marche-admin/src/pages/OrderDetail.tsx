@@ -1,6 +1,7 @@
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import { api, formatFcfa } from '@/lib/api';
+import { useLiveSync } from '@/lib/live';
 import {
   CLIENT_ACTION,
   DELIVERY_STATUS,
@@ -73,7 +74,7 @@ export function OrderDetailPage() {
   const [showMoney, setShowMoney] = useState(false);
   const [err, setErr] = useState('');
 
-  useEffect(() => {
+  const load = useCallback(() => {
     if (!id) return;
     api<{
       order: Detail;
@@ -91,6 +92,11 @@ export function OrderDetailPage() {
       })
       .catch((e: Error) => setErr(e.message));
   }, [id]);
+
+  useEffect(() => {
+    load();
+  }, [load]);
+  useLiveSync(load, Boolean(id));
 
   if (!order) return <p style={{ padding: 24 }}>{err || 'Chargement…'}</p>;
 

@@ -21,6 +21,9 @@ import { PersonnelDetailPage } from '@/pages/PersonnelDetail';
 import { PersonnelNewPage } from '@/pages/PersonnelNew';
 import { RecrutementPage } from '@/pages/Recrutement';
 import { RolesHelpPage } from '@/pages/RolesHelp';
+import { TerrainPage } from '@/pages/Terrain';
+import { ClientsPage } from '@/pages/Clients';
+import { ClientDetailPage } from '@/pages/ClientDetail';
 
 function Guard({ children }: { children: ReactNode }) {
   const staff = useAppSelector((s) => s.auth.staff);
@@ -125,6 +128,9 @@ export function App() {
             </CatalogGuard>
           }
         />
+        <Route path="terrain" element={<TerrainPage />} />
+        <Route path="clients" element={<ClientsPage />} />
+        <Route path="clients/:id" element={<ClientDetailPage />} />
         <Route
           path="personnel"
           element={

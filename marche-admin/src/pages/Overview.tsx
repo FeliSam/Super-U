@@ -12,7 +12,8 @@ import {
   Plus,
   ArrowUpDown,
 } from 'lucide-react';
-import { api, formatFcfa } from '@/lib/api';
+import { formatFcfa } from '@/lib/api';
+import { useCachedResource } from '@/lib/cachedApi';
 import { useAppSelector } from '@/app/hooks';
 import { ONBOARD_LABELS, roleLabel } from '@/lib/staffLabels';
 import { BarChart, DonutChart, Kpi, LineChart, dayLabel, deltaPct, money, monthLabel } from '@/components/Charts';
@@ -126,44 +127,40 @@ export function OverviewPage() {
   const [hrRange, setHrRange] = useState<'30d' | '12m'>('30d');
   const [err, setErr] = useState('');
 
+  const overview = useCachedResource<{
+    stats: Stats;
+    showMoney?: boolean;
+    series?: { days: DayPoint[]; months: MonthPoint[] };
+    breakdowns?: { orderStatuses: StatSlice[]; paymentMethods: StatSlice[] };
+    topProducts?: TopProduct[];
+    recentOrders?: RecentOrder[];
+    inventory?: Inventory;
+    stockTracking?: StockTracking[];
+    alertItems?: AlertItem[];
+    ruptures?: Rupture[];
+  }>('overview', '/admin/overview', 'overview', catalog);
+  const hrRes = useCachedResource<HrOverview>('staff-overview', '/admin/staff/overview', 'staff', hrAccess);
+
   useEffect(() => {
-    if (catalog) {
-      api<{
-        stats: Stats;
-        showMoney?: boolean;
-        series?: { days: DayPoint[]; months: MonthPoint[] };
-        breakdowns?: { orderStatuses: StatSlice[]; paymentMethods: StatSlice[] };
-        topProducts?: TopProduct[];
-        recentOrders?: RecentOrder[];
-        inventory?: Inventory;
-        stockTracking?: StockTracking[];
-        alertItems?: AlertItem[];
-        ruptures?: Rupture[];
-      }>('/admin/overview')
-        .then((r) => {
-          setStats(r.stats);
-          setShowMoney(Boolean(r.showMoney));
-          setAlerts(r.alertItems ?? []);
-          setRuptures(r.ruptures ?? []);
-          setSeriesDays(r.series?.days ?? []);
-          setSeriesMonths(r.series?.months ?? []);
-          setOrderStatuses(r.breakdowns?.orderStatuses ?? []);
-          setPaymentMethods(r.breakdowns?.paymentMethods ?? []);
-          setTopProducts(r.topProducts ?? []);
-          setRecentOrders(r.recentOrders ?? []);
-          setInventory(r.inventory ?? null);
-          setStockTracking(r.stockTracking ?? []);
-        })
-        .catch((e: Error) => setErr(e.message));
-    }
-    if (hrAccess) {
-      api<HrOverview>('/admin/staff/overview')
-        .then(setHr)
-        .catch((e: Error) => {
-          if (!catalog) setErr(e.message);
-        });
-    }
-  }, [catalog, hrAccess]);
+    const r = overview.data;
+    if (!r) return;
+    setStats(r.stats);
+    setShowMoney(Boolean(r.showMoney));
+    setAlerts(r.alertItems ?? []);
+    setRuptures(r.ruptures ?? []);
+    setSeriesDays(r.series?.days ?? []);
+    setSeriesMonths(r.series?.months ?? []);
+    setOrderStatuses(r.breakdowns?.orderStatuses ?? []);
+    setPaymentMethods(r.breakdowns?.paymentMethods ?? []);
+    setTopProducts(r.topProducts ?? []);
+    setRecentOrders(r.recentOrders ?? []);
+    setInventory(r.inventory ?? null);
+    setStockTracking(r.stockTracking ?? []);
+  }, [overview.data]);
+
+  useEffect(() => {
+    if (hrRes.data) setHr(hrRes.data);
+  }, [hrRes.data]);
 
   const active = hr?.counts.filter((c) => c.isActive).reduce((a, c) => a + c.n, 0) ?? 0;
   const pipeline =
@@ -640,9 +637,12 @@ export function OverviewPage() {
             <div className="dash-card-head">
               <ShoppingBag size={16} />
               <h3>CourseGO</h3>
+              <Link to="/terrain" style={{ marginLeft: 'auto', fontSize: 13, fontWeight: 650 }}>
+                Terrain live
+              </Link>
             </div>
             <p className="dash-empty" style={{ marginBottom: 8 }}>
-              Les files vivent dans l’app staff. Ici, l’état du jour.
+              Qui ramasse, qui livre, qui est en pause — page Terrain.
             </p>
             <ul className="dash-list">
               <li>

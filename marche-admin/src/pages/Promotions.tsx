@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { api } from '@/lib/api';
+import { useCachedResource } from '@/lib/cachedApi';
 
 type BannerPayload = {
   title?: string;
@@ -55,18 +56,20 @@ function buildHref(categoryId: string, filter: string) {
 }
 
 export function PromotionsPage() {
+  const { data: bannerData, refresh } = useCachedResource<{ banners: Banner[] }>('banners', '/admin/banners', 'catalog');
+  const { data: catData } = useCachedResource<{ categories: Cat[] }>('categories', '/admin/categories', 'catalog');
   const [banners, setBanners] = useState<Banner[]>([]);
   const [cats, setCats] = useState<Cat[]>([]);
   const [msg, setMsg] = useState('');
   const [err, setErr] = useState('');
   const [saving, setSaving] = useState<string | null>(null);
 
-  const load = () => api<{ banners: Banner[] }>('/admin/banners').then((r) => setBanners(r.banners));
-
   useEffect(() => {
-    void load();
-    api<{ categories: Cat[] }>('/admin/categories').then((r) => setCats(r.categories));
-  }, []);
+    if (bannerData?.banners) setBanners(bannerData.banners);
+  }, [bannerData]);
+  useEffect(() => {
+    if (catData?.categories) setCats(catData.categories);
+  }, [catData]);
 
   const patch = (id: string, payload: Partial<BannerPayload>) => {
     setBanners((all) =>
@@ -90,7 +93,7 @@ export function PromotionsPage() {
         }),
       });
       setMsg(`« ${b.payload.title || b.id} » publié. La boutique le reprend au prochain sync catalogue.`);
-      void load();
+      void refresh(true);
     } catch (e) {
       setErr((e as Error).message);
     } finally {

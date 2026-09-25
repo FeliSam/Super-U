@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { api, mediaUrl } from '@/lib/api';
 import { productFamilyName } from '@/lib/productFamily';
+import { useCachedResource } from '@/lib/cachedApi';
 
 type Product = {
   id: string;
@@ -133,23 +134,24 @@ export function MerchPage() {
   const [recommended, setRecommended] = useState<string[]>([]);
   const [trending, setTrending] = useState<string[]>([]);
   const [termDraft, setTermDraft] = useState('');
-  const [catalog, setCatalog] = useState<Product[]>([]);
-  const [cats, setCats] = useState<Cat[]>([]);
   const [msg, setMsg] = useState('');
   const [err, setErr] = useState('');
   const [busy, setBusy] = useState(false);
+  const { data: merchData } = useCachedResource<{
+    merch: { popularIds?: string[]; recommendedIds?: string[]; trendingTerms?: string[] };
+  }>('merch', '/admin/merch', 'catalog');
+  const { data: productData } = useCachedResource<{ products: Product[] }>('products', '/admin/products', 'catalog');
+  const { data: catData } = useCachedResource<{ categories: Cat[] }>('categories', '/admin/categories', 'catalog');
+  const catalog = productData?.products ?? [];
+  const cats = catData?.categories ?? [];
 
   useEffect(() => {
-    api<{ merch: { popularIds?: string[]; recommendedIds?: string[]; trendingTerms?: string[] } }>('/admin/merch').then(
-      (r) => {
-        setPopular(r.merch.popularIds ?? []);
-        setRecommended(r.merch.recommendedIds ?? []);
-        setTrending(r.merch.trendingTerms ?? []);
-      },
-    );
-    api<{ products: Product[] }>('/admin/products').then((r) => setCatalog(r.products));
-    api<{ categories: Cat[] }>('/admin/categories').then((r) => setCats(r.categories));
-  }, []);
+    const m = merchData?.merch;
+    if (!m) return;
+    setPopular(m.popularIds ?? []);
+    setRecommended(m.recommendedIds ?? []);
+    setTrending(m.trendingTerms ?? []);
+  }, [merchData]);
 
   const save = async () => {
     setMsg('');

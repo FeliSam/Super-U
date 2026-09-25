@@ -1,7 +1,8 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { ArrowDown, ArrowUp, ArrowUpDown, Plus } from 'lucide-react';
-import { api, formatFcfa, mediaUrl } from '@/lib/api';
+import { formatFcfa, mediaUrl } from '@/lib/api';
+import { needleOf, textMatch, useCachedResource } from '@/lib/cachedApi';
 import {
   preferredVariantId,
   productFamilyKey,
@@ -19,6 +20,7 @@ type Product = {
     oldPrice?: number;
     discount?: string;
     inStock?: boolean;
+    producer?: string;
     sku?: string;
     badge?: string;
   };
@@ -72,11 +74,37 @@ export function ProductsPage() {
   const [categoryId, setCategoryId] = useState('');
   const [stock, setStock] = useState('all');
   const [merch, setMerch] = useState('');
-  const [items, setItems] = useState<Product[]>([]);
-  const [cats, setCats] = useState<Cat[]>([]);
-  const [busy, setBusy] = useState(false);
+  const { data: productData, busy, refresh } = useCachedResource<{ products: Product[] }>(
+    'products',
+    '/admin/products',
+    'catalog',
+  );
+  const { data: catData } = useCachedResource<{ categories: Cat[] }>('categories', '/admin/categories', 'catalog');
+  const allItems = productData?.products ?? [];
+  const cats = catData?.categories ?? [];
   const [sortKey, setSortKey] = useState<SortKey | null>(null);
   const [sortDir, setSortDir] = useState<SortDir>('asc');
+
+  const items = useMemo(() => {
+    const needle = needleOf(q);
+    return allItems.filter((p) => {
+      if (
+        needle &&
+        !textMatch(needle, p.payload.name, p.payload.sku, p.id, p.payload.producer)
+      ) {
+        return false;
+      }
+      if (categoryId && p.categoryId !== categoryId) return false;
+      const available = p.stock?.available ?? 0;
+      if (stock === 'in' && available <= 0) return false;
+      if (stock === 'out' && available > 0) return false;
+      if (stock === 'alert' && !p.stock?.alert) return false;
+      if (merch === 'popular' && !p.flags.popular) return false;
+      if (merch === 'promo' && !p.flags.promo) return false;
+      if (merch === 'recommended' && !p.flags.recommended) return false;
+      return true;
+    });
+  }, [allItems, q, categoryId, stock, merch]);
 
   const families = useMemo(() => groupFamilies(items), [items]);
   const catTitle = useMemo(() => {
@@ -111,26 +139,6 @@ export function ProductsPage() {
     setSortDir(numeric ? 'desc' : 'asc');
   };
 
-  const load = () => {
-    const p = new URLSearchParams();
-    if (q) p.set('q', q);
-    if (categoryId) p.set('categoryId', categoryId);
-    if (stock !== 'all') p.set('stock', stock);
-    if (merch) p.set('merch', merch);
-    setBusy(true);
-    api<{ products: Product[] }>(`/admin/products?${p}`)
-      .then((r) => setItems(r.products))
-      .finally(() => setBusy(false));
-  };
-
-  useEffect(() => {
-    api<{ categories: Cat[] }>('/admin/categories').then((r) => setCats(r.categories));
-  }, []);
-
-  useEffect(() => {
-    load();
-  }, [categoryId, stock, merch]);
-
   return (
     <>
       <div className="topbar">
@@ -151,7 +159,6 @@ export function ProductsPage() {
               value={q}
               placeholder="Nom, SKU, producteur…"
               onChange={(e) => setQ(e.target.value)}
-              onKeyDown={(e) => e.key === 'Enter' && load()}
             />
           </label>
           <label className="field">
@@ -183,8 +190,8 @@ export function ProductsPage() {
               <option value="promo">Promos</option>
             </select>
           </label>
-          <button className="btn ghost" type="button" onClick={load} disabled={busy}>
-            {busy ? '…' : 'Filtrer'}
+          <button className="btn ghost" type="button" onClick={() => void refresh(true)} disabled={busy}>
+            {busy ? '…' : 'Actualiser'}
           </button>
         </div>
       </div>
