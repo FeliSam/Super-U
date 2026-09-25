@@ -17,6 +17,7 @@ import type { Context, Hono } from 'hono';
 import { pool, query } from './db.ts';
 import { STAFF_SESSION_ALIVE_SQL, touchStaffSession } from './sessions.ts';
 import { restockCancelledOrder } from './orders.ts';
+import { keepCodUnpaid, settleCodOnDelivered } from './cod.ts';
 import { notifyCustomer, notifyOrderUser, notifyStaff } from './ops.ts';
 import { pushToUser } from './push.ts';
 import { fedapayConfigured } from './fedapay.ts';
@@ -184,7 +185,7 @@ function snapshot(o: OrderState) {
 
 type PaymentSummary = { paidAmount: number; refunded: number; paymentId: string | null; channel: string | null };
 
-async function paymentSummary(db: pg.PoolClient | typeof pool, o: Pick<OrderState, 'id' | 'payment_id' | 'status' | 'del_status' | 'total'>) {
+async function paymentSummary(db: pg.PoolClient | typeof pool, o: Pick<OrderState, 'id' | 'payment_id' | 'status' | 'del_status' | 'total'> & { payment_status?: string | null }) {
   const pays = await db.query<{ id: string; amount: number; method: string; provider_id: string | null }>(
     `SELECT id, amount, method, provider_id FROM payments
      WHERE order_id = $1 AND status IN ('paid', 'partially_refunded', 'refunded')
@@ -197,8 +198,8 @@ async function paymentSummary(db: pg.PoolClient | typeof pool, o: Pick<OrderStat
   );
   let paidAmount = pays.rows.reduce((a, p) => a + Number(p.amount), 0);
   let channel: string | null = pays.rows[0] ? `fedapay:${pays.rows[0].method}` : null;
-  // Paiement à la livraison : l'argent est encaissé une fois la commande livrée.
-  if (!paidAmount && o.payment_id === 'cod' && o.del_status === 'delivered') {
+  // Paiement à la livraison : l'argent est encaissé une fois la commande livrée (paid_cash).
+  if (!paidAmount && o.payment_id === 'cod' && (o.del_status === 'delivered' || o.payment_status === 'paid_cash')) {
     paidAmount = Number(o.total) || 0;
     channel = 'cash';
   }
@@ -391,6 +392,8 @@ async function runAction(orderId: string, action: OrderAction, staff: Staff, inp
         );
         await completeCourseIfDone(client, o.course_id);
         await syncPayload(client, orderId, { deliveredBy: 'admin' });
+        // Paiement à la livraison : le siège confirme la remise → espèces encaissées.
+        await settleCodOnDelivered(client, orderId, { staffId: staff.id, name: staffName(staff), role: staff.role }, reason ? `Livraison confirmée par le siège : ${reason}` : 'Livraison confirmée par le siège');
         later.push(() => notifyOrderUser(orderId, 'delivery.delivered'));
         break;
       }
@@ -402,6 +405,7 @@ async function runAction(orderId: string, action: OrderAction, staff: Staff, inp
         );
         await completeCourseIfDone(client, o.course_id);
         await syncPayload(client, orderId);
+        await keepCodUnpaid(client, orderId, { staffId: staff.id, name: staffName(staff), role: staff.role }, reason);
         later.push(() => notifyOrderUser(orderId, 'delivery.failed'));
         if (o.courier_id) {
           const cid = o.courier_id;
@@ -433,6 +437,7 @@ async function runAction(orderId: string, action: OrderAction, staff: Staff, inp
         );
         await completeCourseIfDone(client, o.course_id);
         await syncPayload(client, orderId, { status: 'cancelled', cancelledBy: 'staff', cancelReason: reason, cancelledAt: new Date().toISOString() });
+        await keepCodUnpaid(client, orderId, { staffId: staff.id, name: staffName(staff), role: staff.role }, reason);
         const restored = await restockCancelledOrder(client, orderId, `Annulation back-office ${orderId} : ${reason}`);
         result.restocked = restored;
         later.push(() =>
@@ -751,12 +756,21 @@ export function registerAdminActionRoutes(app: Hono) {
     const staff = g.staff!;
     const kind = c.req.query('kind') === 'courier' ? 'courier' : 'picker';
     const scope = scopeOf(staff);
-    const ord = await query<{ store_id: string | null }>(
-      `SELECT store_id FROM orders WHERE id = $1 AND ($2::text IS NULL OR store_id = $2)`,
+    const ord = await query<{ store_id: string | null; ref_lng: number | null; ref_lat: number | null }>(
+      `SELECT o.store_id,
+              COALESCE(d.pickup_lng, (st.payload->'coordinate'->>0)::float8) AS ref_lng,
+              COALESCE(d.pickup_lat, (st.payload->'coordinate'->>1)::float8) AS ref_lat
+       FROM orders o
+       LEFT JOIN ops.deliveries d ON d.order_id = o.id
+       LEFT JOIN stores st ON st.id = o.store_id
+       WHERE o.id = $1 AND ($2::text IS NULL OR o.store_id = $2)`,
       [c.req.param('id'), scope],
     );
     if (!ord.rows[0]) return c.json({ ok: false, error: 'Commande introuvable.' }, 404);
     const storeId = ord.rows[0].store_id;
+    // Distance à vol d'oiseau entre la dernière position GPS (< 12 h) et le point de retrait (magasin).
+    const refLng = ord.rows[0].ref_lng;
+    const refLat = ord.rows[0].ref_lat;
     const rows = await query<{
       id: string;
       first_name: string;
@@ -769,8 +783,14 @@ export function registerAdminActionRoutes(app: Hono) {
       active_picks: number;
       held: number;
       started: number;
+      distance_m: number | null;
     }>(
       `SELECT s.id, s.first_name, s.last_name, s.role, s.store_id, s.vehicle, ${PRESENCE_SQL} AS presence, s.last_seen_at,
+              (SELECT CASE WHEN $2::float8 IS NULL OR $3::float8 IS NULL THEN NULL ELSE
+                 round(2 * 6371000 * asin(sqrt(
+                   power(sin(radians(l.lat - $3::float8) / 2), 2) +
+                   cos(radians($3::float8)) * cos(radians(l.lat)) * power(sin(radians(l.lng - $2::float8) / 2), 2))))::int END
+               FROM ops.courier_locations l WHERE l.courier_id = s.id AND l.updated_at > NOW() - INTERVAL '12 hours') AS distance_m,
               (SELECT COUNT(*)::int FROM ops.pick_jobs pj WHERE pj.picker_id = s.id AND pj.status IN ('assigned', 'picking')) AS active_picks,
               (SELECT COUNT(*)::int FROM ops.deliveries d WHERE d.courier_id = s.id AND d.status IN ('assigned', 'at_store', 'picked_up', 'en_route', 'arrived')) AS held,
               (SELECT COUNT(*)::int FROM ops.deliveries d WHERE d.courier_id = s.id AND d.status IN ('picked_up', 'en_route', 'arrived')) AS started
@@ -782,7 +802,7 @@ export function registerAdminActionRoutes(app: Hono) {
        ORDER BY CASE ${PRESENCE_SQL} WHEN 'online' THEN 0 WHEN 'paused' THEN 1 ELSE 2 END,
                 s.last_seen_at DESC NULLS LAST, s.first_name
        LIMIT 100`,
-      [storeId],
+      [storeId, refLng, refLat],
     );
     return c.json({
       ok: true,
@@ -808,6 +828,7 @@ export function registerAdminActionRoutes(app: Hono) {
           lastSeenAt: s.last_seen_at,
           load: kind === 'picker' ? s.active_picks : s.held,
           busyReason,
+          distanceM: s.distance_m == null ? null : Number(s.distance_m),
         };
       }),
     });
@@ -1152,10 +1173,33 @@ export function registerAdminActionRoutes(app: Hono) {
        GROUP BY p.status`,
       [scope],
     );
+    // Paiement à la livraison (espèces) : la quasi-totalité des commandes. Jamais « à vérifier ».
+    const cod = await query<{ to_collect_n: number; to_collect_amount: number; collected_n: number; collected_amount: number; collected_today_n: number; collected_today_amount: number }>(
+      `SELECT COUNT(*) FILTER (WHERE NOT settled AND o.status NOT IN ('cancelled', 'delivered'))::int AS to_collect_n,
+              COALESCE(SUM(o.total) FILTER (WHERE NOT settled AND o.status NOT IN ('cancelled', 'delivered')), 0)::int AS to_collect_amount,
+              COUNT(*) FILTER (WHERE settled)::int AS collected_n,
+              COALESCE(SUM(o.total) FILTER (WHERE settled), 0)::int AS collected_amount,
+              COUNT(*) FILTER (WHERE settled AND settled_at >= date_trunc('day', NOW()))::int AS collected_today_n,
+              COALESCE(SUM(o.total) FILTER (WHERE settled AND settled_at >= date_trunc('day', NOW())), 0)::int AS collected_today_amount
+       FROM (
+         SELECT o.*,
+                (o.payment_status = 'paid_cash' OR (o.status = 'delivered' AND COALESCE(o.payment_status, '') NOT IN ('refunded'))) AS settled,
+                COALESCE(NULLIF(o.payload->>'cashCollectedAt', '')::timestamptz, o.updated_at) AS settled_at
+         FROM orders o
+         WHERE o.payment_id = 'cod' AND ($1::text IS NULL OR o.store_id = $1)
+       ) o`,
+      [scope],
+    );
+    const cr = cod.rows[0];
     return c.json({
       ok: true,
       fedapayConfigured: fedapayConfigured(),
       fedapayRefundApi: false,
+      cod: {
+        toCollect: { n: cr?.to_collect_n ?? 0, amount: cr?.to_collect_amount ?? 0 },
+        collected: { n: cr?.collected_n ?? 0, amount: cr?.collected_amount ?? 0 },
+        collectedToday: { n: cr?.collected_today_n ?? 0, amount: cr?.collected_today_amount ?? 0 },
+      },
       counts: counts.rows,
       payments: payments.rows,
       flagged: flagged.rows,

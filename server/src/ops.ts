@@ -11,6 +11,7 @@ import {
   REASON_LABELS,
 } from './incidents.ts';
 import { trackingRowToLive } from './live.ts';
+import { keepCodUnpaid, settleCodOnDelivered } from './cod.ts';
 import { productBarcode } from './productMedia.ts';
 import { hashPassword, verifyPassword } from './password.ts';
 import { nationalBeninDigits } from './phone.ts';
@@ -2026,6 +2027,15 @@ export function registerOpsRoutes(app: Hono) {
          jsonb_build_object('status', $5::text, 'reason_code', $6::text, 'reason', $7::text))`,
       [orderId, deliveryId, staff.id, `delivery.${status}`, status, reasonCode, reasonText || null],
     );
+    // Paiement à la livraison : encaissé quand le client donne son code, jamais sur un échec.
+    const codActor = { staffId: staff.id, name: name.name, role: staff.role };
+    if (status === 'delivered') {
+      await settleCodOnDelivered(pool, orderId, codActor).catch((e) =>
+        console.warn('[cod] encaissement non enregistré', orderId, (e as Error).message),
+      );
+    } else if (status === 'failed') {
+      await keepCodUnpaid(pool, orderId, codActor, reasonText || 'Livraison en échec').catch(() => undefined);
+    }
     if (status === 'failed' && reasonCode) {
       const incidentId = `inc-${deliveryId}-${Date.now()}`;
       await query(
@@ -2196,7 +2206,12 @@ export function registerOpsRoutes(app: Hono) {
     );
     await query(`UPDATE ops.staff SET last_seen_at = NOW() WHERE id = $1`, [staff.id]);
     await tickStaffSeen(staff.id, 'online');
-    return c.json({ ok: true });
+    // Le suivi GPS en arrière-plan de CourseGO s'arrête de lui-même quand plus aucune livraison n'est active.
+    const active = await query(
+      `SELECT 1 FROM ops.deliveries WHERE courier_id = $1 AND status IN ('assigned', 'at_store', 'picked_up', 'en_route', 'arrived') LIMIT 1`,
+      [staff.id],
+    );
+    return c.json({ ok: true, activeDelivery: Boolean(active.rowCount) });
   });
 
   app.get('/ops/notifications', async (c) => {

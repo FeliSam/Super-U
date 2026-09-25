@@ -15,6 +15,7 @@ import pg from 'pg';
 import { randomBytes } from 'node:crypto';
 import { query } from './db.ts';
 import { STAFF_SESSION_ALIVE_SQL, touchStaffSession } from './sessions.ts';
+import { alertVisibleTo } from './alerts.ts';
 
 export type AdminEvent = {
   id: number;
@@ -62,8 +63,8 @@ const MONEY_ROLES = new Set(['admin', 'manager']);
 const ROLE_CATEGORIES: Record<string, Set<string> | 'all'> = {
   admin: 'all',
   manager: 'all',
-  magasinier: new Set(['order', 'pick', 'delivery', 'stock', 'client', 'staff', 'rating', 'incident', 'call', 'support', 'thread', 'courier']),
-  support: new Set(['order', 'pick', 'delivery', 'rating', 'incident', 'call', 'support', 'thread', 'client', 'staff', 'courier']),
+  magasinier: new Set(['order', 'pick', 'delivery', 'stock', 'client', 'staff', 'rating', 'incident', 'call', 'support', 'thread', 'courier', 'alert']),
+  support: new Set(['order', 'pick', 'delivery', 'rating', 'incident', 'call', 'support', 'thread', 'client', 'staff', 'courier', 'alert']),
   recruteur: new Set(['staff', 'pick', 'delivery', 'courier']),
 };
 
@@ -236,6 +237,39 @@ export async function startAdminLive() {
   console.log(`Temps réel admin : LISTEN admin_events + courier_pos (dernier id ${lastId}, rétention ${RETENTION_DAYS} j)`);
 }
 
+/** Abonnement au bus (flux mobiles, /me/stream et /ops/stream). Retourne la fonction de désabonnement. */
+export function subscribeBus(listener: Listener) {
+  listeners.add(listener);
+  return () => {
+    listeners.delete(listener);
+  };
+}
+
+/** Événements du tampon mémoire postérieurs à `since` (rattrapage court des flux mobiles / long-poll). */
+export function eventsSince(since: number) {
+  return ring.filter((e) => e.id > since);
+}
+
+export function busLastId() {
+  return lastId;
+}
+
+/** État du bus temps réel pour /health/details (aucune donnée personnelle). */
+export function adminLiveStatus() {
+  return {
+    started: busStarted,
+    listening: busConnected,
+    lastId,
+    listeners: listeners.size,
+    adminStreams: stats.streams,
+    events: stats.events,
+    positions: stats.positions,
+    reconnects: stats.reconnects,
+    ticketsPending: tickets.size,
+    ringSize: ring.length,
+  };
+}
+
 // ------------------------------------------------------------------ filtrage par rôle / magasin
 
 function categoryOf(type: string) {
@@ -256,7 +290,10 @@ function allowed(viewer: Viewer, category: string, storeId: string | null) {
 }
 
 export function viewEvent(ev: AdminEvent, viewer: Viewer): AdminEvent | null {
-  if (!allowed(viewer, categoryOf(ev.type), ev.storeId)) return null;
+  const category = categoryOf(ev.type);
+  if (!allowed(viewer, category, ev.storeId)) return null;
+  // Alertes : filtrage fin par type (ex. stock bas → magasin, support sans réponse → support).
+  if (category === 'alert' && !alertVisibleTo(String(ev.payload?.kind ?? ''), viewer.role)) return null;
   const payload = { ...ev.payload };
   if (!PII_ROLES.has(viewer.role)) delete payload.pii;
   if (!MONEY_ROLES.has(viewer.role)) delete payload.money;

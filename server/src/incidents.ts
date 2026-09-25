@@ -56,8 +56,10 @@ export function asClientAction(raw: unknown): ClientActionId | null {
 }
 
 export function isPaidOrder(paymentId: string | null | undefined, paymentStatus: string | null | undefined) {
+  // Remboursement uniquement si un paiement en ligne a été confirmé (webhook / vérification FedaPay).
+  // Espèces non encaissées (cod_pending) ou paiement « pending » (app sans FedaPay) : rien à rembourser.
   if (paymentId === 'cod' || paymentStatus === 'cod_pending') return false;
-  return paymentStatus === 'paid' || Boolean(paymentId && paymentId !== 'cod');
+  return paymentStatus === 'paid' || paymentStatus === 'partially_refunded';
 }
 
 export function actionsForReason(

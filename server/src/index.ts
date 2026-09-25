@@ -25,8 +25,12 @@ import { loginRateLimit } from './rateLimit.ts';
 import { registerPanelRoutes } from './panel.ts';
 import { registerAdminLiveRoutes, startAdminLive } from './adminLive.ts';
 import { registerAdminActionRoutes } from './adminActions.ts';
+import { registerAlertRoutes, startAlertEvaluator } from './alerts.ts';
+import { registerMobileLiveRoutes, startMobileLive } from './mobileLive.ts';
+import { registerHealthRoutes } from './health.ts';
 import { purgeExpiredStaffSessions } from './sessions.ts';
 import { isCancellable, OrderRequestError, priceOrder, restockCancelledOrder } from './orders.ts';
+import { keepCodUnpaid } from './cod.ts';
 
 function makeHandoffCode() {
   return String(1000 + Math.floor(Math.random() * 9000));
@@ -819,6 +823,17 @@ app.put('/me/cart', async (c) => {
   return c.json({ ok: true });
 });
 
+/**
+ * Statut de paiement exposé à l'app client. `paid_cash` (espèces encaissées à la livraison) est publié
+ * `paymentStatus: 'paid'` pour les builds déjà en circulation (qui ne connaissent que paid / cod_pending),
+ * avec le détail dans `paymentStatusDetail` pour les nouveaux builds.
+ */
+function customerPaymentStatus(payload: { paymentStatus?: unknown }) {
+  const s = typeof payload.paymentStatus === 'string' ? payload.paymentStatus : undefined;
+  if (s === 'paid_cash') return { paymentStatus: 'paid', paymentStatusDetail: 'paid_cash' };
+  return s ? { paymentStatus: s, paymentStatusDetail: s } : {};
+}
+
 app.get('/me/orders', async (c) => {
   const user = await userFromToken(bearer(c.req.header('Authorization')));
   if (!user) return c.json({ ok: false, error: 'unauthorized' }, 401);
@@ -892,6 +907,7 @@ app.get('/me/orders', async (c) => {
         incidentAction: live.incidentAction,
         courierVehicle: live.courierVehicle,
         handoffCode: String(row.handoff_code || (payload as { handoffCode?: string }).handoffCode || ''),
+        ...customerPaymentStatus(payload as { paymentStatus?: unknown }),
       };
     }),
   });
@@ -1093,6 +1109,9 @@ registerAdminRoutes(app);
 registerAdminStaffRoutes(app);
 registerAdminLiveRoutes(app);
 registerAdminActionRoutes(app);
+registerAlertRoutes(app);
+registerMobileLiveRoutes(app);
+registerHealthRoutes(app);
 
 app.post('/me/payments', async (c) => {
   const user = await userFromToken(bearer(c.req.header('Authorization')));
@@ -1217,7 +1236,10 @@ async function applyPaymentStatus(paymentId: string, status: string) {
 }
 
 const FEDAPAY_WEBHOOK_SECRET = process.env.FEDAPAY_WEBHOOK_SECRET?.trim() ?? '';
-if (!FEDAPAY_WEBHOOK_SECRET) {
+if (!fedapayConfigured()) {
+  // Situation normale aujourd'hui : quasi toutes les commandes sont payées en espèces à la livraison.
+  console.warn('[fedapay] non configuré (FEDAPAY_SECRET_KEY absente) : paiement en ligne désactivé, paiement à la livraison uniquement. Les webhooks « payé » non vérifiables sont ignorés.');
+} else if (!FEDAPAY_WEBHOOK_SECRET) {
   console.warn('[fedapay] FEDAPAY_WEBHOOK_SECRET non défini : les webhooks FedaPay sont acceptés SANS vérification de signature.');
 }
 
@@ -1325,6 +1347,8 @@ app.patch('/me/orders/:id', async (c) => {
       user.id,
       JSON.stringify(payload),
     ]);
+    // COD : rien n'a été encaissé, la commande reste « à régler » (normalise aussi l'ancien « paid » déclaré par l'app).
+    await keepCodUnpaid(client, id, { name: 'Client', role: 'customer' }, 'Annulation par le client');
     const restored = await restockCancelledOrder(client, id, `Annulation client commande ${id}`);
     await client.query('COMMIT');
     return c.json({ ok: true, order: payload, restocked: restored });
@@ -1437,6 +1461,8 @@ const port = Number(process.env.PORT ?? 8787);
 await migrate();
 // Temps réel admin : LISTEN admin_events / courier_pos (ne bloque pas le démarrage si Postgres hoquette).
 await startAdminLive().catch((error) => console.warn('[live] démarrage impossible :', (error as Error).message));
+startMobileLive();
+startAlertEvaluator();
 await seedAll();
 registerPanelRoutes(app);
 

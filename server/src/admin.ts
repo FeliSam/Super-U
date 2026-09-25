@@ -92,6 +92,35 @@ async function requireBackoffice(c: { req: { header: (n: string) => string | und
   return { staff, error: null as Response | null };
 }
 
+/**
+ * Données personnelles client (P2) : complètes pour admin / manager / magasinier (comme le flux temps réel),
+ * masquées pour le support et le recruteur : « Prénom N. », téléphone / e-mail partiels, pas d'adresse ni de
+ * date de naissance, pas de commentaire libre. Les montants ne changent pas ici.
+ */
+const CUSTOMER_PII_ROLES = new Set(['admin', 'manager', 'magasinier']);
+const seesCustomerPii = (staff: StaffRow) => CUSTOMER_PII_ROLES.has(staff.role);
+
+function maskFullName(full: string | null | undefined) {
+  const parts = String(full ?? '').trim().split(/\s+/).filter(Boolean);
+  if (!parts.length) return null;
+  const [first, ...rest] = parts;
+  const last = rest.join(' ');
+  return last ? `${first} ${last.charAt(0).toUpperCase()}.` : first;
+}
+
+function maskPhone(phone: string | null | undefined) {
+  const digits = String(phone ?? '').replace(/\D/g, '');
+  if (!digits) return null;
+  return `•• •• •• ${digits.slice(-2)}`;
+}
+
+function maskEmail(email: string | null | undefined) {
+  const e = String(email ?? '');
+  const at = e.indexOf('@');
+  if (at < 1) return e ? '•••' : null;
+  return `${e.charAt(0)}•••@${e.slice(at + 1).replace(/^[^.]+/, (d) => `${d.charAt(0)}•••`)}`;
+}
+
 function scopedStore(staff: StaffRow, requested?: string | null) {
   if (staff.role === 'admin') return requested || null;
   return staff.store_id;
@@ -404,6 +433,7 @@ export function registerAdminRoutes(app: Hono) {
   app.get('/admin/floor', async (c) => {
     const gate = await requireBackoffice(c);
     if (gate.error) return gate.error;
+    const pii = seesCustomerPii(gate.staff!);
     const storeId = scopedStore(gate.staff!, c.req.query('storeId') ?? null);
     const storeArg = storeId ? [storeId] : [];
     const storeParam = storeId ? '$1' : 'NULL';
@@ -512,19 +542,27 @@ export function registerAdminRoutes(app: Hono) {
       customer: string | null;
       item_count: number;
       created_at: string | Date;
+      store_id: string | null;
+      drop_lng: number | null;
+      drop_lat: number | null;
     }>(
       `SELECT * FROM (
          SELECT 'pick'::text AS kind, j.id, j.order_id, j.status, o.store_name, o.address_label,
                 NULLIF(trim(concat_ws(' ', u.first_name, u.last_name)), '') AS customer,
-                o.item_count, j.created_at
+                o.item_count, j.created_at, o.store_id,
+                COALESCE(dd.dropoff_lng, (o.payload->'addressCoordinate'->>0)::float8) AS drop_lng,
+                COALESCE(dd.dropoff_lat, (o.payload->'addressCoordinate'->>1)::float8) AS drop_lat
          FROM ops.pick_jobs j
+         LEFT JOIN ops.deliveries dd ON dd.order_id = j.order_id
          JOIN orders o ON o.id = j.order_id
          LEFT JOIN users u ON u.id = o.user_id
          WHERE j.status = 'queued' AND (${storeParam}::text IS NULL OR j.store_id = ${storeParam})
          UNION ALL
          SELECT 'deliver'::text, d.id, d.order_id, d.status, o.store_name, o.address_label,
                 NULLIF(trim(concat_ws(' ', u.first_name, u.last_name)), '') AS customer,
-                o.item_count, d.created_at
+                o.item_count, d.created_at, o.store_id,
+                COALESCE(d.dropoff_lng, (o.payload->'addressCoordinate'->>0)::float8),
+                COALESCE(d.dropoff_lat, (o.payload->'addressCoordinate'->>1)::float8)
          FROM ops.deliveries d
          JOIN orders o ON o.id = d.order_id
          LEFT JOIN users u ON u.id = o.user_id
@@ -591,9 +629,9 @@ export function registerAdminRoutes(app: Hono) {
               id: row.pick_id,
               orderId: row.pick_order,
               status: row.pick_status,
-              address: row.pick_address,
+              address: pii ? row.pick_address : null,
               storeName: row.pick_store,
-              customerName: row.pick_customer,
+              customerName: pii ? row.pick_customer : maskFullName(row.pick_customer),
             }
           : null,
         delivery: delivering
@@ -601,9 +639,9 @@ export function registerAdminRoutes(app: Hono) {
               id: row.del_id,
               orderId: row.del_order,
               status: row.del_status,
-              address: row.del_address,
+              address: pii ? row.del_address : null,
               storeName: row.del_store,
-              customerName: row.del_customer,
+              customerName: pii ? row.del_customer : maskFullName(row.del_customer),
             }
           : null,
       };
@@ -619,9 +657,14 @@ export function registerAdminRoutes(app: Hono) {
       tipsToday: members.reduce((a, m) => a + m.today.tips, 0),
     };
 
+    const floorStores = await query<{ id: string; payload: Record<string, unknown> }>(
+      `SELECT id, payload FROM stores WHERE ($1::text IS NULL OR id = $1) ORDER BY id`,
+      [storeId],
+    );
     c.header('Cache-Control', 'no-store');
     return c.json({
       ok: true,
+      piiMasked: !pii,
       kpis,
       staff: members,
       queue: queue.rows.map((q) => ({
@@ -630,19 +673,35 @@ export function registerAdminRoutes(app: Hono) {
         orderId: q.order_id,
         status: q.status,
         storeName: q.store_name,
-        address: q.address_label,
-        customerName: q.customer,
+        address: pii ? q.address_label : null,
+        customerName: pii ? q.customer : maskFullName(q.customer),
         itemCount: Number(q.item_count ?? 0),
         createdAt: q.created_at,
+        storeId: q.store_id,
+        // Point de livraison = adresse client : réservé aux rôles qui voient les PII (sinon repère au magasin).
+        dropoff:
+          pii && Number.isFinite(Number(q.drop_lng)) && Number.isFinite(Number(q.drop_lat)) && q.drop_lng != null
+            ? { lng: Number(q.drop_lng), lat: Number(q.drop_lat) }
+            : null,
       })),
+      stores: floorStores.rows
+        .map((s) => {
+          const coord = Array.isArray(s.payload?.coordinate) ? (s.payload.coordinate as unknown[]) : [];
+          const lng = Number(coord[0]);
+          const lat = Number(coord[1]);
+          return Number.isFinite(lng) && Number.isFinite(lat)
+            ? { id: s.id, name: String(s.payload?.name ?? s.id), lng, lat }
+            : null;
+        })
+        .filter(Boolean),
       ratings: ratings.rows.map((r) => ({
         id: r.id,
         orderId: r.order_id,
         rating: Number(r.rating),
-        comment: r.comment,
+        comment: pii ? r.comment : null,
         tipAmount: Number(r.tip_amount ?? 0),
         createdAt: r.created_at,
-        customerName: r.customer,
+        customerName: pii ? r.customer : maskFullName(r.customer),
         staffName: r.staff_name,
         staffId: r.staff_id,
       })),
@@ -652,6 +711,7 @@ export function registerAdminRoutes(app: Hono) {
   app.get('/admin/floor/staff/:id', async (c) => {
     const gate = await requireBackoffice(c);
     if (gate.error) return gate.error;
+    const pii = seesCustomerPii(gate.staff!);
     const id = c.req.param('id');
     const win = c.req.query('window') === 'hour' || c.req.query('window') === 'week' || c.req.query('window') === 'month'
       ? c.req.query('window')!
@@ -806,10 +866,10 @@ export function registerAdminRoutes(app: Hono) {
         id: r.id,
         orderId: r.order_id,
         rating: Number(r.rating),
-        comment: r.comment,
+        comment: pii ? r.comment : null,
         tipAmount: Number(r.tip_amount ?? 0),
         createdAt: r.created_at,
-        customerName: r.customer,
+        customerName: pii ? r.customer : maskFullName(r.customer),
       })),
       missions: missions.rows.map((m) => ({
         kind: m.kind,
@@ -835,11 +895,15 @@ export function registerAdminRoutes(app: Hono) {
           return `AND o.store_id = $${values.length}`;
         })()
       : '';
+    const pii = seesCustomerPii(staff);
     if (q) {
       values.push(`%${q.replace(/%/g, '')}%`);
       const i = values.length;
+      // Sans accès aux PII, la recherche porte sur le nom uniquement (pas de sondage par e-mail / téléphone).
       where.push(
-        `(u.first_name ILIKE $${i} OR u.last_name ILIKE $${i} OR u.email ILIKE $${i} OR COALESCE(u.phone, '') ILIKE $${i})`,
+        pii
+          ? `(u.first_name ILIKE $${i} OR u.last_name ILIKE $${i} OR u.email ILIKE $${i} OR COALESCE(u.phone, '') ILIKE $${i})`
+          : `(u.first_name ILIKE $${i} OR u.last_name ILIKE $${i})`,
       );
     }
     const rows = await query<{
@@ -880,12 +944,13 @@ export function registerAdminRoutes(app: Hono) {
     return c.json({
       ok: true,
       total: Number(totals.rows[0]?.n ?? rows.rows.length),
+      piiMasked: !pii,
       users: rows.rows.map((r) => ({
         id: r.id,
-        email: r.email,
-        phone: r.phone,
+        email: pii ? r.email : maskEmail(r.email),
+        phone: pii ? r.phone : maskPhone(r.phone),
         firstName: r.first_name,
-        lastName: r.last_name,
+        lastName: pii ? r.last_name : r.last_name ? `${r.last_name.trim().charAt(0).toUpperCase()}.` : '',
         createdAt: r.created_at,
         onboardingDone: r.onboarding_done,
         orders: Number(r.orders_n ?? 0),
@@ -1008,19 +1073,21 @@ export function registerAdminRoutes(app: Hono) {
         : [];
 
     const st = stats.rows[0];
+    const pii = seesCustomerPii(staff);
     return c.json({
       ok: true,
+      piiMasked: !pii,
       user: {
         id: u.id,
-        email: u.email,
-        phone: u.phone,
+        email: pii ? u.email : maskEmail(u.email),
+        phone: pii ? u.phone : maskPhone(u.phone),
         firstName: u.first_name,
-        lastName: u.last_name,
+        lastName: pii ? u.last_name : u.last_name ? `${u.last_name.trim().charAt(0).toUpperCase()}.` : '',
         createdAt: u.created_at,
         onboardingDone: u.onboarding_done,
-        birthDate: u.birth_date,
+        birthDate: pii ? u.birth_date : null,
         loyaltyBonusPts: Number(state.loyaltyBonusPts ?? 0) || 0,
-        addresses: addresses.slice(0, 12),
+        addresses: pii ? addresses.slice(0, 12) : [],
       },
       stats: {
         orders: Number(st?.orders_n ?? 0),
@@ -1046,7 +1113,7 @@ export function registerAdminRoutes(app: Hono) {
         id: r.id,
         orderId: r.order_id,
         rating: Number(r.rating),
-        comment: r.comment,
+        comment: pii ? r.comment : null,
         tipAmount: Number(r.tip_amount ?? 0),
         createdAt: r.created_at,
       })),
