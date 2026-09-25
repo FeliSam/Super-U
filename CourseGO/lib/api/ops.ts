@@ -135,10 +135,15 @@ export type BarcodeProduct = {
   image?: ProductImageMetadata | null;
 };
 
+export type OpsRegisterResult =
+  | { ok: true; token: string; staff: Staff; pending?: false }
+  | { ok: true; pending: true; code: 'pending_validation'; message: string; staff: Staff; token?: undefined };
+
+/** Les nouveaux comptes sont créés « en attente de validation » : pas de jeton avant activation par l'équipe. */
 export async function opsRegister(body: Record<string, unknown>) {
-  return apiFetch<{ ok: true; token: string; staff: Staff }>('/ops/register', {
+  return apiFetch<OpsRegisterResult>('/ops/register', {
     method: 'POST',
-    body: JSON.stringify(body),
+    body: JSON.stringify({ ...body, acceptsPending: true }),
   });
 }
 

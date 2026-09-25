@@ -168,6 +168,17 @@ export default function RegisterScreen() {
         storeIds,
         job,
       });
+      if (res.pending || !res.token) {
+        // Compte créé mais pas encore validé : retour à la connexion avec un message clair.
+        showToast({
+          title: 'Compte en attente de validation',
+          body: res.pending ? res.message : 'Votre compte doit être validé par l’équipe Super U.',
+          tone: 'info',
+          durationMs: 8000,
+        });
+        router.replace({ pathname: '/(auth)/login', params: { pending: '1' } });
+        return;
+      }
       await persistAuthToken(res.token);
       setAuthToken(res.token);
       applyStaff(res.staff);

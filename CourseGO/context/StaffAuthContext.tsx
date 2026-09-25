@@ -222,6 +222,11 @@ export function StaffAuthProvider({ children }: { children: React.ReactNode }) {
           }
           return { ok: false as const, error: 'Identifiants incorrects.' };
         }
+        // 403 : compte en attente de validation / désactivé ; 429 : trop de tentatives.
+        // Le message du serveur est déjà clair : on l'affiche tel quel, sans suggestion « compte démo ».
+        if (e instanceof ApiError && (e.status === 403 || e.status === 429)) {
+          return { ok: false as const, error: e.message };
+        }
         if (local) {
           await enterLocal(local);
           return { ok: true as const };

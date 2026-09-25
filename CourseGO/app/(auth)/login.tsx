@@ -4,12 +4,17 @@ import { useStaffAuth } from '@/context/StaffAuthContext';
 import { CourseLogo } from '@/components/CourseLogo';
 import { Field, PillButton, Screen } from '@/components/ui';
 import { keyboardScrollProps, useKeyboardAvoidProps } from '@/lib/keyboardAvoid';
-import { router } from 'expo-router';
+import { router, useLocalSearchParams } from 'expo-router';
 import { useState } from 'react';
 import { KeyboardAvoidingView, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 
 export default function LoginScreen() {
   const { signIn, demoHint, sessionNotice, clearSessionNotice, offline } = useStaffAuth();
+  const { pending } = useLocalSearchParams<{ pending?: string }>();
+  const pendingNotice =
+    pending === '1'
+      ? 'Compte créé. Il est en attente de validation par l’équipe Super U : vous pourrez vous connecter dès son activation.'
+      : null;
   const [identifier, setIdentifier] = useState(demoHint.email);
   const [password, setPassword] = useState(demoHint.password);
   const [error, setError] = useState<string | null>(null);
@@ -36,7 +41,9 @@ export default function LoginScreen() {
     }
   };
 
-  const banner = error || sessionNotice;
+  const banner = error || sessionNotice || pendingNotice;
+  const isPendingError = Boolean(error && /attente de validation/i.test(error));
+  const warn = (!error && Boolean(sessionNotice || pendingNotice)) || isPendingError;
 
   return (
     <Screen style={styles.wrap}>
@@ -64,11 +71,15 @@ export default function LoginScreen() {
               </View>
             ) : null}
             {banner ? (
-              <View style={[styles.errBox, sessionNotice && !error ? styles.warnBox : null]}>
-                <Text style={[styles.errKicker, sessionNotice && !error ? styles.warnKicker : null]}>
-                  {error ? 'Erreur' : 'Pourquoi vous êtes ici'}
+              <View style={[styles.errBox, warn ? styles.warnBox : null]}>
+                <Text style={[styles.errKicker, warn ? styles.warnKicker : null]}>
+                  {isPendingError || (!error && !sessionNotice && pendingNotice)
+                    ? 'Compte en attente de validation'
+                    : error
+                      ? 'Erreur'
+                      : 'Pourquoi vous êtes ici'}
                 </Text>
-                <Text style={[styles.err, sessionNotice && !error ? styles.warnTxt : null]}>{banner}</Text>
+                <Text style={[styles.err, warn ? styles.warnTxt : null]}>{banner}</Text>
               </View>
             ) : null}
 
