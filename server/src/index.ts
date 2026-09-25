@@ -24,6 +24,7 @@ import { nationalBeninDigits } from './phone.ts';
 import { loginRateLimit } from './rateLimit.ts';
 import { registerPanelRoutes } from './panel.ts';
 import { registerAdminLiveRoutes, startAdminLive } from './adminLive.ts';
+import { registerAdminActionRoutes } from './adminActions.ts';
 import { purgeExpiredStaffSessions } from './sessions.ts';
 import { isCancellable, OrderRequestError, priceOrder, restockCancelledOrder } from './orders.ts';
 
@@ -1091,6 +1092,7 @@ registerCommsRoutes(app);
 registerAdminRoutes(app);
 registerAdminStaffRoutes(app);
 registerAdminLiveRoutes(app);
+registerAdminActionRoutes(app);
 
 app.post('/me/payments', async (c) => {
   const user = await userFromToken(bearer(c.req.header('Authorization')));
