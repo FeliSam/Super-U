@@ -30,6 +30,17 @@ export const ONBOARD_LABELS: Record<string, string> = {
   suspended: 'Suspendu',
 };
 
+/** Compte en attente d'activation (auto-inscription CourseGO ou fiche brouillon / invitée). */
+export function isPendingStaff(s: { isActive: boolean; onboardStatus: string }) {
+  return !s.isActive && (s.onboardStatus === 'draft' || s.onboardStatus === 'invited');
+}
+
+export function staffStatusLabel(s: { isActive: boolean; onboardStatus: string }) {
+  if (isPendingStaff(s)) return 'En attente de validation';
+  if (!s.isActive) return 'Suspendu';
+  return ONBOARD_LABELS[s.onboardStatus] || s.onboardStatus;
+}
+
 export function roleLabel(role: string) {
   return ROLE_LABELS[role] || role;
 }

@@ -1,8 +1,9 @@
 import { useMemo, useState } from 'react';
+import { api } from '@/lib/api';
 import { Link } from 'react-router-dom';
 import { Plus, Search } from 'lucide-react';
 import { needleOf, textMatch, useCachedResource } from '@/lib/cachedApi';
-import { ONBOARD_LABELS, roleLabel } from '@/lib/staffLabels';
+import { isPendingStaff, roleLabel, staffStatusLabel } from '@/lib/staffLabels';
 import { useAppSelector } from '@/app/hooks';
 
 export type HrStaff = {
@@ -35,14 +36,30 @@ export function PersonnelPage() {
   );
   const allRows = staffData?.staff ?? [];
   const stores = storeData?.stores ?? [];
-  const err = '';
+  const [err, setErr] = useState('');
+  const [busyId, setBusyId] = useState<string | null>(null);
+  const pendingCount = useMemo(() => allRows.filter(isPendingStaff).length, [allRows]);
+
+  const activate = async (s: HrStaff) => {
+    setErr('');
+    setBusyId(s.id);
+    try {
+      await api(`/admin/staff/${s.id}/enable`, { method: 'POST' });
+      await refresh(true);
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : 'Activation impossible.');
+    } finally {
+      setBusyId(null);
+    }
+  };
 
   const rows = useMemo(() => {
     const needle = needleOf(q);
     return allRows.filter((s) => {
       if (!textMatch(needle, s.firstName, s.lastName, s.email, s.phone)) return false;
       if (role && s.role !== role) return false;
-      if (onboard === 'suspended' && s.isActive) return false;
+      if (onboard === 'pending') return isPendingStaff(s);
+      if (onboard === 'suspended' && (s.isActive || isPendingStaff(s))) return false;
       if (onboard && onboard !== 'suspended' && s.onboardStatus !== onboard) return false;
       return true;
     });
@@ -67,6 +84,16 @@ export function PersonnelPage() {
         ) : null}
       </div>
       {err ? <p className="err">{err}</p> : null}
+      {pendingCount ? (
+        <div className="card" style={{ marginBottom: 16 }}>
+          <strong>
+            {pendingCount} compte{pendingCount > 1 ? 's' : ''} CourseGO en attente de validation
+          </strong>{' '}
+          <button className="btn ghost sm" type="button" onClick={() => setOnboard('pending')}>
+            Afficher
+          </button>
+        </div>
+      ) : null}
       <div className="card" style={{ marginBottom: 16 }}>
         <div className="row">
           <label className="field" style={{ flex: 2 }}>
@@ -91,6 +118,7 @@ export function PersonnelPage() {
             Onboarding
             <select value={onboard} onChange={(e) => setOnboard(e.target.value)}>
               <option value="">Tous</option>
+              <option value="pending">En attente de validation</option>
               <option value="draft">Brouillon</option>
               <option value="invited">Invité</option>
               <option value="active">Actif</option>
@@ -130,9 +158,19 @@ export function PersonnelPage() {
                   <span className={`pill${s.canDeliver ? ' ok' : ''}`}>{s.canDeliver ? 'Livre' : '—'}</span>
                 </td>
                 <td>
-                  <span className={`pill${s.isActive ? ' ok' : ' out'}`}>
-                    {s.isActive ? ONBOARD_LABELS[s.onboardStatus] || s.onboardStatus : 'Suspendu'}
-                  </span>
+                  <span className={`pill${s.isActive ? ' ok' : isPendingStaff(s) ? '' : ' out'}`}>{staffStatusLabel(s)}</span>
+                  {isPendingStaff(s) && me?.canHr ? (
+                    <>
+                      {' '}
+                      <button
+                        className="btn gold sm"
+                        type="button"
+                        disabled={busyId === s.id}
+                        onClick={() => void activate(s)}>
+                        {busyId === s.id ? '…' : 'Activer'}
+                      </button>
+                    </>
+                  ) : null}
                 </td>
                 <td className="sku">
                   {s.lastSessionAt ? new Date(s.lastSessionAt).toLocaleString('fr-FR') : 'Jamais'}

@@ -125,7 +125,7 @@ export function OverviewPage() {
   const [showMoney, setShowMoney] = useState(false);
   const [range, setRange] = useState<'7d' | '30d' | '12m'>('30d');
   const [hrRange, setHrRange] = useState<'30d' | '12m'>('30d');
-  const [err, setErr] = useState('');
+  const [err] = useState('');
 
   const overview = useCachedResource<{
     stats: Stats;

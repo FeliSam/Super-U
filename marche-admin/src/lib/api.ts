@@ -7,6 +7,9 @@ function resolveApiUrl() {
   if (env) return env;
   if (import.meta.env.DEV) return '';
   if (typeof window !== 'undefined') {
+    // Servi par l'API elle-même (https://api.moxtapp.ru/panel/) : même origine, pas de CORS.
+    const base = import.meta.env.BASE_URL || '/';
+    if (base !== '/' && window.location.pathname.startsWith(base.replace(/\/$/, ''))) return '';
     const host = window.location.hostname;
     if (host && host !== 'localhost' && host !== '127.0.0.1') {
       return `${window.location.protocol}//${host}:8787`;
@@ -52,7 +55,11 @@ export async function api<T>(path: string, init: RequestInit = {}): Promise<T> {
   try {
     res = await fetch(`${API_URL}${path}`, { ...init, headers });
   } catch {
-    throw new Error('Connexion à l’API impossible. Vérifiez que le serveur (port 8787) tourne.');
+    throw new Error(
+      API_URL
+        ? `Connexion à l’API impossible (${API_URL}). Vérifiez que le serveur tourne.`
+        : 'Connexion à l’API impossible. Vérifiez votre connexion puis réessayez.',
+    );
   }
   const data = (await res.json().catch(() => ({}))) as T & { error?: string; ok?: boolean };
   if (!res.ok) throw new Error(data.error || `Erreur ${res.status}`);

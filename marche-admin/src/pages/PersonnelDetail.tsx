@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import { api } from '@/lib/api';
-import { ONBOARD_LABELS, ROLE_HELP, roleLabel } from '@/lib/staffLabels';
+import { isPendingStaff, ROLE_HELP, roleLabel, staffStatusLabel } from '@/lib/staffLabels';
 import { useAppSelector } from '@/app/hooks';
 import type { HrStaff } from '@/pages/Personnel';
 
@@ -68,7 +68,13 @@ export function PersonnelDetailPage() {
       });
       if (r.temporaryPassword) setTempPwd(r.temporaryPassword);
       load();
-      setMsg(path === 'disable' ? 'Compte suspendu, sessions révoquées.' : path === 'enable' ? 'Compte réactivé.' : 'Mot de passe temporaire généré.');
+      setMsg(
+        path === 'disable'
+          ? 'Compte suspendu, sessions révoquées.'
+          : path === 'enable'
+            ? 'Compte activé : connexion CourseGO possible.'
+            : 'Mot de passe temporaire généré.',
+      );
     } catch (e) {
       setErr(e instanceof Error ? e.message : 'Erreur');
     }
@@ -173,7 +179,7 @@ export function PersonnelDetailPage() {
           <div className="row" style={{ marginTop: 14 }}>
             <span className={`pill${staff.canPick ? ' ok' : ''}`}>Ramassage {staff.canPick ? 'oui' : 'non'}</span>
             <span className={`pill${staff.canDeliver ? ' ok' : ''}`}>Livraison {staff.canDeliver ? 'oui' : 'non'}</span>
-            <span className={`pill${staff.isActive ? ' ok' : ' out'}`}>{ONBOARD_LABELS[staff.onboardStatus]}</span>
+            <span className={`pill${staff.isActive ? ' ok' : ' out'}`}>{staffStatusLabel(staff)}</span>
           </div>
           <p style={{ fontSize: 13, color: 'var(--muted)' }}>
             Les flags ramassage / livraison sont imposés par le rôle. CourseGO : {staff.canPick || staff.canDeliver ? 'oui' : 'non'}.
@@ -195,8 +201,8 @@ export function PersonnelDetailPage() {
               Suspendre
             </button>
           ) : (
-            <button className="btn" type="button" onClick={() => void act('enable')}>
-              Réactiver
+            <button className={`btn${isPendingStaff(staff) ? ' gold' : ''}`} type="button" onClick={() => void act('enable')}>
+              {isPendingStaff(staff) ? 'Activer (valider l’inscription)' : 'Réactiver'}
             </button>
           )}
           <button className="btn ghost" type="button" onClick={() => void act('reset-password')}>
