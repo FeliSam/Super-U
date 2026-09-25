@@ -199,9 +199,11 @@ function normalizeId(id: string) {
 function makeOrderId(existing: Order[]) {
   const year = new Date().getFullYear();
   const used = new Set(existing.map((o) => normalizeId(o.id)));
+  // 900 000 numéros par an : l'ancien espace (199 numéros) provoquait des collisions entre clients,
+  // que l'API refuse désormais (HTTP 409 « numéro déjà utilisé »).
   for (let i = 0; i < 40; i++) {
-    const n = 800 + Math.floor(Math.random() * 199);
-    const id = `MD-${year}-${String(n).padStart(4, '0')}`;
+    const n = 100000 + Math.floor(Math.random() * 900000);
+    const id = `MD-${year}-${n}`;
     if (!used.has(id)) return id;
   }
   return `MD-${year}-${Date.now().toString().slice(-4)}`;
