@@ -880,7 +880,8 @@ tr.row-active td { background: var(--gold-soft); }
 .live-badge.live-reconnecting .live-dot { animation: live-pulse 0.9s ease-in-out infinite; }
 .live-badge.live-offline { color: var(--danger); border-color: color-mix(in srgb, var(--danger) 35%, transparent); }
 @keyframes live-pulse { 0%, 100% { opacity: 1; transform: scale(1); } 50% { opacity: 0.35; transform: scale(0.8); } }
-.live-toasts {
+/* `.main > div` (width 100%) would otherwise stretch the fixed toast stack across the screen. */
+.live-toasts, .main > .live-toasts {
   position: fixed; right: 18px; bottom: 18px; z-index: 60; display: flex; flex-direction: column; gap: 8px;
   width: min(340px, calc(100vw - 36px));
 }
