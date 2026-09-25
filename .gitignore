@@ -3,6 +3,7 @@ node_modules/
 dist/
 .env
 .env.local
+.env.ovh
 server/.env
 server/.tmp
 .DS_Store
@@ -11,6 +12,33 @@ pgdata/
 expo-env.d.ts
 .cursor/
 tools/ngrok/
+.ssh/
 *.exe
 *.zip
 
+
+# --- Secrets & private material (never commit) ---
+# Moved out of the repo to C:\Users\felic\SuperU-private\ ; kept here as a safety net.
+happ-export/
+superu-wireguard-sam.conf
+*wireguard*.conf
+# Still in place because root EAS/TestFlight scripts read them from the repo root.
+.apple-eas.env
+_ios_cert_work/
+testflight-tester.env
+box-secrets.json
+# Common secret file types
+*.p8
+*.p12
+*.mobileprovision
+*.key
+*.pem
+*.jks
+*.keystore
+*.env
+.env*
+!.env.example
+!.env.*.example
+!**/.env.example
+# Editor/backup leftovers
+*.bak-*
