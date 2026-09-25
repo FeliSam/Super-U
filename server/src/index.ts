@@ -1245,13 +1245,20 @@ app.post('/webhooks/fedapay', async (c) => {
   const providerId = String(entity.id ?? '');
   if (!providerId) return c.json({ ok: true });
   let status = mapFedapayStatus(String(entity.status ?? ''));
+  // « payé » n'est retenu que s'il est VÉRIFIÉ : signature valide, ou statut relu chez FedaPay.
+  let verified = Boolean(FEDAPAY_WEBHOOK_SECRET);
   if (fedapayConfigured()) {
     // Double contrôle : on relit le statut chez FedaPay plutôt que de croire le corps seul.
     try {
       status = mapFedapayStatus((await getFedapayTransaction(providerId)).status);
+      verified = true;
     } catch {
       /* FedaPay injoignable : on garde le statut du webhook (signé si le secret est configuré) */
     }
+  }
+  if (status === 'paid' && !verified) {
+    console.warn(`[fedapay] webhook ${providerId} « payé » ignoré : ni signature ni relecture FedaPay possible.`);
+    return c.json({ ok: true, ignored: 'unverified' });
   }
   const payments = await query<{ id: string }>(
     `SELECT id FROM payments WHERE provider_id = $1 AND status = 'pending'`,

@@ -18,7 +18,6 @@ export class OrderRequestError extends Error {
 /** Frais de livraison : même règle que l'app (1500 F, doublés pour le créneau « urgent »). */
 export const DELIVERY_FEE = Math.max(0, Math.round(Number(process.env.ORDER_DELIVERY_FEE ?? 1500)));
 const MAX_QTY = 99;
-const PAYMENT_STATUSES = new Set(['paid', 'cod_pending', 'pending']);
 
 type ClientLine = { productId?: unknown; qty?: unknown; name?: unknown; unit?: unknown };
 
@@ -86,11 +85,12 @@ export async function priceOrder(client: pg.PoolClient, order: Record<string, un
   const discount = 0; // codes promo inactifs côté app ; aucune remise acceptée du client
   const total = Math.max(0, subtotal + delivery - discount);
   const clientTotal = Number(order.total);
-  const paymentStatus = PAYMENT_STATUSES.has(String(order.paymentStatus))
-    ? String(order.paymentStatus)
-    : order.paymentId === 'cod'
-      ? 'cod_pending'
-      : 'pending';
+  // Le statut de paiement n'est JAMAIS pris du client : « paid » n'arrive que par une ligne `payments`
+  // confirmée (POST /me/orders relie paymentRef) ou par le webhook FedaPay vérifié (applyPaymentStatus).
+  // Les builds actuels envoient paymentStatus 'paid' + paymentRef 'skip-…' sans payer : la commande est
+  // acceptée (compatibilité) mais reste « pending » ; la déclaration du client est gardée pour le panel.
+  const paymentStatus = order.paymentId === 'cod' ? 'cod_pending' : 'pending';
+  const clientPaymentStatus = typeof order.paymentStatus === 'string' ? order.paymentStatus.slice(0, 32) : undefined;
 
   return {
     payload: {
@@ -102,6 +102,7 @@ export async function priceOrder(client: pg.PoolClient, order: Record<string, un
       discount,
       total,
       paymentStatus,
+      clientPaymentStatus,
       storeId,
       storeName: String(store.rows[0].payload?.name ?? order.storeName ?? storeId),
       status: 'confirmed',
