@@ -23,6 +23,7 @@ import {
 import { nationalBeninDigits } from './phone.ts';
 import { loginRateLimit } from './rateLimit.ts';
 import { registerPanelRoutes } from './panel.ts';
+import { registerAdminLiveRoutes, startAdminLive } from './adminLive.ts';
 import { purgeExpiredStaffSessions } from './sessions.ts';
 import { isCancellable, OrderRequestError, priceOrder, restockCancelledOrder } from './orders.ts';
 
@@ -1089,6 +1090,7 @@ registerOpsRoutes(app);
 registerCommsRoutes(app);
 registerAdminRoutes(app);
 registerAdminStaffRoutes(app);
+registerAdminLiveRoutes(app);
 
 app.post('/me/payments', async (c) => {
   const user = await userFromToken(bearer(c.req.header('Authorization')));
@@ -1424,6 +1426,8 @@ app.post('/me/orders/:id/rate-courier', async (c) => {
 const port = Number(process.env.PORT ?? 8787);
 
 await migrate();
+// Temps réel admin : LISTEN admin_events / courier_pos (ne bloque pas le démarrage si Postgres hoquette).
+await startAdminLive().catch((error) => console.warn('[live] démarrage impossible :', (error as Error).message));
 await seedAll();
 registerPanelRoutes(app);
 
