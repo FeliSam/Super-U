@@ -12,7 +12,9 @@ import {
 } from './incidents.ts';
 import { trackingRowToLive } from './live.ts';
 import { productBarcode } from './productMedia.ts';
-import { hashPassword, newToken, verifyPassword } from './password.ts';
+import { hashPassword, verifyPassword } from './password.ts';
+import { nationalBeninDigits } from './phone.ts';
+import { createStaffSession, STAFF_SESSION_ALIVE_SQL, touchStaffSession } from './sessions.ts';
 import { pushToStaff, pushToUser } from './push.ts';
 
 type StaffRow = {
@@ -129,11 +131,16 @@ async function staffFromToken(token: string | undefined) {
   const result = await query<StaffRow>(
     `SELECT s.* FROM ops.staff_sessions sess
      JOIN ops.staff s ON s.id = sess.staff_id
-     WHERE sess.token = $1 AND s.is_active = TRUE`,
+     WHERE sess.token = $1 AND s.is_active = TRUE AND ${STAFF_SESSION_ALIVE_SQL}`,
     [token],
   );
+  if (result.rows[0]) touchStaffSession(token);
   return result.rows[0] ?? null;
 }
+
+/** Message affiché tel quel par CourseGO (anciennes et nouvelles versions). */
+export const PENDING_VALIDATION_MESSAGE =
+  'Compte en attente de validation par l’équipe Super U. Vous pourrez vous connecter dès son activation.';
 
 function canPick(staff: StaffRow) {
   return staff.can_pick !== false;
@@ -1065,26 +1072,37 @@ export function registerOpsRoutes(app: Hono) {
       .toLowerCase();
     const password = String(body?.password ?? '');
     if (!identifier || !password) return c.json({ ok: false, error: 'Identifiants requis.' }, 400);
-    const digits = identifier.replace(/\D/g, '').replace(/^229/, '');
-    const found = await query<StaffRow>(
-      `SELECT * FROM ops.staff
-       WHERE email = $1
-         OR regexp_replace(phone, '\\D', '', 'g') LIKE '%' || $2
-       LIMIT 1`,
-      [identifier, digits.length >= 8 ? digits : identifier],
-    );
-    const staff = found.rows[0];
-    if (!staff || !(await verifyPassword(password, staff.password_hash))) {
+    // E-mail exact, ou téléphone béninois normalisé EXACT (plus de correspondance par suffixe).
+    const national = identifier.includes('@') ? null : nationalBeninDigits(identifier);
+    const found = identifier.includes('@')
+      ? await query<StaffRow>(`SELECT * FROM ops.staff WHERE email = $1 LIMIT 1`, [identifier])
+      : national
+        ? await query<StaffRow>(
+            `SELECT * FROM ops.staff WHERE public.national_phone_digits(phone) = $1 ORDER BY created_at LIMIT 5`,
+            [national],
+          )
+        : { rows: [] as StaffRow[] };
+    let staff: StaffRow | undefined;
+    for (const row of found.rows) {
+      if (await verifyPassword(password, row.password_hash)) {
+        staff = row;
+        break;
+      }
+    }
+    if (!staff) {
       return c.json({ ok: false, error: 'Téléphone, e-mail ou mot de passe incorrect.' }, 401);
+    }
+    const onboard = staff.onboard_status ?? 'active';
+    if (onboard === 'draft' || onboard === 'invited') {
+      return c.json({ ok: false, code: 'pending_validation', pending: true, error: PENDING_VALIDATION_MESSAGE }, 403);
     }
     if (!staff.is_active) {
       return c.json({ ok: false, error: 'Compte désactivé. Contactez le magasin ou les RH.' }, 403);
     }
-    if ((staff.onboard_status ?? 'active') !== 'active') {
+    if (onboard !== 'active') {
       return c.json({ ok: false, error: 'Compte non activé, voir le magasin / RH.' }, 403);
     }
-    const token = newToken();
-    await query('INSERT INTO ops.staff_sessions (token, staff_id) VALUES ($1, $2)', [token, staff.id]);
+    const token = await createStaffSession(staff.id);
     await query(
       `UPDATE ops.staff SET duty_status = 'online', last_seen_at = NOW() WHERE id = $1`,
       [staff.id],
@@ -1116,16 +1134,21 @@ export function registerOpsRoutes(app: Hono) {
     if (!email.includes('@')) return c.json({ ok: false, error: 'E-mail invalide.' }, 400);
     if (password.length < 6) return c.json({ ok: false, error: 'Mot de passe trop court (6 caractères).' }, 400);
     const clash = await query(
-      `SELECT id FROM ops.staff WHERE email = $1 OR regexp_replace(phone, '\\D', '', 'g') = regexp_replace($2, '\\D', '', 'g')`,
+      `SELECT id FROM ops.staff
+       WHERE email = $1
+          OR regexp_replace(phone, '\\D', '', 'g') = regexp_replace($2, '\\D', '', 'g')
+          OR public.national_phone_digits(phone) = public.national_phone_digits($2)`,
       [email, phone || 'x'],
     );
     if (clash.rows[0]) return c.json({ ok: false, error: 'Un compte existe déjà avec cet e-mail ou ce numéro.' }, 409);
     const id = `st-${randomBytes(4).toString('hex')}`;
     const hash = await hashPassword(password);
     const photo = parseStaffPhoto(body?.selfiePhoto ?? body?.photo);
+    // Auto-inscription CourseGO : compte créé INACTIF (brouillon) → activation par un admin / RH
+    // depuis le panel (Recrutement ou Personnel → « Activer », route POST /admin/staff/:id/enable).
     await query(
-      `INSERT INTO ops.staff (id, email, phone, password_hash, first_name, last_name, role, can_pick, can_deliver, store_id, vehicle, photo_data)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)`,
+      `INSERT INTO ops.staff (id, email, phone, password_hash, first_name, last_name, role, can_pick, can_deliver, store_id, vehicle, photo_data, is_active, onboard_status)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, FALSE, 'draft')`,
       [
         id,
         email,
@@ -1182,10 +1205,17 @@ export function registerOpsRoutes(app: Hono) {
         parseStaffPhoto(body?.insurancePhoto)?.dataUrl ?? null,
       ],
     );
-    const token = newToken();
-    await query('INSERT INTO ops.staff_sessions (token, staff_id) VALUES ($1, $2)', [token, id]);
+    // Pas de session tant que le compte n'est pas validé.
     const staff = (await query<StaffRow>(`SELECT * FROM ops.staff WHERE id = $1`, [id])).rows[0];
-    return c.json({ ok: true, token, staff: await staffWithScore(staff) });
+    const message =
+      'Compte créé. Il est en attente de validation par l’équipe Super U : vous pourrez vous connecter dès son activation.';
+    if (body?.acceptsPending === true) {
+      // Nouvelles versions de CourseGO : succès explicite « en attente ».
+      return c.json({ ok: true, pending: true, code: 'pending_validation', message, staff: publicStaff(staff) }, 202);
+    }
+    // Builds TestFlight actuels : ils affichent le champ `error` d'une réponse non-2xx dans l'écran
+    // d'inscription, au lieu d'entrer dans l'app avec un jeton qui n'existe pas.
+    return c.json({ ok: false, pending: true, code: 'pending_validation', error: message }, 403);
   });
 
   app.get('/ops/me', async (c) => {

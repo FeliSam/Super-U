@@ -69,8 +69,27 @@ export async function resetWorkspaceKeepProfiles() {
   return true;
 }
 
-export async function seedAll(options: { catalog?: boolean } = {}) {
+/**
+ * Comptes démo (client, coursier, ramasseur, admin, RH) : uniquement si SEED_DEMO l'autorise.
+ * - SEED_DEMO=1|true  → seed démo actif
+ * - SEED_DEMO=0|false → jamais
+ * - non défini        → actif hors production, désactivé si NODE_ENV=production
+ * Dans tous les cas, le seed ne remplace JAMAIS le mot de passe d'un compte existant.
+ */
+export function demoSeedEnabled() {
+  const flag = String(process.env.SEED_DEMO ?? '').trim().toLowerCase();
+  if (['1', 'true', 'yes', 'on'].includes(flag)) return true;
+  if (['0', 'false', 'no', 'off'].includes(flag)) return false;
+  return process.env.NODE_ENV !== 'production';
+}
+
+export async function seedAll(options: { catalog?: boolean; demo?: boolean } = {}) {
   const catalog = options.catalog === false ? false : await seedCatalog();
+  const withDemo = options.demo ?? demoSeedEnabled();
+  if (!withDemo) {
+    console.log('Seed démo désactivé (NODE_ENV=production ou SEED_DEMO=0) : aucun compte démo créé ni modifié.');
+    return { catalog, demo: false, ops: false, admin: false };
+  }
   const demo = await seedDemoUser();
   const ops = await seedOpsStaff();
   const admin = await seedAdminStaff();
@@ -83,6 +102,6 @@ if (isCli) {
   if (process.argv.includes('--reset')) {
     console.log({ reset: await resetWorkspaceKeepProfiles() });
   }
-  console.log(await seedAll({ catalog: true }));
+  console.log(await seedAll({ catalog: true, demo: process.argv.includes('--demo') ? true : undefined }));
   await pool.end();
 }

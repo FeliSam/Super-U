@@ -3,6 +3,7 @@ import { randomUUID } from 'node:crypto';
 import { query } from './db.ts';
 import { notifyStaff, markStaffCallNotifsRead } from './ops.ts';
 import { pushToUser } from './push.ts';
+import { STAFF_SESSION_ALIVE_SQL, touchStaffSession } from './sessions.ts';
 
 type StaffRow = { id: string };
 type UserRow = { id: string };
@@ -21,10 +22,13 @@ async function actorFromToken(token: string | undefined): Promise<Actor | null> 
   const staff = await query<StaffRow>(
     `SELECT s.id FROM ops.staff_sessions sess
      JOIN ops.staff s ON s.id = sess.staff_id
-     WHERE sess.token = $1 AND s.is_active = TRUE`,
+     WHERE sess.token = $1 AND s.is_active = TRUE AND ${STAFF_SESSION_ALIVE_SQL}`,
     [token],
   );
-  if (staff.rows[0]) return { kind: 'staff', staffId: staff.rows[0].id };
+  if (staff.rows[0]) {
+    touchStaffSession(token);
+    return { kind: 'staff', staffId: staff.rows[0].id };
+  }
   const user = await query<UserRow>(
     `SELECT u.id FROM sessions s JOIN users u ON u.id = s.user_id WHERE s.token = $1`,
     [token],

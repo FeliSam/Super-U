@@ -2,6 +2,7 @@ import { randomBytes } from 'node:crypto';
 import type { Hono } from 'hono';
 import { query } from './db.ts';
 import { hashPassword } from './password.ts';
+import { STAFF_SESSION_ALIVE_SQL, touchStaffSession } from './sessions.ts';
 
 const CATALOG_ROLES = new Set(['admin', 'manager', 'magasinier']);
 const HR_WRITE = new Set(['admin', 'recruteur', 'manager']);
@@ -62,9 +63,10 @@ async function actorFromToken(token: string | undefined) {
     `SELECT s.id, s.email, s.role, s.store_id, s.is_active
      FROM ops.staff_sessions sess
      JOIN ops.staff s ON s.id = sess.staff_id
-     WHERE sess.token = $1 AND s.is_active = TRUE`,
+     WHERE sess.token = $1 AND s.is_active = TRUE AND ${STAFF_SESSION_ALIVE_SQL}`,
     [token],
   );
+  if (result.rows[0]) touchStaffSession(token);
   return result.rows[0] ?? null;
 }
 
@@ -545,8 +547,12 @@ export function registerAdminStaffRoutes(app: Hono) {
     if (actor.role === 'recruteur' && !RECRUITER_ROLES.has(row.role) && row.role !== 'both') {
       return c.json({ ok: false, error: 'Le recruteur ne peut activer que le personnel terrain.' }, 403);
     }
+    const enableScope = scopedStore(actor, null);
+    if (enableScope && row.store_id !== enableScope) return c.json({ ok: false, error: 'Hors de votre magasin.' }, 403);
+    // Active aussi les coursiers auto-inscrits depuis CourseGO (onboard_status draft → active).
     await query(
-      `UPDATE ops.staff SET is_active = TRUE, onboard_status = 'active' WHERE id = $1`,
+      `UPDATE ops.staff SET is_active = TRUE, onboard_status = 'active', hired_at = COALESCE(hired_at, NOW())
+       WHERE id = $1`,
       [id],
     );
     const next = (await query<StaffRow>(`${staffSelect()} WHERE s.id = $1`, [id])).rows[0];

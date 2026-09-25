@@ -13,7 +13,18 @@ import { registerAdminRoutes } from './admin.ts';
 import { registerAdminStaffRoutes } from './adminStaff.ts';
 import { readCatalogImage, readCatalogLocalPath, readExactCatalogFile } from './productMedia.ts';
 import { boundedLimit, decodeCatalogCursor, encodeCatalogCursor } from './catalogHelpers.ts';
-import { createFedapayCheckout, fedapayConfigured, getFedapayTransaction, mapFedapayStatus } from './fedapay.ts';
+import {
+  createFedapayCheckout,
+  fedapayConfigured,
+  getFedapayTransaction,
+  mapFedapayStatus,
+  verifyFedapaySignature,
+} from './fedapay.ts';
+import { nationalBeninDigits } from './phone.ts';
+import { loginRateLimit } from './rateLimit.ts';
+import { registerPanelRoutes } from './panel.ts';
+import { purgeExpiredStaffSessions } from './sessions.ts';
+import { isCancellable, OrderRequestError, priceOrder, restockCancelledOrder } from './orders.ts';
 
 function makeHandoffCode() {
   return String(1000 + Math.floor(Math.random() * 9000));
@@ -60,19 +71,6 @@ function bearer(header: string | undefined) {
   return header.slice(7).trim() || undefined;
 }
 
-function nationalBeninDigits(phone: string): string | null {
-  let d = phone.replace(/\D/g, '');
-  if (d.startsWith('00229')) d = d.slice(5);
-  else if (d.startsWith('229')) d = d.slice(3);
-  if (d.length === 10 && (d.startsWith('01') || d.startsWith('02'))) return d;
-  if (d.length === 8) return `${d.startsWith('2') ? '02' : '01'}${d}`;
-  return null;
-}
-
-function nationalDigits(phone: string) {
-  return nationalBeninDigits(phone) ?? phone.replace(/\D/g, '').replace(/^229/, '').slice(-10);
-}
-
 function formatBeninPhone(digits: string) {
   const parts: string[] = [];
   for (let i = 0; i < digits.length; i += 2) parts.push(digits.slice(i, i + 2));
@@ -81,10 +79,28 @@ function formatBeninPhone(digits: string) {
 
 const app = new Hono();
 
-app.use(
-  '*',
-  cors({
-    origin: '*',
+/**
+ * CORS : une seule source d'en-têtes (cette API). Les en-têtes CORS ajoutés par Caddy doivent être retirés.
+ * - CORS_ORIGIN non défini ou « * »  → Access-Control-Allow-Origin: * (comportement historique)
+ * - CORS_ORIGIN=https://a,https://b  → seules ces origines navigateur sont autorisées
+ * - CORS_ORIGIN=off                  → aucun en-tête CORS (si un proxy s'en charge seul)
+ * Les apps natives (TestFlight) n'envoient pas d'Origin : elles ne sont jamais concernées.
+ */
+const corsSetting = String(process.env.CORS_ORIGIN ?? '').trim();
+const corsOrigins = corsSetting
+  .split(',')
+  .map((o) => o.trim().replace(/\/$/, ''))
+  .filter(Boolean);
+const corsDisabled = corsSetting.toLowerCase() === 'off' || corsSetting.toLowerCase() === 'none';
+const corsAllowAll = !corsOrigins.length || corsOrigins.includes('*');
+if (!corsDisabled) {
+  console.log(`CORS : ${corsAllowAll ? 'toutes origines (*)' : corsOrigins.join(', ')}`);
+}
+
+app.use('*', async (c, next) => {
+  if (corsDisabled) return next();
+  return cors({
+    origin: corsAllowAll ? '*' : (origin) => (corsOrigins.includes(origin) ? origin : null),
     allowHeaders: [
       'Content-Type',
       'Authorization',
@@ -94,8 +110,14 @@ app.use(
       'Accept',
     ],
     allowMethods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
-  }),
-);
+  })(c, next);
+});
+
+// Limitation des tentatives de connexion (en mémoire, par IP et par identifiant).
+// Le panel admin se connecte via /ops/login (même route que CourseGO).
+app.use('/ops/login', loginRateLimit('ops'));
+app.use('/auth/login', loginRateLimit('auth'));
+app.use('/admin/login', loginRateLimit('admin'));
 
 app.use('*', async (c, next) => {
   await next();
@@ -359,7 +381,7 @@ app.get('/catalog/stock', async (c) => {
       ok: true,
       storeId,
       productId,
-      qty: row.available,
+      // `...row` fournit déjà `qty` (stock physique) : comportement inchangé, doublon retiré pour tsc.
       inStock: row.available > 0,
       ...row,
     });
@@ -475,13 +497,17 @@ app.post('/auth/login', async (c) => {
   }
 
   const email = identifier.includes('@') ? identifier.toLowerCase() : '';
-  const digits = nationalDigits(identifier);
-  const result = await query<UserRow>(
-    email
-      ? 'SELECT * FROM users WHERE email = $1 LIMIT 1'
-      : `SELECT * FROM users WHERE regexp_replace(phone, '\\D', '', 'g') LIKE $1 LIMIT 1`,
-    email ? [email] : [`%${digits}`],
-  );
+  // Téléphone : correspondance EXACTE sur le numéro national normalisé (plus de LIKE par suffixe).
+  const national = email ? null : nationalBeninDigits(identifier);
+  const result =
+    email || national
+      ? await query<UserRow>(
+          email
+            ? 'SELECT * FROM users WHERE email = $1 LIMIT 1'
+            : 'SELECT * FROM users WHERE public.national_phone_digits(phone) = $1 LIMIT 1',
+          [email || national],
+        )
+      : { rows: [] as UserRow[] };
   const user = result.rows[0];
   if (!user || !(await verifyPassword(password, user.password_hash))) {
     return c.json({ ok: false, error: 'Identifiants incorrects. Réessayez ou créez un compte.' }, 401);
@@ -876,23 +902,81 @@ app.post('/me/orders', async (c) => {
   if (!order?.id || !Array.isArray(order.lines)) {
     return c.json({ ok: false, error: 'Commande invalide.' }, 400);
   }
+  const orderId = String(order.id).trim();
+  if (!orderId || orderId.length > 64) return c.json({ ok: false, error: 'Commande invalide.' }, 400);
   const handoffCode = makeHandoffCode();
-  const stored = { ...order, handoffCode };
   const client = await pool.connect();
+  let stored: Record<string, unknown>;
   try {
     await client.query('BEGIN');
-    await client.query(
+    const existing = await client.query<{ user_id: string; payload: Record<string, unknown>; handoff_code: string | null }>(
+      `SELECT user_id, payload, handoff_code FROM orders WHERE id = $1 FOR UPDATE`,
+      [orderId],
+    );
+    if (existing.rows[0]) {
+      await client.query('ROLLBACK');
+      if (existing.rows[0].user_id !== user.id) {
+        // Id déjà pris par un autre client : on ne touche jamais à sa commande.
+        return c.json(
+          {
+            ok: false,
+            code: 'order_id_conflict',
+            error: 'Ce numéro de commande est déjà utilisé. Touchez à nouveau « Confirmer » pour réessayer.',
+          },
+          409,
+        );
+      }
+      // Même client qui renvoie la même commande (réseau, double tap) : idempotent, rien n'est réécrit.
+      const code = existing.rows[0].handoff_code || String(existing.rows[0].payload?.handoffCode ?? '');
+      return c.json({ ok: true, replay: true, order: { ...existing.rows[0].payload, id: orderId, handoffCode: code } });
+    }
+    // Prix, quantités et totaux recalculés depuis le catalogue ; les montants du client sont ignorés.
+    const priced = await priceOrder(client, { ...order, id: orderId });
+    if (priced.clientTotalMismatch) {
+      console.warn(`[orders] ${orderId} : total client ${Number(order.total)} ≠ total serveur ${priced.total} (recalculé).`);
+    }
+    // Paiement en ligne déjà créé via POST /me/payments : on relie paiement ↔ commande.
+    const paymentRef = typeof order.paymentRef === 'string' ? order.paymentRef.trim() : '';
+    if (paymentRef) {
+      const pay = await client.query<{ status: string }>(
+        `SELECT status FROM payments WHERE id = $1 AND user_id = $2`,
+        [paymentRef, user.id],
+      );
+      if (pay.rows[0]) priced.payload.paymentStatus = pay.rows[0].status === 'paid' ? 'paid' : 'pending';
+    }
+    stored = { ...priced.payload, handoffCode };
+    const inserted = await client.query(
       `INSERT INTO orders (id, user_id, payload, created_at, handoff_code)
        VALUES ($1, $2, $3::jsonb, $4, $5)
-       ON CONFLICT (id) DO UPDATE SET payload = EXCLUDED.payload`,
-      [order.id, user.id, JSON.stringify(stored), order.createdAt ?? new Date().toISOString(), handoffCode],
+       ON CONFLICT (id) DO UPDATE SET payload = EXCLUDED.payload
+         WHERE orders.user_id = EXCLUDED.user_id AND orders.status = 'confirmed'
+       RETURNING id`,
+      [orderId, user.id, JSON.stringify(stored), order.createdAt ?? new Date().toISOString(), handoffCode],
     );
+    if (!inserted.rows[0]) {
+      // Course entre deux insertions du même id par deux clients différents.
+      await client.query('ROLLBACK');
+      return c.json(
+        {
+          ok: false,
+          code: 'order_id_conflict',
+          error: 'Ce numéro de commande est déjà utilisé. Touchez à nouveau « Confirmer » pour réessayer.',
+        },
+        409,
+      );
+    }
+    if (paymentRef) {
+      await client.query(
+        `UPDATE payments SET order_id = $3, updated_at = NOW() WHERE id = $1 AND user_id = $2 AND order_id IS NULL`,
+        [paymentRef, user.id, orderId],
+      );
+    }
     await client.query(
       `UPDATE orders SET handoff_code = COALESCE(NULLIF(handoff_code, ''), $2),
          payload = COALESCE(payload, '{}'::jsonb) ||
            jsonb_build_object('handoffCode', COALESCE(NULLIF(handoff_code, ''), $2))
        WHERE id = $1`,
-      [order.id, handoffCode],
+      [orderId, handoffCode],
     );
     await client.query(
       `INSERT INTO product_stock (product_id, store_id, qty, reserved, min_qty)
@@ -901,7 +985,7 @@ app.post('/me/orders', async (c) => {
        JOIN orders o ON o.id = l.order_id
        WHERE l.order_id = $1
        ON CONFLICT (product_id, store_id) DO NOTHING`,
-      [order.id],
+      [orderId],
     );
     const lines = await client.query<{
       product_id: string;
@@ -927,11 +1011,11 @@ app.post('/me/orders', async (c) => {
          ON s.product_id = l.product_id AND s.store_id = COALESCE(o.store_id, 'su-aeroport')
        WHERE l.order_id = $1
        FOR UPDATE OF s`,
-      [order.id],
+      [orderId],
     );
     const insufficient = lines.rows.find((line) => !line.already_recorded && Number(line.available) < line.qty);
     if (insufficient) {
-      throw new Error(`Stock insuffisant pour ${insufficient.product_id} (${insufficient.available} restant).`);
+      throw new Error(`Stock insuffisant pour ${insufficient.product_id} (${Math.max(0, Number(insufficient.available))} restant).`);
     }
     for (const line of lines.rows) {
       if (line.already_recorded) continue;
@@ -949,12 +1033,12 @@ app.post('/me/orders', async (c) => {
          ) VALUES ($1, $2, $3, $4, 'sale', 'order', $5, $6, $7, $8)
          ON CONFLICT DO NOTHING`,
         [
-          `sale-${String(order.id).replace(/[^a-zA-Z0-9-]/g, '')}-${line.product_id}`,
+          `sale-${orderId.replace(/[^a-zA-Z0-9-]/g, '')}-${line.product_id}`,
           line.product_id,
           line.store_id,
           -line.qty,
-          order.id,
-          `Commande ${order.id}`,
+          orderId,
+          `Commande ${orderId}`,
           line.qty_before,
           updatedStock.rows[0].qty,
         ],
@@ -962,13 +1046,18 @@ app.post('/me/orders', async (c) => {
     }
     await client.query('COMMIT');
   } catch (error) {
-    await client.query('ROLLBACK');
+    await client.query('ROLLBACK').catch(() => undefined);
+    if (error instanceof OrderRequestError) {
+      return c.json({ ok: false, code: error.code, error: error.message }, error.status);
+    }
     const message = error instanceof Error ? error.message : 'Stock indisponible.';
-    return c.json({ ok: false, error: message }, message.startsWith('Stock insuffisant') ? 409 : 500);
+    if (message.startsWith('Stock insuffisant')) return c.json({ ok: false, code: 'out_of_stock', error: message }, 409);
+    console.error(error);
+    return c.json({ ok: false, error: 'Commande non enregistrée. Réessayez dans un instant.' }, 500);
   } finally {
     client.release();
   }
-  const saved = await query<{ handoff_code: string | null }>(`SELECT handoff_code FROM orders WHERE id = $1`, [order.id]);
+  const saved = await query<{ handoff_code: string | null }>(`SELECT handoff_code FROM orders WHERE id = $1`, [orderId]);
   const code = saved.rows[0]?.handoff_code || handoffCode;
   await query('DELETE FROM cart_lines WHERE user_id = $1', [user.id]);
   await query(
@@ -976,24 +1065,24 @@ app.post('/me/orders', async (c) => {
      ON CONFLICT (user_id) DO UPDATE SET promo_code = NULL, updated_at = NOW()`,
     [user.id],
   );
-  const storeId = typeof order.storeId === 'string' ? order.storeId : null;
+  const storeId = typeof stored.storeId === 'string' ? stored.storeId : null;
   const comment = typeof order.comment === 'string' ? order.comment.trim() : '';
-  const label = String(order.id ?? '').replace(/^#/, '');
+  const label = orderId.replace(/^#/, '');
   await notifyStoreStaff(storeId, 'pick', {
     kind: 'job',
     title: 'Nouveau ramassage',
     body: [
-      `${label} · ${Number(order.itemCount ?? order.lines?.length ?? 0)} article(s). Un seul ramassage à la fois, jusqu’à 3 colis dans le même Super U.`,
+      `${label} · ${Number(stored.itemCount ?? 0)} article(s). Un seul ramassage à la fois, jusqu’à 3 colis dans le même Super U.`,
       comment ? `Note client : ${comment}` : '',
     ]
       .filter(Boolean)
       .join(' '),
-    href: `/job/${encodeURIComponent(`pick-${order.id}`)}`,
-    orderId: String(order.id),
-    idPrefix: `ntf-new-${order.id}`,
+    href: `/job/${encodeURIComponent(`pick-${orderId}`)}`,
+    orderId,
+    idPrefix: `ntf-new-${orderId}`,
   });
-  await notifyOrderUser(String(order.id), 'placed');
-  return c.json({ ok: true, order: { ...order, handoffCode: code } });
+  await notifyOrderUser(orderId, 'placed');
+  return c.json({ ok: true, order: { ...stored, handoffCode: code } });
 });
 
 registerOpsRoutes(app);
@@ -1037,10 +1126,15 @@ app.post('/me/payments', async (c) => {
       },
     });
     const id = randomUUID();
+    // Rattachement optionnel à une commande existante du client (les apps actuelles ne l'envoient pas).
+    const orderIdRaw = typeof body?.orderId === 'string' ? body.orderId.trim() : '';
+    const ownedOrder = orderIdRaw
+      ? await query('SELECT 1 FROM orders WHERE id = $1 AND user_id = $2', [orderIdRaw, user.id])
+      : null;
     await query(
-      `INSERT INTO payments (id, user_id, provider_id, amount, method, status, checkout_url)
-       VALUES ($1, $2, $3, $4, $5, 'pending', $6)`,
-      [id, user.id, checkout.providerId, amount, method, checkout.checkoutUrl],
+      `INSERT INTO payments (id, user_id, provider_id, amount, method, status, checkout_url, order_id)
+       VALUES ($1, $2, $3, $4, $5, 'pending', $6, $7)`,
+      [id, user.id, checkout.providerId, amount, method, checkout.checkoutUrl, ownedOrder?.rowCount ? orderIdRaw : null],
     );
     return c.json({
       ok: true,
@@ -1081,9 +1175,7 @@ app.get('/me/payments/:id', async (c) => {
     try {
       const remote = await getFedapayTransaction(row.provider_id);
       status = mapFedapayStatus(remote.status);
-      if (status !== row.status) {
-        await query('UPDATE payments SET status = $2 WHERE id = $1', [row.id, status]);
-      }
+      if (status !== row.status) await applyPaymentStatus(row.id, status);
     } catch {
       /* keep last known status */
     }
@@ -1101,19 +1193,67 @@ app.get('/me/payments/:id', async (c) => {
   });
 });
 
+/** Met à jour un paiement encore en attente et, s'il est payé, le statut de paiement de la commande liée. */
+async function applyPaymentStatus(paymentId: string, status: string) {
+  const updated = await query<{ order_id: string | null; user_id: string }>(
+    `UPDATE payments SET status = $2, updated_at = NOW()
+     WHERE id = $1 AND status = 'pending' AND status <> $2
+     RETURNING order_id, user_id`,
+    [paymentId, status],
+  );
+  const row = updated.rows[0];
+  if (row?.order_id && status === 'paid') {
+    await query(
+      `UPDATE orders SET payload = COALESCE(payload, '{}'::jsonb) || jsonb_build_object('paymentStatus', 'paid', 'paymentRef', $3::text)
+       WHERE id = $1 AND user_id = $2`,
+      [row.order_id, row.user_id, paymentId],
+    );
+  }
+  return row ?? null;
+}
+
+const FEDAPAY_WEBHOOK_SECRET = process.env.FEDAPAY_WEBHOOK_SECRET?.trim() ?? '';
+if (!FEDAPAY_WEBHOOK_SECRET) {
+  console.warn('[fedapay] FEDAPAY_WEBHOOK_SECRET non défini : les webhooks FedaPay sont acceptés SANS vérification de signature.');
+}
+
 app.post('/webhooks/fedapay', async (c) => {
-  const body = await c.req.json().catch(() => null);
+  // Corps BRUT : la signature porte sur les octets reçus, pas sur un JSON re-sérialisé.
+  const rawBody = await c.req.text().catch(() => '');
+  if (FEDAPAY_WEBHOOK_SECRET) {
+    const check = verifyFedapaySignature(rawBody, c.req.header('x-fedapay-signature'), FEDAPAY_WEBHOOK_SECRET);
+    if (!check.ok) {
+      console.warn(`[fedapay] webhook rejeté : ${check.reason}`);
+      return c.json({ ok: false, error: 'invalid_signature' }, 400);
+    }
+  } else {
+    console.warn('[fedapay] webhook reçu sans vérification de signature (FEDAPAY_WEBHOOK_SECRET absent).');
+  }
+  let body: unknown;
+  try {
+    body = JSON.parse(rawBody);
+  } catch {
+    return c.json({ ok: false }, 400);
+  }
   if (!body || typeof body !== 'object') return c.json({ ok: false }, 400);
   const raw = body as Record<string, unknown>;
   const entity = (raw.entity ?? raw['v1/transaction'] ?? raw.transaction ?? raw) as Record<string, unknown>;
   const providerId = String(entity.id ?? '');
   if (!providerId) return c.json({ ok: true });
-  const status = mapFedapayStatus(String(entity.status ?? ''));
-  await query('UPDATE payments SET status = $2 WHERE provider_id = $1 AND status = $3', [
-    providerId,
-    status,
-    'pending',
-  ]);
+  let status = mapFedapayStatus(String(entity.status ?? ''));
+  if (fedapayConfigured()) {
+    // Double contrôle : on relit le statut chez FedaPay plutôt que de croire le corps seul.
+    try {
+      status = mapFedapayStatus((await getFedapayTransaction(providerId)).status);
+    } catch {
+      /* FedaPay injoignable : on garde le statut du webhook (signé si le secret est configuré) */
+    }
+  }
+  const payments = await query<{ id: string }>(
+    `SELECT id FROM payments WHERE provider_id = $1 AND status = 'pending'`,
+    [providerId],
+  );
+  for (const p of payments.rows) await applyPaymentStatus(p.id, status);
   return c.json({ ok: true });
 });
 
@@ -1122,19 +1262,67 @@ app.patch('/me/orders/:id', async (c) => {
   if (!user) return c.json({ ok: false, error: 'unauthorized' }, 401);
   const id = c.req.param('id');
   const body = await c.req.json().catch(() => null);
-  const status = String(body?.status ?? '');
-  const found = await query<{ payload: Record<string, unknown> }>(
-    'SELECT payload FROM orders WHERE id = $1 AND user_id = $2',
-    [id, user.id],
-  );
-  if (!found.rows[0]) return c.json({ ok: false, error: 'not_found' }, 404);
-  const payload = { ...found.rows[0].payload, status };
-  await query('UPDATE orders SET payload = $3::jsonb WHERE id = $1 AND user_id = $2', [
-    id,
-    user.id,
-    JSON.stringify(payload),
-  ]);
-  return c.json({ ok: true, order: payload });
+  const status = String(body?.status ?? '').trim().toLowerCase();
+  // Marché Doré n'envoie que « cancelled » (bouton Annuler, canCancelOrder = statut confirmed).
+  // Tout autre statut (delivered, shipping…) est piloté par CourseGO / l'équipe, jamais par le client.
+  if (status !== 'cancelled' && status !== 'canceled') {
+    return c.json(
+      { ok: false, code: 'status_not_allowed', error: 'Seule l’annulation de la commande est possible depuis l’application.' },
+      400,
+    );
+  }
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    const found = await client.query<{
+      payload: Record<string, unknown>;
+      status: string;
+      pick_status: string | null;
+      delivery_status: string | null;
+    }>(
+      `SELECT o.payload, o.status, pj.status AS pick_status, d.status AS delivery_status
+       FROM orders o
+       LEFT JOIN ops.pick_jobs pj ON pj.order_id = o.id
+       LEFT JOIN ops.deliveries d ON d.order_id = o.id
+       WHERE o.id = $1 AND o.user_id = $2
+       FOR UPDATE OF o`,
+      [id, user.id],
+    );
+    const row = found.rows[0];
+    if (!row) {
+      await client.query('ROLLBACK');
+      return c.json({ ok: false, error: 'not_found' }, 404);
+    }
+    if (row.status === 'cancelled') {
+      await client.query('ROLLBACK');
+      return c.json({ ok: true, order: { ...row.payload, status: 'cancelled' } });
+    }
+    if (!isCancellable(row)) {
+      await client.query('ROLLBACK');
+      return c.json(
+        {
+          ok: false,
+          code: 'not_cancellable',
+          error: 'Cette commande est déjà en préparation : elle ne peut plus être annulée depuis l’application. Contactez le support.',
+        },
+        409,
+      );
+    }
+    const payload = { ...row.payload, status: 'cancelled' };
+    await client.query('UPDATE orders SET payload = $3::jsonb WHERE id = $1 AND user_id = $2', [
+      id,
+      user.id,
+      JSON.stringify(payload),
+    ]);
+    const restored = await restockCancelledOrder(client, id, `Annulation client commande ${id}`);
+    await client.query('COMMIT');
+    return c.json({ ok: true, order: payload, restocked: restored });
+  } catch (error) {
+    await client.query('ROLLBACK').catch(() => undefined);
+    throw error;
+  } finally {
+    client.release();
+  }
 });
 
 app.get('/me/orders/:id/live', async (c) => {
@@ -1237,6 +1425,7 @@ const port = Number(process.env.PORT ?? 8787);
 
 await migrate();
 await seedAll();
+registerPanelRoutes(app);
 
 serve({ fetch: app.fetch, port, hostname: '0.0.0.0' }, () => {
   console.log(`Marché Doré API http://localhost:${port}`);
@@ -1246,3 +1435,7 @@ setInterval(() => {
   void archiveDeliveredCourierThreads().catch(() => undefined);
 }, 15_000);
 void archiveDeliveredCourierThreads().catch(() => undefined);
+setInterval(() => {
+  void purgeExpiredStaffSessions().catch(() => undefined);
+}, 60 * 60_000).unref();
+void purgeExpiredStaffSessions().catch(() => undefined);

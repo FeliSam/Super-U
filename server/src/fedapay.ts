@@ -1,3 +1,5 @@
+import { createHmac, timingSafeEqual } from 'node:crypto';
+
 const SANDBOX = 'https://sandbox-api.fedapay.com/v1';
 const LIVE = 'https://api.fedapay.com/v1';
 
@@ -94,4 +96,43 @@ export function mapFedapayStatus(status: string) {
   if (s === 'approved' || s === 'transferred') return 'paid';
   if (s === 'canceled' || s === 'cancelled' || s === 'declined' || s === 'failed') return 'failed';
   return 'pending';
+}
+
+/**
+ * Vérification de signature des webhooks FedaPay (schéma du SDK officiel fedapay-node,
+ * WebhookSignature.verifyHeader) :
+ *   en-tête  X-FEDAPAY-SIGNATURE: t=<timestamp unix>,s=<hmac hex>[,s=...]
+ *   hmac     HMAC-SHA256(secret du webhook, `${t}.${corps brut}`) en hexadécimal
+ *   fenêtre  5 minutes (DEFAULT_TOLERANCE = 300 s) contre le rejeu
+ */
+export const FEDAPAY_WEBHOOK_TOLERANCE_S = 300;
+
+export function verifyFedapaySignature(
+  rawBody: string,
+  header: string | undefined | null,
+  secret: string,
+  toleranceSec = FEDAPAY_WEBHOOK_TOLERANCE_S,
+  nowSec = Math.floor(Date.now() / 1000),
+): { ok: true } | { ok: false; reason: string } {
+  if (!header) return { ok: false, reason: 'en-tête X-FEDAPAY-SIGNATURE absent' };
+  let timestamp = -1;
+  const signatures: string[] = [];
+  for (const item of header.split(',')) {
+    const idx = item.indexOf('=');
+    if (idx <= 0) continue;
+    const key = item.slice(0, idx).trim();
+    const value = item.slice(idx + 1).trim();
+    if (key === 't') timestamp = Number.parseInt(value, 10);
+    else if (key === 's' && value) signatures.push(value);
+  }
+  if (!Number.isFinite(timestamp) || timestamp < 0) return { ok: false, reason: 'timestamp absent' };
+  if (!signatures.length) return { ok: false, reason: 'signature absente' };
+  const expected = Buffer.from(createHmac('sha256', secret).update(`${timestamp}.${rawBody}`, 'utf8').digest('hex'));
+  const match = signatures.some((sig) => {
+    const given = Buffer.from(sig);
+    return given.length === expected.length && timingSafeEqual(given, expected);
+  });
+  if (!match) return { ok: false, reason: 'signature invalide' };
+  if (toleranceSec > 0 && nowSec - timestamp > toleranceSec) return { ok: false, reason: 'signature expirée' };
+  return { ok: true };
 }

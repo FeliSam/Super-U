@@ -4,6 +4,7 @@ import { join } from 'node:path';
 import type { Hono } from 'hono';
 import { query } from './db.ts';
 import { hashPassword } from './password.ts';
+import { STAFF_SESSION_ALIVE_SQL, touchStaffSession } from './sessions.ts';
 import { catalogDir, clearCatalogFilesCache, readCatalogImage, readExactCatalogFile } from './productMedia.ts';
 import { CatalogValidationError, hasValidGtinChecksum, importCatalog } from './catalogImport.ts';
 import { normalizeBarcode } from './catalogHelpers.ts';
@@ -47,9 +48,10 @@ async function staffFromToken(token: string | undefined) {
             s.can_pick, s.can_deliver, s.store_id, s.is_active
      FROM ops.staff_sessions sess
      JOIN ops.staff s ON s.id = sess.staff_id
-     WHERE sess.token = $1 AND s.is_active = TRUE`,
+     WHERE sess.token = $1 AND s.is_active = TRUE AND ${STAFF_SESSION_ALIVE_SQL}`,
     [token],
   );
+  if (result.rows[0]) touchStaffSession(token);
   return result.rows[0] ?? null;
 }
 
@@ -270,6 +272,7 @@ async function applyImageToFamily(sourceId: string, staffId: string) {
 }
 
 export async function seedAdminStaff() {
+  // Démo uniquement (voir demoSeedEnabled dans seed.ts). Un compte existant garde TOUJOURS son mot de passe.
   const password = process.env.DEMO_PASSWORD ?? 'marche2024';
   const email = 'admin@marchedore.bj';
   const found = await query<{ id: string }>('SELECT id FROM ops.staff WHERE email = $1', [email]);
@@ -278,10 +281,10 @@ export async function seedAdminStaff() {
     await query(
       `UPDATE ops.staff SET role = 'admin', can_pick = FALSE, can_deliver = FALSE,
          first_name = 'Amina', last_name = 'KPODEKON', is_active = TRUE,
-         onboard_status = 'active', must_reset_password = FALSE,
-         store_id = COALESCE(store_id, 'su-aeroport'), password_hash = $2
+         onboard_status = 'active',
+         store_id = COALESCE(store_id, 'su-aeroport')
        WHERE email = $1`,
-      [email, hash],
+      [email],
     );
   } else {
     await query(
@@ -297,10 +300,10 @@ export async function seedAdminStaff() {
     await query(
       `UPDATE ops.staff SET role = 'recruteur', can_pick = FALSE, can_deliver = FALSE,
          first_name = 'Léa', last_name = 'HOUNSOU', is_active = TRUE,
-         onboard_status = 'active', must_reset_password = FALSE,
-         store_id = NULL, password_hash = $2
+         onboard_status = 'active',
+         store_id = NULL
        WHERE email = $1`,
-      [rhEmail, hash],
+      [rhEmail],
     );
     return false;
   }
@@ -335,7 +338,8 @@ export function registerAdminRoutes(app: Hono) {
   app.get('/admin/pulse', async (c) => {
     const gate = await requireBackoffice(c);
     if (gate.error) return gate.error;
-    const storeId = scopedStore(gate.staff!, c.req.query('storeId') ?? null) ?? 'su-aeroport';
+    // null = tous les magasins (admin sans filtre, ou staff sans magasin rattaché).
+    const storeId = scopedStore(gate.staff!, c.req.query('storeId') ?? null) ?? null;
     const row = await query<{
       catalog: string;
       orders: string;
@@ -346,10 +350,10 @@ export function registerAdminRoutes(app: Hono) {
       `SELECT
          concat_ws(':',
            (SELECT COUNT(*)::text FROM products),
-           (SELECT COALESCE(SUM(qty), 0)::text FROM product_stock WHERE store_id = $1),
-           (SELECT COALESCE(SUM(reserved), 0)::text FROM product_stock WHERE store_id = $1),
+           (SELECT COALESCE(SUM(qty), 0)::text FROM product_stock WHERE ($1::text IS NULL OR store_id = $1)),
+           (SELECT COALESCE(SUM(reserved), 0)::text FROM product_stock WHERE ($1::text IS NULL OR store_id = $1)),
            (SELECT COALESCE(MAX(updated_at), 'epoch')::text FROM products),
-           (SELECT COALESCE(MAX(updated_at), 'epoch')::text FROM product_stock WHERE store_id = $1),
+           (SELECT COALESCE(MAX(updated_at), 'epoch')::text FROM product_stock WHERE ($1::text IS NULL OR store_id = $1)),
            (SELECT COALESCE(MAX(updated_at), 'epoch')::text FROM product_media),
            (SELECT COALESCE(MAX(updated_at), 'epoch')::text FROM categories),
            (SELECT COALESCE(MAX(updated_at), 'epoch')::text FROM banners),
@@ -371,6 +375,7 @@ export function registerAdminRoutes(app: Hono) {
          concat_ws(':',
            (SELECT COUNT(*)::text FROM ops.staff),
            (SELECT COUNT(*) FILTER (WHERE is_active)::text FROM ops.staff),
+           (SELECT COUNT(*) FILTER (WHERE onboard_status IN ('draft', 'invited'))::text FROM ops.staff),
            (SELECT COALESCE(MAX(created_at), 'epoch')::text FROM ops.staff)
          ) AS staff,
          concat_ws(':',
