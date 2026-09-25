@@ -2,11 +2,13 @@ import { useCallback, useEffect, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import { api, formatFcfa } from '@/lib/api';
 import { useLiveSync } from '@/lib/live';
+import { OrderActions } from '@/components/OrderActions';
 import {
   CLIENT_ACTION,
   DELIVERY_STATUS,
   INCIDENT_REASON,
   ORDER_STATUS,
+  PAYMENT_STATUS,
   PICK_STATUS,
   formatWhen,
   orderPillClass,
@@ -143,7 +145,7 @@ export function OrderDetailPage() {
           <div className="v">{money(order.deliveryFee)}</div>
         </div>
         <div className="card stat">
-          <div className="k">Total payé</div>
+          <div className="k">Total</div>
           <div className="v">{money(order.total)}</div>
         </div>
       </div>
@@ -182,7 +184,7 @@ export function OrderDetailPage() {
               <span>Paiement</span>
               <strong>
                 {order.paymentLabel || '—'}
-                {order.paymentStatus ? ` · ${order.paymentStatus}` : ''}
+                {order.paymentStatus ? ` · ${PAYMENT_STATUS[order.paymentStatus] ?? order.paymentStatus}` : ''}
               </strong>
             </li>
             {order.comment ? (
@@ -236,6 +238,8 @@ export function OrderDetailPage() {
           </ul>
         </div>
       </div>
+
+      <OrderActions orderId={order.id} onChanged={load} />
 
       <div className="card table-card" style={{ marginTop: 16 }}>
         <div className="dash-card-head" style={{ padding: '14px 16px 0' }}>

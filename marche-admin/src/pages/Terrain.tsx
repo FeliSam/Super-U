@@ -1,11 +1,12 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { Link } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
 import { ArrowDown, ArrowUp, ArrowUpDown, Bike, MessageSquare, Star, Wallet, X } from 'lucide-react';
 import { api, formatFcfa } from '@/lib/api';
 import { useCachedResource } from '@/lib/cachedApi';
 import { getCourierPositions, subscribeCourierPositions } from '@/lib/adminStream';
 import { DELIVERY_STATUS, PICK_STATUS, formatWhen } from '@/lib/orderLabels';
 import { roleLabel } from '@/lib/staffLabels';
+import { CourierMap } from '@/components/CourierMap';
 
 type Mission = {
   id: string | null;
@@ -167,6 +168,8 @@ function missionStatusLabel(kind: string, status: string) {
 
 export function TerrainPage() {
   const { data } = useCachedResource<Floor>('floor', '/admin/floor', 'floor');
+  const navigate = useNavigate();
+  const mapStaff = useMemo(() => (data?.staff ?? []).filter((s) => s.canDeliver || s.canPick), [data]);
   const [filter, setFilter] = useState<'all' | 'live' | 'paused' | 'offline'>('all');
   const [sortKey, setSortKey] = useState<SortKey | null>('status');
   const [sortDir, setSortDir] = useState<'asc' | 'desc'>('asc');
@@ -313,6 +316,8 @@ export function TerrainPage() {
           <small>{extras.rated ? `${extras.rated} avis clients` : 'Pas encore d’avis.'}</small>
         </div>
       </div>
+
+      <CourierMap staff={mapStaff} onOpenOrder={(id) => navigate(`/commandes/${encodeURIComponent(id)}`)} />
 
       <div className="seg" style={{ marginBottom: 14 }}>
         {(

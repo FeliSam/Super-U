@@ -59,3 +59,40 @@ export function formatWhen(iso: string | Date) {
     minute: '2-digit',
   });
 }
+
+export const PAYMENT_STATUS: Record<string, string> = {
+  paid: 'Payé (confirmé)',
+  pending: 'En attente de paiement',
+  cod_pending: 'À régler à la livraison',
+  failed: 'Échoué',
+  refunded: 'Remboursé',
+  partially_refunded: 'Partiellement remboursé',
+};
+
+export function paymentPillClass(status: string | null | undefined) {
+  if (status === 'paid') return 'ok';
+  if (status === 'refunded' || status === 'partially_refunded') return 'warn';
+  if (status === 'failed') return 'out';
+  return 'warn';
+}
+
+export const ORDER_ACTION: Record<string, string> = {
+  packed: 'Marqué rassemblé',
+  delivered: 'Marqué livré',
+  failed: 'Livraison déclarée en échec',
+  redispatch: 'Remis en livraison',
+  cancel: 'Commande annulée',
+  'reassign-picker': 'Ramasseur réassigné',
+  'reassign-courier': 'Coursier réassigné',
+  'release-picker': 'Ramasseur libéré',
+  'release-courier': 'Coursier libéré',
+  refund: 'Remboursement enregistré',
+};
+
+export const ROLE_SHORT: Record<string, string> = {
+  admin: 'Admin',
+  manager: 'Manager',
+  magasinier: 'Magasinier',
+  support: 'Support',
+  recruteur: 'RH',
+};

@@ -24,6 +24,9 @@ import { RolesHelpPage } from '@/pages/RolesHelp';
 import { TerrainPage } from '@/pages/Terrain';
 import { ClientsPage } from '@/pages/Clients';
 import { ClientDetailPage } from '@/pages/ClientDetail';
+import { SupportPage } from '@/pages/Support';
+import { CallsPage } from '@/pages/Calls';
+import { PaymentsPage } from '@/pages/Payments';
 
 function Guard({ children }: { children: ReactNode }) {
   const staff = useAppSelector((s) => s.auth.staff);
@@ -43,6 +46,12 @@ function CatalogGuard({ children }: { children: ReactNode }) {
 function HrGuard({ children }: { children: ReactNode }) {
   const staff = useAppSelector((s) => s.auth.staff);
   if (staff && !staff.canHr && !staff.canReadHr) return <Navigate to="/" replace />;
+  return children;
+}
+
+function RoleGuard({ roles, children }: { roles: string[]; children: ReactNode }) {
+  const staff = useAppSelector((s) => s.auth.staff);
+  if (staff && !roles.includes(staff.role)) return <Navigate to="/" replace />;
   return children;
 }
 
@@ -129,6 +138,30 @@ export function App() {
           }
         />
         <Route path="terrain" element={<TerrainPage />} />
+        <Route
+          path="support"
+          element={
+            <RoleGuard roles={['admin', 'manager', 'support']}>
+              <SupportPage />
+            </RoleGuard>
+          }
+        />
+        <Route
+          path="appels"
+          element={
+            <RoleGuard roles={['admin', 'manager', 'support', 'magasinier']}>
+              <CallsPage />
+            </RoleGuard>
+          }
+        />
+        <Route
+          path="paiements"
+          element={
+            <RoleGuard roles={['admin', 'manager']}>
+              <PaymentsPage />
+            </RoleGuard>
+          }
+        />
         <Route path="clients" element={<ClientsPage />} />
         <Route path="clients/:id" element={<ClientDetailPage />} />
         <Route

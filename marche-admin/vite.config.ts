@@ -7,6 +7,8 @@ import { fileURLToPath, URL } from 'node:url';
 export default defineConfig(({ command }) => ({
   base: command === 'build' ? '/panel/' : '/',
   plugins: [react()],
+  // Worker maplibre-gl (import `?worker&url`) : format ES car il importe le chunk partagé de maplibre.
+  worker: { format: 'es' },
   resolve: {
     alias: { '@': fileURLToPath(new URL('./src', import.meta.url)) },
   },

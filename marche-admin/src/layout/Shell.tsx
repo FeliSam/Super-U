@@ -18,6 +18,9 @@ import {
   LogOut,
   PanelLeftClose,
   PanelLeftOpen,
+  MessageSquare,
+  PhoneCall,
+  Wallet,
 } from 'lucide-react';
 import { logout } from '@/features/auth/authSlice';
 import { applyTheme, toggleTheme } from '@/features/ui/uiSlice';
@@ -111,6 +114,10 @@ export function Shell() {
       items.splice(1, 0, { to: '/clients', label: 'Clients Marché Doré', icon: ContactRound });
       items.splice(2, 0, { to: '/terrain', label: 'Terrain', icon: Bike });
     }
+    const role = staff?.role ?? '';
+    if (['admin', 'manager', 'support'].includes(role)) items.push({ to: '/support', label: 'Support', icon: MessageSquare });
+    if (['admin', 'manager', 'support', 'magasinier'].includes(role)) items.push({ to: '/appels', label: 'Appels', icon: PhoneCall });
+    if (staff?.canEditPrices) items.push({ to: '/paiements', label: 'Paiements', icon: Wallet });
     if (hr) {
       items.push(
         { to: '/personnel', label: 'Personnel', icon: Users },
@@ -119,7 +126,7 @@ export function Shell() {
       );
     }
     return items;
-  }, [catalog, hr]);
+  }, [catalog, hr, staff?.role, staff?.canEditPrices]);
 
   useEffect(() => {
     dispatch(applyTheme());

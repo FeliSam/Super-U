@@ -6,7 +6,7 @@
  * - Reconnexion avec backoff exponentiel + nouveau ticket + `since=<dernier id>` (backfill côté serveur).
  * - Tant que le flux est coupé, cachedApi repasse sur /admin/pulse toutes les 30 s.
  */
-import { useSyncExternalStore } from 'react';
+import { useEffect, useRef, useSyncExternalStore } from 'react';
 import { API_URL, getToken } from '@/lib/api';
 import { bumpDomains, fetchPulse, setLiveConnected, type CacheDomain } from '@/lib/cachedApi';
 
@@ -299,4 +299,34 @@ function subscribeState(fn: () => void) {
 /** État du flux (Live / Reconnexion… / Hors ligne) pour l'en-tête du panel. */
 export function useAdminStream() {
   return useSyncExternalStore(subscribeState, () => state);
+}
+
+/**
+ * Recharge une page quand un événement du flux correspond à l'un des préfixes (ex. 'support.', 'call.'),
+ * avec un anti-rebond ; tant que le flux n'est pas « live », repli sur un rafraîchissement toutes les 30 s.
+ */
+export function useStreamReload(prefixes: string[], reload: () => void, enabled = true) {
+  const reloadRef = useRef(reload);
+  reloadRef.current = reload;
+  const { status } = useAdminStream();
+  const key = prefixes.join('|');
+  useEffect(() => {
+    if (!enabled) return;
+    let timer = 0;
+    const list = key.split('|');
+    const unsub = subscribeAdminEvents((ev) => {
+      if (!list.some((p) => ev.type.startsWith(p))) return;
+      window.clearTimeout(timer);
+      timer = window.setTimeout(() => reloadRef.current(), 250);
+    });
+    return () => {
+      window.clearTimeout(timer);
+      unsub();
+    };
+  }, [key, enabled]);
+  useEffect(() => {
+    if (!enabled || status === 'live') return;
+    const id = window.setInterval(() => reloadRef.current(), 30_000);
+    return () => window.clearInterval(id);
+  }, [status, enabled]);
 }
