@@ -1,10 +1,10 @@
-import { randomBytes } from 'node:crypto';
+import { createHash, randomBytes } from 'node:crypto';
 import { writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import type { Hono } from 'hono';
 import { query } from './db.ts';
 import { hashPassword } from './password.ts';
-import { catalogDir } from './productMedia.ts';
+import { catalogDir, clearCatalogFilesCache, readCatalogImage, readExactCatalogFile } from './productMedia.ts';
 import { CatalogValidationError, hasValidGtinChecksum, importCatalog } from './catalogImport.ts';
 import { normalizeBarcode } from './catalogHelpers.ts';
 
@@ -32,6 +32,7 @@ type ProductRow = {
   id: string;
   category_id: string;
   payload: Record<string, unknown>;
+  updated_at?: string;
 };
 
 function bearer(header: string | undefined) {
@@ -150,7 +151,9 @@ function mapProduct(
     id: row.id,
     categoryId: row.category_id,
     payload: row.payload,
-    imageUrl: `/catalog/media/${encodeURIComponent(row.id)}`,
+    imageUrl: `/catalog/media/${encodeURIComponent(row.id)}${
+      row.updated_at ? `?v=${encodeURIComponent(row.updated_at)}` : ''
+    }`,
     stock:
       qty == null
         ? null
@@ -162,6 +165,108 @@ function mapProduct(
             alert: minQty != null && qty - (reserved ?? 0) <= minQty,
           },
   };
+}
+
+function productFamilyKey(name: string, unit: string | undefined, categoryId: string) {
+  let family = name.trim();
+  const trimmedUnit = (unit ?? '').trim();
+  if (trimmedUnit) {
+    const escaped = trimmedUnit.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    family = family.replace(new RegExp(`\\s*${escaped}\\s*$`, 'i'), '').trim();
+  }
+  const token = (family || name.trim())
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, ' ')
+    .trim();
+  return `${categoryId}:${token}`;
+}
+
+async function familyProductIds(sourceId: string) {
+  const found = await query<ProductRow>('SELECT id, category_id, payload FROM products WHERE id = $1', [sourceId]);
+  const source = found.rows[0];
+  if (!source) return null;
+  const payload = source.payload ?? {};
+  const familyKey = productFamilyKey(String(payload.name ?? ''), String(payload.unit ?? ''), source.category_id);
+  const peers = await query<ProductRow>(
+    'SELECT id, category_id, payload FROM products WHERE category_id = $1',
+    [source.category_id],
+  );
+  const ids = peers.rows
+    .filter(
+      (row) =>
+        productFamilyKey(String(row.payload?.name ?? ''), String(row.payload?.unit ?? ''), row.category_id) === familyKey,
+    )
+    .map((row) => row.id);
+  return { source, ids };
+}
+
+function writeProductImageBuf(productId: string, buf: Buffer, type: string) {
+  const ext = type.includes('webp') ? 'webp' : type.includes('jpeg') ? 'jpg' : 'png';
+  const fileName = `${productId}.${ext}`;
+  writeFileSync(join(catalogDir(), fileName), buf);
+  if (ext !== 'png') writeFileSync(join(catalogDir(), `${productId}.png`), buf);
+  return fileName;
+}
+
+async function upsertProductImage(
+  productId: string,
+  fileName: string,
+  checksum: string,
+  metadata: Record<string, unknown>,
+) {
+  await query(
+    `INSERT INTO product_media
+       (product_id, kind, position, source_url, local_path, checksum_sha256,
+        license_name, attribution, is_placeholder, metadata)
+     VALUES ($1, 'image', 0, NULL, $2, $3, 'upload-admin', 'Fiche produit', FALSE, $4::jsonb)
+     ON CONFLICT (product_id, kind, position) DO UPDATE SET
+       local_path = EXCLUDED.local_path,
+       checksum_sha256 = EXCLUDED.checksum_sha256,
+       source_url = NULL,
+       is_placeholder = FALSE,
+       license_name = EXCLUDED.license_name,
+       attribution = EXCLUDED.attribution,
+       metadata = EXCLUDED.metadata`,
+    [productId, fileName, checksum, JSON.stringify(metadata)],
+  );
+  await query(`UPDATE products SET updated_at = NOW() WHERE id = $1`, [productId]);
+}
+
+async function applyImageToFamily(sourceId: string, staffId: string) {
+  const family = await familyProductIds(sourceId);
+  if (!family) return { applied: [] as string[], checksum: '' };
+  const payload = family.source.payload ?? {};
+  const sourceFile =
+    readExactCatalogFile(sourceId) ??
+    readCatalogImage(sourceId, family.source.category_id, String(payload.name ?? ''));
+  if (!sourceFile) return { applied: [] as string[], checksum: '' };
+  const checksum = createHash('sha256').update(sourceFile.buf).digest('hex');
+  if (!readExactCatalogFile(sourceId)) {
+    const fileName = writeProductImageBuf(sourceId, sourceFile.buf, sourceFile.type);
+    await upsertProductImage(sourceId, fileName, checksum, {
+      bytes: sourceFile.buf.length,
+      type: sourceFile.type,
+      copiedFrom: sourceId,
+      uploadedAt: new Date().toISOString(),
+    });
+  }
+  const targets = family.ids.filter((id) => id !== sourceId);
+  for (const targetId of targets) {
+    const fileName = writeProductImageBuf(targetId, sourceFile.buf, sourceFile.type);
+    await upsertProductImage(targetId, fileName, checksum, {
+      bytes: sourceFile.buf.length,
+      type: sourceFile.type,
+      copiedFrom: sourceId,
+      uploadedAt: new Date().toISOString(),
+    });
+  }
+  clearCatalogFilesCache();
+  if (targets.length) {
+    await audit(staffId, 'image-family', 'product', sourceId, null, { targets, checksum });
+  }
+  return { applied: targets, checksum };
 }
 
 export async function seedAdminStaff() {
@@ -225,6 +330,722 @@ export function registerAdminRoutes(app: Hono) {
     const gate = await requireBackoffice(c);
     if (gate.error) return gate.error;
     return c.json({ ok: true, staff: publicStaff(gate.staff!) });
+  });
+
+  app.get('/admin/pulse', async (c) => {
+    const gate = await requireBackoffice(c);
+    if (gate.error) return gate.error;
+    const storeId = scopedStore(gate.staff!, c.req.query('storeId') ?? null) ?? 'su-aeroport';
+    const row = await query<{
+      catalog: string;
+      orders: string;
+      floor: string;
+      staff: string;
+      clients: string;
+    }>(
+      `SELECT
+         concat_ws(':',
+           (SELECT COUNT(*)::text FROM products),
+           (SELECT COALESCE(SUM(qty), 0)::text FROM product_stock WHERE store_id = $1),
+           (SELECT COALESCE(SUM(reserved), 0)::text FROM product_stock WHERE store_id = $1),
+           (SELECT COALESCE(MAX(updated_at), 'epoch')::text FROM products),
+           (SELECT COALESCE(MAX(updated_at), 'epoch')::text FROM product_stock WHERE store_id = $1),
+           (SELECT COALESCE(MAX(updated_at), 'epoch')::text FROM product_media),
+           (SELECT COALESCE(MAX(updated_at), 'epoch')::text FROM categories),
+           (SELECT COALESCE(MAX(updated_at), 'epoch')::text FROM banners),
+           (SELECT COALESCE(MAX(updated_at), 'epoch')::text FROM chips),
+           (SELECT COALESCE(MAX(updated_at), 'epoch')::text FROM catalog_settings)
+         ) AS catalog,
+         concat_ws(':',
+           (SELECT COUNT(*)::text FROM orders),
+           (SELECT COALESCE(MAX(created_at), 'epoch')::text FROM orders),
+           (SELECT COUNT(*)::text FROM ops.pick_jobs WHERE status IN ('queued', 'assigned', 'picking')),
+           (SELECT COUNT(*)::text FROM ops.deliveries WHERE status NOT IN ('delivered', 'failed', 'cancelled')),
+           (SELECT COALESCE(MAX(created_at), 'epoch')::text FROM ops.events)
+         ) AS orders,
+         concat_ws(':',
+           (SELECT COUNT(*)::text FROM ops.staff),
+           (SELECT COALESCE(MAX(last_seen_at), 'epoch')::text FROM ops.staff),
+           (SELECT COUNT(*) FILTER (WHERE duty_status = 'online')::text FROM ops.staff)
+         ) AS floor,
+         concat_ws(':',
+           (SELECT COUNT(*)::text FROM ops.staff),
+           (SELECT COUNT(*) FILTER (WHERE is_active)::text FROM ops.staff),
+           (SELECT COALESCE(MAX(created_at), 'epoch')::text FROM ops.staff)
+         ) AS staff,
+         concat_ws(':',
+           (SELECT COUNT(*)::text FROM users),
+           (SELECT COALESCE(MAX(created_at), 'epoch')::text FROM users)
+         ) AS clients`,
+      [storeId],
+    );
+    const catalog = row.rows[0]?.catalog ?? '0';
+    const orders = row.rows[0]?.orders ?? '0';
+    const floor = row.rows[0]?.floor ?? '0';
+    const staff = row.rows[0]?.staff ?? '0';
+    const clients = row.rows[0]?.clients ?? '0';
+    c.header('Cache-Control', 'no-store');
+    return c.json({
+      ok: true,
+      stamp: [catalog, orders, floor, staff, clients].join('|'),
+      catalog,
+      orders,
+      floor,
+      staff,
+      clients,
+    });
+  });
+
+  app.get('/admin/floor', async (c) => {
+    const gate = await requireBackoffice(c);
+    if (gate.error) return gate.error;
+    const storeId = scopedStore(gate.staff!, c.req.query('storeId') ?? null);
+    const storeArg = storeId ? [storeId] : [];
+    const storeParam = storeId ? '$1' : 'NULL';
+
+    const people = await query<{
+      id: string;
+      first_name: string;
+      last_name: string;
+      role: string;
+      can_pick: boolean;
+      can_deliver: boolean;
+      store_id: string | null;
+      vehicle: string | null;
+      phone: string;
+      presence: string;
+      last_seen_at: string | Date | null;
+      pick_id: string | null;
+      pick_order: string | null;
+      pick_status: string | null;
+      pick_address: string | null;
+      pick_store: string | null;
+      pick_customer: string | null;
+      del_id: string | null;
+      del_order: string | null;
+      del_status: string | null;
+      del_address: string | null;
+      del_store: string | null;
+      del_customer: string | null;
+      lng: number | null;
+      lat: number | null;
+      loc_at: string | Date | null;
+      tip_today: string;
+      picks_today: string;
+      dels_today: string;
+      rating_avg: string;
+      rating_n: string;
+    }>(
+      `SELECT
+         s.id, s.first_name, s.last_name, s.role, s.can_pick, s.can_deliver, s.store_id, s.vehicle, s.phone,
+         CASE
+           WHEN s.last_seen_at IS NULL OR s.last_seen_at < NOW() - INTERVAL '45 seconds' THEN 'offline'
+           WHEN s.duty_status = 'paused' THEN 'paused'
+           ELSE 'online'
+         END AS presence,
+         s.last_seen_at,
+         pj.id AS pick_id, pj.order_id AS pick_order, pj.status AS pick_status,
+         o1.address_label AS pick_address, o1.store_name AS pick_store,
+         NULLIF(trim(concat_ws(' ', u1.first_name, u1.last_name)), '') AS pick_customer,
+         d.id AS del_id, d.order_id AS del_order, d.status AS del_status,
+         o2.address_label AS del_address, o2.store_name AS del_store,
+         NULLIF(trim(concat_ws(' ', u2.first_name, u2.last_name)), '') AS del_customer,
+         loc.lng, loc.lat, loc.updated_at AS loc_at,
+         COALESCE(tips.tip_today, '0') AS tip_today,
+         COALESCE(tips.picks_today, '0') AS picks_today,
+         COALESCE(tips.dels_today, '0') AS dels_today,
+         COALESCE(score.rating_avg, '0') AS rating_avg,
+         COALESCE(score.rating_n, '0') AS rating_n
+       FROM ops.staff s
+       LEFT JOIN LATERAL (
+         SELECT id, order_id, status FROM ops.pick_jobs
+         WHERE picker_id = s.id AND status IN ('assigned', 'picking')
+         ORDER BY updated_at DESC LIMIT 1
+       ) pj ON TRUE
+       LEFT JOIN orders o1 ON o1.id = pj.order_id
+       LEFT JOIN users u1 ON u1.id = o1.user_id
+       LEFT JOIN LATERAL (
+         SELECT id, order_id, status FROM ops.deliveries
+         WHERE courier_id = s.id AND status NOT IN ('delivered', 'failed', 'cancelled', 'unassigned')
+         ORDER BY updated_at DESC LIMIT 1
+       ) d ON TRUE
+       LEFT JOIN orders o2 ON o2.id = d.order_id
+       LEFT JOIN users u2 ON u2.id = o2.user_id
+       LEFT JOIN ops.courier_locations loc ON loc.courier_id = s.id
+       LEFT JOIN LATERAL (
+         SELECT
+           COALESCE(SUM(amount) FILTER (WHERE kind = 'tip' AND created_at >= CURRENT_DATE), 0)::text AS tip_today,
+           COUNT(*) FILTER (WHERE kind = 'pick' AND created_at >= CURRENT_DATE)::text AS picks_today,
+           COUNT(*) FILTER (WHERE kind = 'deliver' AND created_at >= CURRENT_DATE)::text AS dels_today
+         FROM ops.staff_payouts WHERE staff_id = s.id
+       ) tips ON TRUE
+       LEFT JOIN LATERAL (
+         SELECT COALESCE(AVG(r.rating), 0)::text AS rating_avg, COUNT(*)::text AS rating_n
+         FROM ops.order_ratings r
+         JOIN ops.deliveries dx ON dx.order_id = r.order_id AND dx.courier_id = s.id
+         WHERE r.rater_kind = 'customer'
+       ) score ON TRUE
+       WHERE (s.can_pick OR s.can_deliver)
+         AND s.is_active = TRUE
+         AND COALESCE(s.onboard_status, 'active') = 'active'
+         AND (${storeParam}::text IS NULL OR s.store_id IS NULL OR s.store_id = ${storeParam})
+       ORDER BY
+         CASE WHEN pj.id IS NOT NULL OR d.id IS NOT NULL THEN 0
+              WHEN s.last_seen_at IS NOT NULL AND s.last_seen_at >= NOW() - INTERVAL '45 seconds' THEN 1
+              ELSE 2 END,
+         s.last_name, s.first_name`,
+      storeArg,
+    );
+
+    const queue = await query<{
+      kind: string;
+      id: string;
+      order_id: string;
+      status: string;
+      store_name: string | null;
+      address_label: string | null;
+      customer: string | null;
+      item_count: number;
+      created_at: string | Date;
+    }>(
+      `SELECT * FROM (
+         SELECT 'pick'::text AS kind, j.id, j.order_id, j.status, o.store_name, o.address_label,
+                NULLIF(trim(concat_ws(' ', u.first_name, u.last_name)), '') AS customer,
+                o.item_count, j.created_at
+         FROM ops.pick_jobs j
+         JOIN orders o ON o.id = j.order_id
+         LEFT JOIN users u ON u.id = o.user_id
+         WHERE j.status = 'queued' AND (${storeParam}::text IS NULL OR j.store_id = ${storeParam})
+         UNION ALL
+         SELECT 'deliver'::text, d.id, d.order_id, d.status, o.store_name, o.address_label,
+                NULLIF(trim(concat_ws(' ', u.first_name, u.last_name)), '') AS customer,
+                o.item_count, d.created_at
+         FROM ops.deliveries d
+         JOIN orders o ON o.id = d.order_id
+         LEFT JOIN users u ON u.id = o.user_id
+         WHERE d.status IN ('unassigned', 'offered') AND (${storeParam}::text IS NULL OR d.store_id = ${storeParam})
+       ) q ORDER BY created_at ASC LIMIT 40`,
+      storeArg,
+    );
+
+    const ratings = await query<{
+      id: string;
+      order_id: string;
+      rating: number;
+      comment: string;
+      tip_amount: number;
+      created_at: string | Date;
+      customer: string | null;
+      staff_name: string | null;
+      staff_id: string | null;
+    }>(
+      `SELECT r.id, r.order_id, r.rating, r.comment, r.tip_amount, r.created_at,
+              NULLIF(trim(concat_ws(' ', u.first_name, u.last_name)), '') AS customer,
+              NULLIF(trim(concat_ws(' ', s.first_name, s.last_name)), '') AS staff_name,
+              s.id AS staff_id
+       FROM ops.order_ratings r
+       JOIN orders o ON o.id = r.order_id
+       LEFT JOIN users u ON u.id = o.user_id
+       LEFT JOIN ops.deliveries d ON d.order_id = r.order_id
+       LEFT JOIN ops.staff s ON s.id = d.courier_id
+       WHERE r.rater_kind = 'customer'
+         AND (${storeParam}::text IS NULL OR o.store_id = ${storeParam})
+       ORDER BY r.created_at DESC
+       LIMIT 24`,
+      storeArg,
+    );
+
+    const members = people.rows.map((row) => {
+      const picking = Boolean(row.pick_id);
+      const delivering = Boolean(row.del_id);
+      return {
+        id: row.id,
+        firstName: row.first_name,
+        lastName: row.last_name,
+        role: row.role === 'both' ? 'coursier' : row.role,
+        canPick: row.can_pick,
+        canDeliver: row.can_deliver,
+        storeId: row.store_id,
+        vehicle: row.vehicle,
+        phone: row.phone,
+        presence: row.presence,
+        lastSeenAt: row.last_seen_at,
+        location:
+          row.lng != null && row.lat != null
+            ? { lng: Number(row.lng), lat: Number(row.lat), at: row.loc_at }
+            : null,
+        today: {
+          picks: Number(row.picks_today ?? 0),
+          deliveries: Number(row.dels_today ?? 0),
+          tips: Number(row.tip_today ?? 0),
+          ratingAvg: Number(row.rating_avg ?? 0),
+          ratingCount: Number(row.rating_n ?? 0),
+        },
+        pick: picking
+          ? {
+              id: row.pick_id,
+              orderId: row.pick_order,
+              status: row.pick_status,
+              address: row.pick_address,
+              storeName: row.pick_store,
+              customerName: row.pick_customer,
+            }
+          : null,
+        delivery: delivering
+          ? {
+              id: row.del_id,
+              orderId: row.del_order,
+              status: row.del_status,
+              address: row.del_address,
+              storeName: row.del_store,
+              customerName: row.del_customer,
+            }
+          : null,
+      };
+    });
+
+    const kpis = {
+      online: members.filter((m) => m.presence === 'online').length,
+      paused: members.filter((m) => m.presence === 'paused').length,
+      offline: members.filter((m) => m.presence === 'offline').length,
+      picking: members.filter((m) => m.pick).length,
+      delivering: members.filter((m) => m.delivery).length,
+      queue: queue.rows.length,
+      tipsToday: members.reduce((a, m) => a + m.today.tips, 0),
+    };
+
+    c.header('Cache-Control', 'no-store');
+    return c.json({
+      ok: true,
+      kpis,
+      staff: members,
+      queue: queue.rows.map((q) => ({
+        kind: q.kind,
+        id: q.id,
+        orderId: q.order_id,
+        status: q.status,
+        storeName: q.store_name,
+        address: q.address_label,
+        customerName: q.customer,
+        itemCount: Number(q.item_count ?? 0),
+        createdAt: q.created_at,
+      })),
+      ratings: ratings.rows.map((r) => ({
+        id: r.id,
+        orderId: r.order_id,
+        rating: Number(r.rating),
+        comment: r.comment,
+        tipAmount: Number(r.tip_amount ?? 0),
+        createdAt: r.created_at,
+        customerName: r.customer,
+        staffName: r.staff_name,
+        staffId: r.staff_id,
+      })),
+    });
+  });
+
+  app.get('/admin/floor/staff/:id', async (c) => {
+    const gate = await requireBackoffice(c);
+    if (gate.error) return gate.error;
+    const id = c.req.param('id');
+    const win = c.req.query('window') === 'hour' || c.req.query('window') === 'week' || c.req.query('window') === 'month'
+      ? c.req.query('window')!
+      : 'day';
+    const sinceSql =
+      win === 'hour'
+        ? `NOW() - INTERVAL '1 hour'`
+        : win === 'week'
+          ? `NOW() - INTERVAL '7 days'`
+          : win === 'month'
+            ? `NOW() - INTERVAL '30 days'`
+            : `date_trunc('day', NOW())`;
+
+    const person = await query<{
+      id: string;
+      first_name: string;
+      last_name: string;
+      role: string;
+      can_pick: boolean;
+      can_deliver: boolean;
+      store_id: string | null;
+      vehicle: string | null;
+      phone: string;
+      email: string;
+      last_seen_at: string | Date | null;
+      duty_status: string;
+    }>(
+      `SELECT id, first_name, last_name, role, can_pick, can_deliver, store_id, vehicle, phone, email, last_seen_at, duty_status
+       FROM ops.staff WHERE id = $1`,
+      [id],
+    );
+    const s = person.rows[0];
+    if (!s) return c.json({ ok: false, error: 'Collaborateur introuvable.' }, 404);
+
+    const stats = await query<{
+      picks: string;
+      dels_ok: string;
+      dels_fail: string;
+      orders: string;
+      pick_min: string;
+      del_min: string;
+      earn_pick: string;
+      earn_del: string;
+      earn_tip: string;
+      rating_avg: string;
+      rating_n: string;
+      online_min: string;
+    }>(
+      `SELECT
+         (SELECT COUNT(*)::text FROM ops.pick_jobs WHERE picker_id = $1 AND status = 'packed' AND COALESCE(packed_at, updated_at) >= ${sinceSql}) AS picks,
+         (SELECT COUNT(*)::text FROM ops.deliveries WHERE courier_id = $1 AND status = 'delivered' AND COALESCE(delivered_at, updated_at) >= ${sinceSql}) AS dels_ok,
+         (SELECT COUNT(*)::text FROM ops.deliveries WHERE courier_id = $1 AND status = 'failed' AND updated_at >= ${sinceSql}) AS dels_fail,
+         (SELECT COUNT(DISTINCT oid)::text FROM (
+            SELECT order_id AS oid FROM ops.pick_jobs WHERE picker_id = $1 AND COALESCE(packed_at, updated_at) >= ${sinceSql}
+            UNION
+            SELECT order_id FROM ops.deliveries WHERE courier_id = $1 AND COALESCE(delivered_at, updated_at) >= ${sinceSql}
+         ) o) AS orders,
+         (SELECT COALESCE(ROUND(SUM(EXTRACT(EPOCH FROM (packed_at - COALESCE(started_at, assigned_at, packed_at - INTERVAL '8 minutes')))) / 60), 0)::text
+          FROM ops.pick_jobs WHERE picker_id = $1 AND status = 'packed' AND packed_at IS NOT NULL AND packed_at >= ${sinceSql}) AS pick_min,
+         (SELECT COALESCE(ROUND(SUM(EXTRACT(EPOCH FROM (COALESCE(delivered_at, updated_at) - COALESCE(picked_up_at, assigned_at, created_at)))) / 60), 0)::text
+          FROM ops.deliveries WHERE courier_id = $1 AND status = 'delivered' AND COALESCE(delivered_at, updated_at) >= ${sinceSql}) AS del_min,
+         (SELECT COALESCE(SUM(amount) FILTER (WHERE kind = 'pick'), 0)::text FROM ops.staff_payouts WHERE staff_id = $1 AND created_at >= ${sinceSql}) AS earn_pick,
+         (SELECT COALESCE(SUM(amount) FILTER (WHERE kind = 'deliver'), 0)::text FROM ops.staff_payouts WHERE staff_id = $1 AND created_at >= ${sinceSql}) AS earn_del,
+         (SELECT COALESCE(SUM(amount) FILTER (WHERE kind = 'tip'), 0)::text FROM ops.staff_payouts WHERE staff_id = $1 AND created_at >= ${sinceSql}) AS earn_tip,
+         (SELECT COALESCE(AVG(r.rating), 0)::text FROM ops.order_ratings r
+           JOIN ops.deliveries d ON d.order_id = r.order_id AND d.courier_id = $1
+           WHERE r.rater_kind = 'customer' AND r.created_at >= ${sinceSql}) AS rating_avg,
+         (SELECT COUNT(*)::text FROM ops.order_ratings r
+           JOIN ops.deliveries d ON d.order_id = r.order_id AND d.courier_id = $1
+           WHERE r.rater_kind = 'customer' AND r.created_at >= ${sinceSql}) AS rating_n,
+         (SELECT COUNT(*)::text FROM ops.staff_seen_log WHERE staff_id = $1 AND minute_at >= ${sinceSql}) AS online_min`,
+      [id],
+    );
+
+    const ratings = await query<{
+      id: string;
+      order_id: string;
+      rating: number;
+      comment: string;
+      tip_amount: number;
+      created_at: string | Date;
+      customer: string | null;
+    }>(
+      `SELECT r.id, r.order_id, r.rating, r.comment, r.tip_amount, r.created_at,
+              NULLIF(trim(concat_ws(' ', u.first_name, u.last_name)), '') AS customer
+       FROM ops.order_ratings r
+       JOIN ops.deliveries d ON d.order_id = r.order_id AND d.courier_id = $1
+       JOIN orders o ON o.id = r.order_id
+       LEFT JOIN users u ON u.id = o.user_id
+       WHERE r.rater_kind = 'customer' AND r.created_at >= ${sinceSql}
+       ORDER BY r.created_at DESC LIMIT 20`,
+      [id],
+    );
+
+    const missions = await query<{
+      kind: string;
+      order_id: string;
+      status: string;
+      at: string | Date;
+      amount: string;
+    }>(
+      `SELECT * FROM (
+         SELECT 'ramassage'::text AS kind, j.order_id, j.status, COALESCE(j.packed_at, j.updated_at) AS at,
+                COALESCE((SELECT amount::text FROM ops.staff_payouts p WHERE p.ref_id = j.id AND p.kind = 'pick'), '0') AS amount
+         FROM ops.pick_jobs j WHERE j.picker_id = $1 AND COALESCE(j.packed_at, j.updated_at) >= ${sinceSql}
+         UNION ALL
+         SELECT 'livraison', d.order_id, d.status, COALESCE(d.delivered_at, d.updated_at),
+                COALESCE((SELECT amount::text FROM ops.staff_payouts p WHERE p.ref_id = d.id AND p.kind = 'deliver'), '0')
+         FROM ops.deliveries d WHERE d.courier_id = $1 AND COALESCE(d.delivered_at, d.updated_at) >= ${sinceSql}
+       ) m ORDER BY at DESC LIMIT 30`,
+      [id],
+    );
+
+    const row = stats.rows[0];
+    const pickMin = Number(row?.pick_min ?? 0);
+    const delMin = Number(row?.del_min ?? 0);
+    const loggedMin = Number(row?.online_min ?? 0);
+    const onlineMinutes = Math.max(loggedMin, pickMin + delMin);
+
+    return c.json({
+      ok: true,
+      window: win,
+      staff: {
+        id: s.id,
+        firstName: s.first_name,
+        lastName: s.last_name,
+        role: s.role === 'both' ? 'coursier' : s.role,
+        canPick: s.can_pick,
+        canDeliver: s.can_deliver,
+        storeId: s.store_id,
+        vehicle: s.vehicle,
+        phone: s.phone,
+        email: s.email,
+        lastSeenAt: s.last_seen_at,
+        dutyStatus: s.duty_status,
+      },
+      stats: {
+        picks: Number(row?.picks ?? 0),
+        deliveriesOk: Number(row?.dels_ok ?? 0),
+        deliveriesFail: Number(row?.dels_fail ?? 0),
+        orders: Number(row?.orders ?? 0),
+        pickMinutes: pickMin,
+        deliveryMinutes: delMin,
+        onlineMinutes,
+        earnPick: Number(row?.earn_pick ?? 0),
+        earnDeliver: Number(row?.earn_del ?? 0),
+        earnTip: Number(row?.earn_tip ?? 0),
+        ratingAvg: Number(row?.rating_avg ?? 0),
+        ratingCount: Number(row?.rating_n ?? 0),
+      },
+      ratings: ratings.rows.map((r) => ({
+        id: r.id,
+        orderId: r.order_id,
+        rating: Number(r.rating),
+        comment: r.comment,
+        tipAmount: Number(r.tip_amount ?? 0),
+        createdAt: r.created_at,
+        customerName: r.customer,
+      })),
+      missions: missions.rows.map((m) => ({
+        kind: m.kind,
+        orderId: m.order_id,
+        status: m.status,
+        at: m.at,
+        amount: Number(m.amount ?? 0),
+      })),
+    });
+  });
+
+  app.get('/admin/shop-users', async (c) => {
+    const gate = await requireBackoffice(c);
+    if (gate.error) return gate.error;
+    const staff = gate.staff!;
+    const storeId = scopedStore(staff, c.req.query('storeId') ?? null);
+    const q = (c.req.query('q') ?? '').trim();
+    const values: unknown[] = [];
+    const where: string[] = ['TRUE'];
+    const storeJoin = storeId
+      ? (() => {
+          values.push(storeId);
+          return `AND o.store_id = $${values.length}`;
+        })()
+      : '';
+    if (q) {
+      values.push(`%${q.replace(/%/g, '')}%`);
+      const i = values.length;
+      where.push(
+        `(u.first_name ILIKE $${i} OR u.last_name ILIKE $${i} OR u.email ILIKE $${i} OR COALESCE(u.phone, '') ILIKE $${i})`,
+      );
+    }
+    const rows = await query<{
+      id: string;
+      email: string;
+      phone: string;
+      first_name: string;
+      last_name: string;
+      created_at: Date;
+      onboarding_done: boolean;
+      orders_n: string;
+      delivered_n: string;
+      cancelled_n: string;
+      spent: string;
+      tips: string;
+      last_order_at: Date | null;
+    }>(
+      `SELECT u.id, u.email, u.phone, u.first_name, u.last_name, u.created_at, u.onboarding_done,
+              COUNT(o.id)::text AS orders_n,
+              COUNT(o.id) FILTER (WHERE o.status = 'delivered')::text AS delivered_n,
+              COUNT(o.id) FILTER (WHERE o.status = 'cancelled')::text AS cancelled_n,
+              COALESCE(SUM(o.total) FILTER (WHERE o.status IS DISTINCT FROM 'cancelled'), 0)::text AS spent,
+              COALESCE((
+                SELECT SUM(r.tip_amount) FROM ops.order_ratings r
+                JOIN orders ox ON ox.id = r.order_id AND ox.user_id = u.id
+                WHERE r.rater_kind = 'customer' ${storeId ? `AND ox.store_id = $1` : ''}
+              ), 0)::text AS tips,
+              MAX(o.created_at) AS last_order_at
+       FROM users u
+       LEFT JOIN orders o ON o.user_id = u.id ${storeJoin}
+       WHERE ${where.join(' AND ')}
+       GROUP BY u.id
+       ORDER BY last_order_at DESC NULLS LAST, u.created_at DESC
+       LIMIT 400`,
+      values,
+    );
+    const totals = await query<{ n: string }>(`SELECT COUNT(*)::text AS n FROM users`);
+    return c.json({
+      ok: true,
+      total: Number(totals.rows[0]?.n ?? rows.rows.length),
+      users: rows.rows.map((r) => ({
+        id: r.id,
+        email: r.email,
+        phone: r.phone,
+        firstName: r.first_name,
+        lastName: r.last_name,
+        createdAt: r.created_at,
+        onboardingDone: r.onboarding_done,
+        orders: Number(r.orders_n ?? 0),
+        delivered: Number(r.delivered_n ?? 0),
+        cancelled: Number(r.cancelled_n ?? 0),
+        spent: Number(r.spent ?? 0),
+        tips: Number(r.tips ?? 0),
+        lastOrderAt: r.last_order_at,
+      })),
+    });
+  });
+
+  app.get('/admin/shop-users/:id', async (c) => {
+    const gate = await requireBackoffice(c);
+    if (gate.error) return gate.error;
+    const staff = gate.staff!;
+    const storeId = scopedStore(staff, c.req.query('storeId') ?? null);
+    const id = c.req.param('id');
+    const found = await query<{
+      id: string;
+      email: string;
+      phone: string;
+      first_name: string;
+      last_name: string;
+      created_at: Date;
+      onboarding_done: boolean;
+      birth_date: string;
+      state: Record<string, unknown> | null;
+    }>(
+      `SELECT u.id, u.email, u.phone, u.first_name, u.last_name, u.created_at, u.onboarding_done, u.birth_date,
+              s.payload AS state
+       FROM users u
+       LEFT JOIN user_state s ON s.user_id = u.id
+       WHERE u.id = $1`,
+      [id],
+    );
+    const u = found.rows[0];
+    if (!u) return c.json({ ok: false, error: 'Client introuvable.' }, 404);
+
+    const storeClause = storeId ? 'AND o.store_id = $2' : '';
+    const args = storeId ? [id, storeId] : [id];
+
+    const stats = await query<{
+      orders_n: string;
+      delivered_n: string;
+      cancelled_n: string;
+      open_n: string;
+      spent: string;
+      tips: string;
+      rating_avg: string;
+      rating_n: string;
+    }>(
+      `SELECT
+         COUNT(*)::text AS orders_n,
+         COUNT(*) FILTER (WHERE o.status = 'delivered')::text AS delivered_n,
+         COUNT(*) FILTER (WHERE o.status = 'cancelled')::text AS cancelled_n,
+         COUNT(*) FILTER (WHERE o.status NOT IN ('delivered', 'cancelled'))::text AS open_n,
+         COALESCE(SUM(o.total) FILTER (WHERE o.status IS DISTINCT FROM 'cancelled'), 0)::text AS spent,
+         COALESCE((
+           SELECT SUM(r.tip_amount) FROM ops.order_ratings r
+           JOIN orders ox ON ox.id = r.order_id
+           WHERE ox.user_id = $1 AND r.rater_kind = 'customer' ${storeId ? 'AND ox.store_id = $2' : ''}
+         ), 0)::text AS tips,
+         COALESCE((
+           SELECT AVG(r.rating) FROM ops.order_ratings r
+           JOIN orders ox ON ox.id = r.order_id
+           WHERE ox.user_id = $1 AND r.rater_kind = 'customer' ${storeId ? 'AND ox.store_id = $2' : ''}
+         ), 0)::text AS rating_avg,
+         COALESCE((
+           SELECT COUNT(*) FROM ops.order_ratings r
+           JOIN orders ox ON ox.id = r.order_id
+           WHERE ox.user_id = $1 AND r.rater_kind = 'customer' ${storeId ? 'AND ox.store_id = $2' : ''}
+         ), 0)::text AS rating_n
+       FROM orders o WHERE o.user_id = $1 ${storeClause}`,
+      args,
+    );
+
+    const orders = await query<{
+      id: string;
+      status: string;
+      total: string;
+      item_count: number;
+      store_name: string | null;
+      created_at: Date;
+      delivery_status: string | null;
+      tip: string;
+    }>(
+      `SELECT o.id, o.status, o.total::text, o.item_count, o.store_name, o.created_at, d.status AS delivery_status,
+              COALESCE((SELECT r.tip_amount FROM ops.order_ratings r WHERE r.order_id = o.id AND r.rater_kind = 'customer' LIMIT 1), 0)::text AS tip
+       FROM orders o
+       LEFT JOIN ops.deliveries d ON d.order_id = o.id
+       WHERE o.user_id = $1 ${storeClause}
+       ORDER BY o.created_at DESC
+       LIMIT 80`,
+      args,
+    );
+
+    const ratings = await query<{
+      id: string;
+      order_id: string;
+      rating: number;
+      comment: string;
+      tip_amount: number;
+      created_at: Date;
+    }>(
+      `SELECT r.id, r.order_id, r.rating, r.comment, r.tip_amount, r.created_at
+       FROM ops.order_ratings r
+       JOIN orders o ON o.id = r.order_id
+       WHERE o.user_id = $1 AND r.rater_kind = 'customer' ${storeId ? 'AND o.store_id = $2' : ''}
+       ORDER BY r.created_at DESC
+       LIMIT 40`,
+      args,
+    );
+
+    const state = u.state && typeof u.state === 'object' ? u.state : {};
+    const addresses = Array.isArray(state.addresses)
+      ? state.addresses
+      : Array.isArray((state.addresses as { list?: unknown })?.list)
+        ? (state.addresses as { list: unknown[] }).list
+        : [];
+
+    const st = stats.rows[0];
+    return c.json({
+      ok: true,
+      user: {
+        id: u.id,
+        email: u.email,
+        phone: u.phone,
+        firstName: u.first_name,
+        lastName: u.last_name,
+        createdAt: u.created_at,
+        onboardingDone: u.onboarding_done,
+        birthDate: u.birth_date,
+        loyaltyBonusPts: Number(state.loyaltyBonusPts ?? 0) || 0,
+        addresses: addresses.slice(0, 12),
+      },
+      stats: {
+        orders: Number(st?.orders_n ?? 0),
+        delivered: Number(st?.delivered_n ?? 0),
+        cancelled: Number(st?.cancelled_n ?? 0),
+        open: Number(st?.open_n ?? 0),
+        spent: Number(st?.spent ?? 0),
+        tips: Number(st?.tips ?? 0),
+        ratingAvg: Number(st?.rating_avg ?? 0),
+        ratingCount: Number(st?.rating_n ?? 0),
+      },
+      orders: orders.rows.map((o) => ({
+        id: o.id,
+        status: o.status,
+        total: Number(o.total ?? 0),
+        itemCount: Number(o.item_count ?? 0),
+        storeName: o.store_name,
+        createdAt: o.created_at,
+        deliveryStatus: o.delivery_status,
+        tip: Number(o.tip ?? 0),
+      })),
+      ratings: ratings.rows.map((r) => ({
+        id: r.id,
+        orderId: r.order_id,
+        rating: Number(r.rating),
+        comment: r.comment,
+        tipAmount: Number(r.tip_amount ?? 0),
+        createdAt: r.created_at,
+      })),
+    });
   });
 
   app.get('/admin/stores', async (c) => {
@@ -504,7 +1325,7 @@ export function registerAdminRoutes(app: Hono) {
     if (gate.error) return gate.error;
     const id = c.req.param('id');
     const storeId = scopedStore(gate.staff!, c.req.query('storeId') ?? null) ?? 'su-aeroport';
-    const found = await query<ProductRow>('SELECT id, category_id, payload FROM products WHERE id = $1', [id]);
+    const found = await query<ProductRow>('SELECT id, category_id, payload, updated_at FROM products WHERE id = $1', [id]);
     if (!found.rows[0]) return c.json({ ok: false, error: 'Produit introuvable.' }, 404);
     const st = await query<{ qty: string; reserved: string; min_qty: string }>(
       `SELECT qty::text, reserved::text, min_qty::text FROM product_stock WHERE product_id = $1 AND store_id = $2`,
@@ -1554,13 +2375,46 @@ export function registerAdminRoutes(app: Hono) {
       return c.json({ ok: false, error: 'PNG, JPEG ou WebP uniquement. Pas d’URL distante.' }, 400);
     }
     const buf = Buffer.from(await file.arrayBuffer());
-    const ext = type.includes('webp') ? 'webp' : type.includes('jpeg') ? 'jpg' : 'png';
-    writeFileSync(join(catalogDir(), `${id}.${ext === 'jpg' ? 'jpg' : ext}`), buf);
-    if (ext !== 'png') writeFileSync(join(catalogDir(), `${id}.png`), buf);
-    await audit(gate.staff!.id, 'image', 'product', id, null, { bytes: file.size, type });
+    const fileName = writeProductImageBuf(id, buf, type);
+    const checksum = createHash('sha256').update(buf).digest('hex');
+    await upsertProductImage(id, fileName, checksum, { bytes: file.size, type, uploadedAt: new Date().toISOString() });
+    clearCatalogFilesCache();
+    await audit(gate.staff!.id, 'image', 'product', id, null, { bytes: file.size, type, checksum });
+    const applyFamily = String(body.applyFamily ?? '') === '1' || String(body.applyFamily ?? '') === 'true';
+    const family = applyFamily ? await applyImageToFamily(id, gate.staff!.id) : { applied: [] as string[] };
+    const imageUrl = `/catalog/media/${encodeURIComponent(id)}?v=${checksum.slice(0, 12)}`;
     return c.json({
       ok: true,
-      hint: 'Image écrite dans marche-dore/assets/images/catalog. Relancer catalog:map puis Metro pour CourseGO.',
+      imageUrl,
+      checksum,
+      appliedTo: family.applied,
+      hint: family.applied.length
+        ? `Image enregistrée et copiée sur ${family.applied.length} autre(s) format(s).`
+        : 'Image enregistrée et servie tout de suite à la boutique.',
+    });
+  });
+
+  app.post('/admin/products/:id/image/family', async (c) => {
+    const gate = await requireCatalog(c);
+    if (gate.error) return gate.error;
+    if (!CREATE_ROLES.has(gate.staff!.role)) {
+      return c.json({ ok: false, error: 'Image famille : manager ou admin.' }, 403);
+    }
+    const id = c.req.param('id');
+    const family = await familyProductIds(id);
+    if (!family) return c.json({ ok: false, error: 'Produit introuvable.' }, 404);
+    const result = await applyImageToFamily(id, gate.staff!.id);
+    if (!result.checksum) {
+      return c.json({ ok: false, error: 'Aucune image source à copier. Envoyez d’abord une photo.' }, 400);
+    }
+    const imageUrl = `/catalog/media/${encodeURIComponent(id)}?v=${result.checksum.slice(0, 12)}`;
+    return c.json({
+      ok: true,
+      imageUrl,
+      appliedTo: result.applied,
+      hint: result.applied.length
+        ? `Image appliquée à ${result.applied.length} autre(s) format(s) de poids.`
+        : 'Aucun autre format dans cette famille.',
     });
   });
 }

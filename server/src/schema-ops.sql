@@ -243,6 +243,23 @@ CREATE TABLE IF NOT EXISTS ops.courier_locations (
   updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
+ALTER TABLE ops.staff ADD COLUMN IF NOT EXISTS duty_status TEXT NOT NULL DEFAULT 'offline';
+ALTER TABLE ops.staff ADD COLUMN IF NOT EXISTS last_seen_at TIMESTAMPTZ;
+
+CREATE TABLE IF NOT EXISTS ops.staff_seen_log (
+  staff_id TEXT NOT NULL REFERENCES ops.staff(id) ON DELETE CASCADE,
+  minute_at TIMESTAMPTZ NOT NULL,
+  status TEXT NOT NULL DEFAULT 'online',
+  PRIMARY KEY (staff_id, minute_at)
+);
+CREATE INDEX IF NOT EXISTS ops_staff_seen_log_idx ON ops.staff_seen_log (staff_id, minute_at DESC);
+DO $$ BEGIN
+  ALTER TABLE ops.staff DROP CONSTRAINT IF EXISTS staff_duty_status_check;
+  ALTER TABLE ops.staff ADD CONSTRAINT staff_duty_status_check
+    CHECK (duty_status IN ('online', 'paused', 'offline'));
+EXCEPTION WHEN others THEN NULL;
+END $$;
+
 CREATE TABLE IF NOT EXISTS ops.events (
   id BIGSERIAL PRIMARY KEY,
   order_id TEXT REFERENCES orders(id) ON DELETE CASCADE,

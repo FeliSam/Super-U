@@ -1,36 +1,13 @@
 import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import { dirname, extname, isAbsolute, join, relative, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-
-const CAT_FALLBACK: Record<string, string> = {
-  'fruits-legumes': 'cat-fruits.png',
-  viandes: 'cat-viandes.png',
-  charcuterie: 'cat-viandes.png',
-  poissons: 'cat-poissons.png',
-  surgeles: 'glace-assortiment.png',
-  laitiers: 'cat-laitiers.png',
-  oeufs: 'poulet.png',
-  boulangerie: 'cat-boulangerie.png',
-  'petit-dej': 'miel.png',
-  'cafe-the': 'glace-cafe.png',
-  feculents: 'cuisine-riz.png',
-  huiles: 'cat-epicerie.png',
-  epices: 'circle-epices.png',
-  conserves: 'cat-poissons.png',
-  epicerie: 'cat-epicerie.png',
-  snacking: 'plantains.png',
-  boissons: 'cat-boissons.png',
-  alcools: 'cat-boissons.png',
-  bio: 'cat-fruits.png',
-  cuisine: 'cat-cuisine.png',
-  glaces: 'cat-glaces.png',
-  hygiene: 'cat-hygiene.png',
-  maison: 'cat-maison.png',
-  bebe: 'cat-bebe.png',
-  animalerie: 'cat-maison.png',
-};
+import { pickCatalogFilename } from '../../marche-dore/lib/productVisualMatch.ts';
 
 let filesCache: string[] | null = null;
+
+export function clearCatalogFilesCache() {
+  filesCache = null;
+}
 
 export function catalogDir() {
   return join(dirname(fileURLToPath(import.meta.url)), '../../marche-dore/assets/images/catalog');
@@ -94,23 +71,26 @@ function ean13Check(body12: string) {
   return String((10 - (sum % 10)) % 10);
 }
 
-export function resolveCatalogFile(productId: string, categoryId?: string | null) {
-  const files = listCatalog();
+export function readExactCatalogFile(productId: string) {
   const id = productId.replace(/[^a-z0-9_-]/gi, '');
-  const exact = [`${id}.png`, `${id}.jpg`, `${id}.webp`];
-  for (const name of exact) {
-    if (files.includes(name)) return name;
+  const dir = catalogDir();
+  for (const name of [`${id}.png`, `${id}.jpg`, `${id}.webp`, `${id}.jpeg`]) {
+    const path = join(dir, name);
+    if (!existsSync(path)) continue;
+    const ext = name.split('.').pop()?.toLowerCase();
+    const type = ext === 'jpg' || ext === 'jpeg' ? 'image/jpeg' : ext === 'webp' ? 'image/webp' : 'image/png';
+    return { buf: readFileSync(path), type, name };
   }
-  const prefix = files.find((f) => f.startsWith(`${id}-`) || f.startsWith(`cart-${id}.`) || f.startsWith(`${id}.`));
-  if (prefix) return prefix;
-  const fallback = categoryId ? CAT_FALLBACK[categoryId] : null;
-  if (fallback && files.includes(fallback)) return fallback;
-  if (files.includes('cat-epicerie.png')) return 'cat-epicerie.png';
-  return files[0] ?? null;
+  return null;
 }
 
-export function readCatalogImage(productId: string, categoryId?: string | null) {
-  const name = resolveCatalogFile(productId, categoryId);
+export function resolveCatalogFile(productId: string, categoryId?: string | null, productName?: string | null) {
+  const files = listCatalog();
+  return pickCatalogFilename(productId, categoryId, productName, files);
+}
+
+export function readCatalogImage(productId: string, categoryId?: string | null, productName?: string | null) {
+  const name = resolveCatalogFile(productId, categoryId, productName);
   if (!name) return null;
   const path = join(catalogDir(), name);
   if (!existsSync(path)) return null;

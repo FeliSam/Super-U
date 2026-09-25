@@ -11,7 +11,7 @@ import { registerOpsRoutes, rateOrder, creditCourierTip, notifyStaff, notifyStor
 import { registerCommsRoutes, archiveDeliveredCourierThreads } from './comms.ts';
 import { registerAdminRoutes } from './admin.ts';
 import { registerAdminStaffRoutes } from './adminStaff.ts';
-import { readCatalogImage, readCatalogLocalPath } from './productMedia.ts';
+import { readCatalogImage, readCatalogLocalPath, readExactCatalogFile } from './productMedia.ts';
 import { boundedLimit, decodeCatalogCursor, encodeCatalogCursor } from './catalogHelpers.ts';
 import { createFedapayCheckout, fedapayConfigured, getFedapayTransaction, mapFedapayStatus } from './fedapay.ts';
 
@@ -85,7 +85,14 @@ app.use(
   '*',
   cors({
     origin: '*',
-    allowHeaders: ['Content-Type', 'Authorization'],
+    allowHeaders: [
+      'Content-Type',
+      'Authorization',
+      // Clients (CourseGO / Marché Doré) envoient ça pour contourner l’interstitiel ngrok free.
+      // Sans ça, le préflight OPTIONS bloque GET /ops/notifications (et le reste) en web.
+      'ngrok-skip-browser-warning',
+      'Accept',
+    ],
     allowMethods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
   }),
 );
@@ -117,10 +124,13 @@ app.get('/catalog/media/:id', async (c) => {
   const id = c.req.param('id');
   const found = await query<{
     category_id: string;
+    name: string | null;
     local_path: string | null;
     checksum_sha256: string | null;
   }>(
-    `SELECT p.category_id, m.local_path, m.checksum_sha256
+    `SELECT p.category_id,
+            COALESCE(p.payload->>'name', p.sku, p.id) AS name,
+            m.local_path, m.checksum_sha256
      FROM products p
      LEFT JOIN LATERAL (
        SELECT local_path, checksum_sha256
@@ -131,16 +141,20 @@ app.get('/catalog/media/:id', async (c) => {
      ) m ON TRUE
      WHERE p.id = $1`,
     [id],
-  ).catch(() => ({ rows: [] as { category_id: string; local_path: string | null; checksum_sha256: string | null }[] }));
+  ).catch(() => ({ rows: [] as { category_id: string; name: string | null; local_path: string | null; checksum_sha256: string | null }[] }));
   const media = found.rows[0];
-  const img = readCatalogLocalPath(media?.local_path) ?? readCatalogImage(id, media?.category_id);
+  const genericPath = /(?:^|[/\\])(cat-|circle-|promo|avatar)/i.test(media?.local_path ?? '');
+  const img =
+    readExactCatalogFile(id) ??
+    (!genericPath ? readCatalogLocalPath(media?.local_path) : null) ??
+    readCatalogImage(id, media?.category_id, media?.name);
   if (!img) return c.json({ ok: false, error: 'not_found' }, 404);
   const etag = `"${media?.checksum_sha256 || createHash('sha256').update(img.buf).digest('hex')}"`;
   if (c.req.header('If-None-Match') === etag) return new Response(null, { status: 304, headers: { ETag: etag } });
   return new Response(img.buf, {
     headers: {
       'Content-Type': img.type,
-      'Cache-Control': media?.checksum_sha256 ? 'public, max-age=31536000, immutable' : 'public, max-age=86400',
+      'Cache-Control': 'public, max-age=60, must-revalidate',
       ETag: etag,
       'Cross-Origin-Resource-Policy': 'cross-origin',
     },
@@ -175,7 +189,11 @@ function catalogProduct(row: CatalogProductRow) {
     barcode: row.barcode ?? row.payload.barcode ?? null,
     available: availableQty > 0,
     availableQty,
-    imageUrl: `/catalog/media/${encodeURIComponent(row.id)}`,
+    imageUrl: `/catalog/media/${encodeURIComponent(row.id)}${
+      row.media_placeholder === false && row.media_checksum
+        ? `?v=${row.media_checksum.slice(0, 12)}`
+        : ''
+    }`,
     media: {
       sourceUrl: row.media_source_url,
       checksumSha256: row.media_checksum,
@@ -305,6 +323,49 @@ app.get('/catalog', async (c) => {
 });
 
 app.get('/catalog/revision', async (c) => c.json({ ok: true, ...(await catalogRevision()) }));
+
+/** Stock magasin Super U (qty physique − reserved). Public, comme GET /catalog. */
+app.get('/catalog/stock', async (c) => {
+  const storeId = String(c.req.query('storeId') ?? 'su-aeroport').trim() || 'su-aeroport';
+  const productId = c.req.query('productId')?.trim();
+  const values: unknown[] = [storeId];
+  const extra = productId ? ` AND product_id = $2` : '';
+  if (productId) values.push(productId);
+  const result = await query<{
+    product_id: string;
+    qty: string;
+    reserved: string;
+    min_qty: string;
+    available: string;
+  }>(
+    `SELECT product_id, qty::text, reserved::text, min_qty::text,
+            GREATEST(qty - reserved, 0)::text AS available
+     FROM product_stock
+     WHERE store_id = $1${extra}`,
+    values,
+  );
+  const stock: Record<string, { qty: number; reserved: number; available: number; minQty: number }> = {};
+  for (const row of result.rows) {
+    stock[row.product_id] = {
+      qty: Number(row.qty),
+      reserved: Number(row.reserved),
+      available: Number(row.available),
+      minQty: Number(row.min_qty),
+    };
+  }
+  if (productId) {
+    const row = stock[productId] ?? { qty: 0, reserved: 0, available: 0, minQty: 0 };
+    return c.json({
+      ok: true,
+      storeId,
+      productId,
+      qty: row.available,
+      inStock: row.available > 0,
+      ...row,
+    });
+  }
+  return c.json({ ok: true, storeId, stock });
+});
 
 app.get('/catalog/sync', async (c) => {
   const since = c.req.query('since');

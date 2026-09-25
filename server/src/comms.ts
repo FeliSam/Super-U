@@ -2,6 +2,7 @@ import type { Hono } from 'hono';
 import { randomUUID } from 'node:crypto';
 import { query } from './db.ts';
 import { notifyStaff, markStaffCallNotifsRead } from './ops.ts';
+import { pushToUser } from './push.ts';
 
 type StaffRow = { id: string };
 type UserRow = { id: string };
@@ -231,7 +232,7 @@ export function registerCommsRoutes(app: Hono) {
              COALESCE(cs.last_name, s.last_name) AS peer_last,
              COALESCE(cs.phone, s.phone) AS peer_phone,
              COALESCE(cs.id, s.id) AS peer_staff_id,
-             (COALESCE(cs.photo_data, s.photo_data) IS NOT NULL) AS peer_has_photo
+             (length(COALESCE(cs.photo_data, s.photo_data, '')) > 20) AS peer_has_photo
            FROM comms.v_inbox i
            JOIN comms.thread_members tm ON tm.thread_id = i.id AND tm.user_id = $1
            LEFT JOIN ops.deliveries d ON d.order_id = i.order_id
@@ -321,13 +322,13 @@ export function registerCommsRoutes(app: Hono) {
       ],
     );
     const row = await query(`SELECT * FROM comms.messages WHERE id = $1`, [msgId]);
+    const th = await query<{ order_id: string | null }>(
+      `SELECT order_id FROM comms.threads WHERE id = $1`,
+      [id],
+    );
     if (actor.kind === 'customer') {
       const members = await query<{ staff_id: string }>(
         `SELECT staff_id FROM comms.thread_members WHERE thread_id = $1 AND staff_id IS NOT NULL`,
-        [id],
-      );
-      const th = await query<{ order_id: string | null }>(
-        `SELECT order_id FROM comms.threads WHERE id = $1`,
         [id],
       );
       const who = await query<{ first_name: string | null }>(
@@ -344,6 +345,25 @@ export function registerCommsRoutes(app: Hono) {
           href: `/chat/${encodeURIComponent(id)}`,
           orderId: th.rows[0]?.order_id ?? null,
           id: `ntf-msg-${msgId}-${m.staff_id}`,
+        });
+      }
+    } else if (actor.kind === 'staff') {
+      const members = await query<{ user_id: string }>(
+        `SELECT user_id FROM comms.thread_members WHERE thread_id = $1 AND user_id IS NOT NULL`,
+        [id],
+      );
+      const who = await query<{ first_name: string | null }>(
+        `SELECT first_name FROM ops.staff WHERE id = $1`,
+        [actor.staffId],
+      );
+      const name = who.rows[0]?.first_name?.trim() || 'Votre coursier';
+      const href = `/chat/${encodeURIComponent(id)}`;
+      for (const m of members.rows) {
+        void pushToUser(m.user_id, {
+          title: `${name} vous a écrit`,
+          body: text.slice(0, 160),
+          href,
+          kind: 'chat',
         });
       }
     }
@@ -533,6 +553,13 @@ export function registerCommsRoutes(app: Hono) {
         href: `/chat/${encodeURIComponent(id)}`,
         orderId: thread.rows[0]?.order_id ?? null,
         id: `ntf-call-${callId}`,
+      });
+    } else if (peer.actor_kind === 'customer' && peer.user_id) {
+      void pushToUser(peer.user_id, {
+        title: 'Appel entrant',
+        body: 'Votre coursier vous appelle dans l’app.',
+        href: `/chat/${encodeURIComponent(id)}`,
+        kind: 'call',
       });
     }
     return c.json({ ok: true, call: await liveCallRow(actor) });
