@@ -7,6 +7,7 @@ import * as Location from 'expo-location';
 import { router } from 'expo-router';
 import { useState } from 'react';
 import { Platform, Pressable, StyleSheet, Text, View } from 'react-native';
+import { usePushNotifications } from '@/context/PushNotificationsContext';
 
 type Row = { key: 'gps' | 'notif' | 'camera'; icon: keyof typeof Feather.glyphMap; title: string; hint: string };
 
@@ -18,6 +19,7 @@ const ROWS: Row[] = [
 
 export default function PermissionsScreen() {
   const { completePerms } = useOnboarding();
+  const { registerDevice } = usePushNotifications();
   const [ok, setOk] = useState<Record<string, boolean>>({});
   const [busy, setBusy] = useState<string | null>(null);
 
@@ -33,8 +35,11 @@ export default function PermissionsScreen() {
       } else if (Platform.OS === 'web' && typeof Notification !== 'undefined') {
         const res = await Notification.requestPermission();
         setOk((p) => ({ ...p, notif: res === 'granted' }));
-      } else {
+      } else if (Platform.OS === 'web') {
         setOk((p) => ({ ...p, notif: true }));
+      } else {
+        const granted = await registerDevice();
+        setOk((p) => ({ ...p, notif: granted }));
       }
     } catch {
       setOk((p) => ({ ...p, [key]: false }));

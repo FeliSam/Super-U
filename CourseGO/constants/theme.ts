@@ -76,3 +76,32 @@ export const TAB_BAR_MARGIN = 12;
 
 /** Largeur max de l’UI web (téléphone). En dessous, l’app occupe 100 %. */
 export const PHONE_MAX_WIDTH = 430;
+
+/** Pastille « glace liquide » (HUD carte, chrome overlay). */
+export const liquidIce = {
+  backgroundColor: 'rgba(186, 228, 242, 0.78)',
+  borderColor: 'rgba(255, 255, 255, 0.92)',
+  webFilter: 'blur(22px) saturate(180%)',
+  webShadow: 'inset 0 1px 0 rgba(255,255,255,0.95), 0 10px 26px rgba(20, 70, 95, 0.26)',
+} as const;
+
+export function iceSurface() {
+  return {
+    backgroundColor: liquidIce.backgroundColor,
+    borderWidth: 1,
+    borderColor: liquidIce.borderColor,
+    ...(Platform.OS === 'web'
+      ? {
+          backdropFilter: liquidIce.webFilter,
+          WebkitBackdropFilter: liquidIce.webFilter,
+          boxShadow: liquidIce.webShadow,
+        }
+      : {
+          shadowColor: '#4a90a4',
+          shadowOpacity: 0.16,
+          shadowRadius: 16,
+          shadowOffset: { width: 0, height: 8 },
+          elevation: 6,
+        }),
+  };
+}

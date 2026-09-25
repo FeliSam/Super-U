@@ -1,7 +1,21 @@
+import { KeyboardDismissBar } from '@/components/KeyboardDismissBar';
+import { PhoneModalFrame } from '@/components/PhoneShell';
 import { PillButton } from '@/components/ui';
 import { bodyFont, colors, displayFont, radius, shadow } from '@/constants/theme';
+import { keyboardScrollProps, useKeyboardAvoidProps } from '@/lib/keyboardAvoid';
 import { useRef, useState, type RefObject } from 'react';
-import { Modal, Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
+import {
+  Keyboard,
+  KeyboardAvoidingView,
+  Modal,
+  Pressable,
+  ScrollView,
+  StyleSheet,
+  Text,
+  TextInput,
+  View,
+} from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 export function HandoffCodeSheet({
   visible,
@@ -16,6 +30,8 @@ export function HandoffCodeSheet({
   onClose: () => void;
   onSubmit: (code: string) => void;
 }) {
+  const insets = useSafeAreaInsets();
+  const kav = useKeyboardAvoidProps();
   const [cells, setCells] = useState(['', '', '', '']);
   const refs = [
     useRef<TextInput>(null),
@@ -65,76 +81,93 @@ export function HandoffCodeSheet({
   };
 
   const close = () => {
+    Keyboard.dismiss();
     setCells(['', '', '', '']);
     onClose();
   };
 
   return (
-    <Modal visible={visible} transparent animationType="slide" onRequestClose={close}>
-      <View style={styles.wrap}>
-        <Pressable style={styles.backdrop} onPress={close} />
-        <View style={styles.sheet}>
-        <View style={styles.handle} />
-        <Text style={styles.title}>Je remets le colis</Text>
-        <Text style={styles.sub}>Demandez au client les 4 chiffres affichés dans Marché Doré.</Text>
-        <View style={styles.row}>
-          {cells.map((dgt, i) => (
-            <TextInput
-              key={i}
-              ref={refs[i] as RefObject<TextInput>}
-              value={dgt}
-              onChangeText={(t) => setCell(i, t)}
-              onKeyPress={({ nativeEvent }) => onKey(i, nativeEvent.key)}
-              keyboardType="number-pad"
-              inputMode="numeric"
-              maxLength={i === 0 ? 4 : 1}
-              selectTextOnFocus
-              autoFocus={i === 0}
-              style={[styles.box, dgt ? styles.boxOn : null]}
-              accessibilityLabel={`Chiffre ${i + 1} sur 4`}
-            />
-          ))}
-        </View>
-        {error ? <Text style={styles.err}>{error}</Text> : null}
-        <PillButton
-          label={busy ? '…' : 'Valider la remise'}
-          onPress={() => onSubmit(cells.join(''))}
-          disabled={busy}
-        />
-        <Pressable onPress={close} style={styles.cancel}>
-          <Text style={styles.cancelTxt}>Annuler</Text>
-        </Pressable>
-      </View>
-      </View>
+    <Modal
+      visible={visible}
+      transparent
+      animationType="slide"
+      onRequestClose={close}
+      statusBarTranslucent>
+      <KeyboardAvoidingView style={styles.avoid} {...kav}>
+        <PhoneModalFrame onDismiss={close}>
+          <View style={[styles.sheet, { paddingBottom: Math.max(insets.bottom, 16) + 12 }]}>
+            <View style={styles.handle} />
+            <Text style={styles.title}>Je remets le colis</Text>
+            <Text style={styles.sub}>Demandez au client les 4 chiffres affichés dans Marché Doré.</Text>
+            <ScrollView
+              {...keyboardScrollProps()}
+              bounces={false}
+              showsVerticalScrollIndicator={false}
+              contentContainerStyle={styles.scrollBody}>
+              <View style={styles.row}>
+                {cells.map((dgt, i) => (
+                  <TextInput
+                    key={i}
+                    ref={refs[i] as RefObject<TextInput>}
+                    value={dgt}
+                    onChangeText={(t) => setCell(i, t)}
+                    onKeyPress={({ nativeEvent }) => onKey(i, nativeEvent.key)}
+                    keyboardType="number-pad"
+                    inputMode="numeric"
+                    maxLength={i === 0 ? 4 : 1}
+                    selectTextOnFocus
+                    autoFocus={i === 0}
+                    style={[styles.box, dgt ? styles.boxOn : null]}
+                    accessibilityLabel={`Chiffre ${i + 1} sur 4`}
+                  />
+                ))}
+              </View>
+              {error ? <Text style={styles.err}>{error}</Text> : null}
+              <PillButton
+                label={busy ? '…' : 'Valider la remise'}
+                onPress={() => {
+                  Keyboard.dismiss();
+                  onSubmit(cells.join(''));
+                }}
+                disabled={busy}
+              />
+              <Pressable onPress={close} style={styles.cancel}>
+                <Text style={styles.cancelTxt}>Annuler</Text>
+              </Pressable>
+            </ScrollView>
+          </View>
+        </PhoneModalFrame>
+        <KeyboardDismissBar />
+      </KeyboardAvoidingView>
     </Modal>
   );
 }
 
 const styles = StyleSheet.create({
-  wrap: { flex: 1, justifyContent: 'flex-end' },
-  backdrop: { ...StyleSheet.absoluteFillObject, backgroundColor: 'rgba(17,24,39,0.35)' },
+  avoid: { flex: 1 },
   sheet: {
     backgroundColor: colors.white,
     borderTopLeftRadius: radius.sheet,
     borderTopRightRadius: radius.sheet,
     paddingHorizontal: 20,
     paddingTop: 10,
-    paddingBottom: 28,
-    gap: 12,
+    gap: 10,
     zIndex: 2,
+    maxHeight: '92%',
     ...shadow.tabBar,
   },
+  scrollBody: { gap: 12, paddingBottom: 4 },
   handle: {
     alignSelf: 'center',
     width: 48,
     height: 5,
     borderRadius: 3,
     backgroundColor: colors.placeholder,
-    marginBottom: 8,
+    marginBottom: 4,
   },
   title: { ...displayFont('900'), fontSize: 22, color: colors.text },
   sub: { ...bodyFont('400'), fontSize: 15, color: colors.muted, lineHeight: 22 },
-  row: { flexDirection: 'row', gap: 10, justifyContent: 'center', marginVertical: 8 },
+  row: { flexDirection: 'row', gap: 10, justifyContent: 'center', marginVertical: 4 },
   box: {
     width: 62,
     height: 72,

@@ -1,12 +1,26 @@
+import { KeyboardDismissBar } from '@/components/KeyboardDismissBar';
+import { PhoneModalFrame } from '@/components/PhoneShell';
 import { PillButton } from '@/components/ui';
 import { ProductThumb } from '@/components/ProductThumb';
 import { bodyFont, colors, displayFont, radius, shadow } from '@/constants/theme';
 import { ApiError } from '@/lib/api/http';
 import { fetchProductByBarcode, type OrderLine } from '@/lib/api/ops';
+import { keyboardScrollProps, useKeyboardAvoidProps } from '@/lib/keyboardAvoid';
 import { productBarcode } from '@/lib/productMedia';
 import { CameraView, useCameraPermissions } from 'expo-camera';
 import { useEffect, useRef, useState } from 'react';
-import { Modal, Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
+import {
+  Keyboard,
+  KeyboardAvoidingView,
+  Modal,
+  Pressable,
+  ScrollView,
+  StyleSheet,
+  Text,
+  TextInput,
+  View,
+} from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 export function lineBarcode(line: OrderLine) {
   return (line.barcode ?? '').trim() || productBarcode(line.product_id);
@@ -38,6 +52,8 @@ export function ScanSheet({
   lines?: OrderLine[];
   storeId?: string | null;
 }) {
+  const insets = useSafeAreaInsets();
+  const kav = useKeyboardAvoidProps();
   const [code, setCode] = useState('');
   const [error, setError] = useState('');
   const [checking, setChecking] = useState(false);
@@ -55,6 +71,11 @@ export function ScanSheet({
   }, [visible, line?.product_id, line?.picked_qty]);
 
   if (!line) return null;
+
+  const close = () => {
+    Keyboard.dismiss();
+    onClose();
+  };
 
   const identifyMismatch = async (raw: string) => {
     const otherLine = lines.find((candidate) => candidate.product_id !== line.product_id && matchesScan(candidate, raw));
@@ -100,6 +121,7 @@ export function ScanSheet({
       await identifyMismatch(typed);
       return;
     }
+    Keyboard.dismiss();
     onScanned(line);
   };
 
@@ -127,122 +149,153 @@ export function ScanSheet({
     line.lot?.expiryDate ?? line.lot?.bestBeforeDate ?? line.expiry_date ?? line.best_before_date;
 
   return (
-    <Modal visible={visible} transparent animationType="slide" onRequestClose={onClose}>
-      <Pressable style={styles.backdrop} onPress={onClose}>
-        <Pressable style={styles.sheet} onPress={(e) => e.stopPropagation()}>
-          <View style={styles.handle} />
-          <Text style={styles.kicker}>SCANNER</Text>
-          <View style={styles.hero}>
-            <ProductThumb
-              productId={line.product_id}
-              name={line.name}
-              categoryId={line.category_id}
-              imageUrl={line.image_url}
-              size={72}
-            />
-            <View style={{ flex: 1 }}>
-              <Text style={styles.title}>{line.name}</Text>
-              <Text style={styles.qty}>Demandé {line.qty} · Ramassé {picked} · Restant {remaining}</Text>
-              {imageCredit ? <Text style={styles.credit}>Image : {imageCredit}</Text> : null}
-            </View>
-          </View>
-          <View style={styles.facts}>
-            {line.stock_before != null ? <Text style={styles.fact}>Avant vente {line.stock_before}</Text> : null}
-            {line.stock_after != null ? <Text style={styles.fact}>Après commande {line.stock_after}</Text> : null}
-            {line.available_qty != null ? <Text style={styles.fact}>Disponible actuel {line.available_qty}</Text> : null}
-          </View>
-          {lotNumber || expiryDate ? (
-            <Text style={styles.lot}>
-              {lotNumber ? `Lot ${lotNumber}` : ''}
-              {lotNumber && expiryDate ? ' · ' : ''}
-              {expiryDate ? `DLC/DDM ${expiryDate}` : ''}
-            </Text>
-          ) : null}
-          <View style={styles.tabs}>
-            <Pressable style={[styles.tab, mode === 'camera' && styles.tabOn]} onPress={() => setMode('camera')}>
-              <Text style={[styles.tabTxt, mode === 'camera' && styles.tabTxtOn]}>Caméra</Text>
-            </Pressable>
-            <Pressable style={[styles.tab, mode === 'type' && styles.tabOn]} onPress={() => setMode('type')}>
-              <Text style={[styles.tabTxt, mode === 'type' && styles.tabTxtOn]}>QR / saisie</Text>
-            </Pressable>
-          </View>
-          {mode === 'camera' ? (
-            <View style={styles.camWrap}>
-              {!permission?.granted ? (
-                <View style={styles.camFallback}>
-                  <Text style={styles.hint}>Autorisez la caméra pour scanner le code-barres ou le QR.</Text>
-                  <PillButton label="AUTORISER LA CAMÉRA" onPress={() => void requestPermission()} />
+    <Modal
+      visible={visible}
+      transparent
+      animationType="slide"
+      onRequestClose={close}
+      statusBarTranslucent>
+      <KeyboardAvoidingView style={styles.avoid} {...kav}>
+        <PhoneModalFrame onDismiss={close}>
+          <View
+            style={[styles.sheet, { paddingBottom: Math.max(insets.bottom, 16) + 12 }]}
+            onStartShouldSetResponder={() => true}>
+            <View style={styles.handle} />
+            <ScrollView
+              {...keyboardScrollProps()}
+              bounces={false}
+              showsVerticalScrollIndicator={false}
+              contentContainerStyle={styles.scrollBody}>
+              <Text style={styles.kicker}>SCANNER</Text>
+              <View style={styles.hero}>
+                <ProductThumb
+                  productId={line.product_id}
+                  name={line.name}
+                  categoryId={line.category_id}
+                  imageUrl={line.image_url}
+                  size={72}
+                />
+                <View style={{ flex: 1 }}>
+                  <Text style={styles.title}>{line.name}</Text>
+                  <Text style={styles.qty}>
+                    Demandé {line.qty} · Ramassé {picked} · Restant {remaining}
+                  </Text>
+                  {imageCredit ? <Text style={styles.credit}>Image : {imageCredit}</Text> : null}
+                </View>
+              </View>
+              <View style={styles.facts}>
+                {line.stock_before != null ? <Text style={styles.fact}>Avant vente {line.stock_before}</Text> : null}
+                {line.stock_after != null ? <Text style={styles.fact}>Après commande {line.stock_after}</Text> : null}
+                {line.available_qty != null ? (
+                  <Text style={styles.fact}>Disponible actuel {line.available_qty}</Text>
+                ) : null}
+              </View>
+              {lotNumber || expiryDate ? (
+                <Text style={styles.lot}>
+                  {lotNumber ? `Lot ${lotNumber}` : ''}
+                  {lotNumber && expiryDate ? ' · ' : ''}
+                  {expiryDate ? `DLC/DDM ${expiryDate}` : ''}
+                </Text>
+              ) : null}
+              <View style={styles.tabs}>
+                <Pressable
+                  style={[styles.tab, mode === 'camera' && styles.tabOn]}
+                  onPress={() => {
+                    Keyboard.dismiss();
+                    setMode('camera');
+                  }}>
+                  <Text style={[styles.tabTxt, mode === 'camera' && styles.tabTxtOn]}>Caméra</Text>
+                </Pressable>
+                <Pressable style={[styles.tab, mode === 'type' && styles.tabOn]} onPress={() => setMode('type')}>
+                  <Text style={[styles.tabTxt, mode === 'type' && styles.tabTxtOn]}>QR / saisie</Text>
+                </Pressable>
+              </View>
+              {mode === 'camera' ? (
+                <View style={styles.camWrap}>
+                  {!permission?.granted ? (
+                    <View style={styles.camFallback}>
+                      <Text style={styles.hint}>Autorisez la caméra pour scanner le code-barres ou le QR.</Text>
+                      <PillButton label="AUTORISER LA CAMÉRA" onPress={() => void requestPermission()} />
+                    </View>
+                  ) : (
+                    <CameraView
+                      style={styles.cam}
+                      facing="back"
+                      barcodeScannerSettings={{ barcodeTypes: ['qr', 'ean13', 'ean8', 'upc_a', 'code128'] }}
+                      onBarcodeScanned={(event) => void onBar(event)}
+                    />
+                  )}
                 </View>
               ) : (
-                <CameraView
-                  style={styles.cam}
-                  facing="back"
-                  barcodeScannerSettings={{ barcodeTypes: ['qr', 'ean13', 'ean8', 'upc_a', 'code128'] }}
-                  onBarcodeScanned={(event) => void onBar(event)}
-                />
+                <>
+                  <Text style={styles.hint}>Saisissez le code-barres, la référence, ou le contenu du QR.</Text>
+                  <TextInput
+                    autoFocus
+                    selectTextOnFocus
+                    style={styles.input}
+                    placeholder="Code-barres / QR / référence"
+                    placeholderTextColor={colors.placeholder}
+                    value={code}
+                    onChangeText={(t) => {
+                      setCode(t);
+                      setError('');
+                    }}
+                    onSubmitEditing={() => void submit(code)}
+                    returnKeyType="done"
+                    blurOnSubmit
+                  />
+                </>
               )}
-            </View>
-          ) : (
-            <>
-              <Text style={styles.hint}>Saisissez le code-barres, la référence, ou le contenu du QR.</Text>
-              <TextInput
-                autoFocus
-                selectTextOnFocus
-                style={styles.input}
-                placeholder="Code-barres / QR / référence"
-                placeholderTextColor={colors.placeholder}
-                value={code}
-                onChangeText={(t) => {
-                  setCode(t);
-                  setError('');
-                }}
-                onSubmitEditing={() => void submit(code)}
-                returnKeyType="done"
-              />
-            </>
-          )}
-          {error ? <Text style={styles.error}>{error}</Text> : null}
-          {mode === 'type' ? (
-            <PillButton
-              label={checking ? 'VÉRIFICATION…' : 'VALIDER LE SCAN'}
-              onPress={() => void submit(code)}
-              disabled={checking}
-            />
-          ) : null}
-          {onMissing ? (
-            <Pressable onPress={() => onMissing(line)}>
-              <Text style={styles.missing}>Produit introuvable</Text>
-            </Pressable>
-          ) : null}
-          <Pressable onPress={onClose}>
-            <Text style={styles.cancel}>Annuler</Text>
-          </Pressable>
-        </Pressable>
-      </Pressable>
+              {error ? <Text style={styles.error}>{error}</Text> : null}
+              {mode === 'type' ? (
+                <PillButton
+                  label={checking ? 'VÉRIFICATION…' : 'VALIDER LE SCAN'}
+                  onPress={() => void submit(code)}
+                  disabled={checking}
+                />
+              ) : null}
+              {onMissing ? (
+                <Pressable
+                  onPress={() => {
+                    Keyboard.dismiss();
+                    onMissing(line);
+                  }}>
+                  <Text style={styles.missing}>Produit introuvable</Text>
+                </Pressable>
+              ) : null}
+              <Pressable onPress={close}>
+                <Text style={styles.cancel}>Annuler</Text>
+              </Pressable>
+            </ScrollView>
+          </View>
+        </PhoneModalFrame>
+        <KeyboardDismissBar />
+      </KeyboardAvoidingView>
     </Modal>
   );
 }
 
 const styles = StyleSheet.create({
-  backdrop: {
-    flex: 1,
-    backgroundColor: 'rgba(17,24,39,0.45)',
-    justifyContent: 'flex-end',
-  },
+  avoid: { flex: 1 },
   sheet: {
     backgroundColor: colors.white,
     borderTopLeftRadius: radius.sheet,
     borderTopRightRadius: radius.sheet,
-    padding: 24,
-    gap: 12,
+    paddingHorizontal: 24,
+    paddingTop: 16,
+    gap: 10,
+    zIndex: 2,
+    maxHeight: '92%',
     ...shadow.tabBar,
   },
+  scrollBody: { gap: 12, paddingBottom: 4 },
   handle: {
     alignSelf: 'center',
     width: 40,
     height: 4,
     borderRadius: 2,
     backgroundColor: colors.border,
+    marginBottom: 4,
   },
   kicker: { ...displayFont('800'), fontSize: 12, color: colors.teal, letterSpacing: 1 },
   hero: { flexDirection: 'row', gap: 14, alignItems: 'center' },

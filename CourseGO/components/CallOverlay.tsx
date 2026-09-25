@@ -1,9 +1,9 @@
 import { useCall } from '@/context/CallContext';
 import { bodyFont, colors, displayFont, shadow } from '@/constants/theme';
 import { Feather } from '@expo/vector-icons';
-import { useEffect, useMemo, useState, type ComponentProps } from 'react';
-import { Pressable, StyleSheet, Text, View } from 'react-native';
-import Animated, { Easing, useAnimatedStyle, useSharedValue, withRepeat, withTiming } from 'react-native-reanimated';
+import { useEffect, useMemo, useRef, useState, type ComponentProps } from 'react';
+import { Animated, Easing, Modal, Platform, Pressable, StyleSheet, Text, View } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 function formatElapsed(sec: number) {
   const m = Math.floor(sec / 60);
@@ -44,6 +44,7 @@ function Ctrl({
 }
 
 export function CallOverlay() {
+  const insets = useSafeAreaInsets();
   const {
     call,
     phase,
@@ -59,8 +60,10 @@ export function CallOverlay() {
     expand,
     minimize,
   } = useCall();
-  const pulse = useSharedValue(1);
+  const pulse = useRef(new Animated.Value(0)).current;
   const [digits, setDigits] = useState('');
+  const padTop = Math.max(16, (Platform.OS === 'web' ? 0 : insets.top) + 12);
+  const padBottom = Math.max(24, (Platform.OS === 'web' ? 0 : insets.bottom) + 16);
   const initials = useMemo(() => {
     const parts = (call?.peerName ?? 'Client').split(' ').filter(Boolean);
     return ((parts[0]?.[0] ?? 'C') + (parts[1]?.[0] ?? '')).toUpperCase();
@@ -68,22 +71,37 @@ export function CallOverlay() {
 
   useEffect(() => {
     if (phase === 'outgoing' || phase === 'incoming') {
-      pulse.value = withRepeat(withTiming(1.22, { duration: 1100, easing: Easing.inOut(Easing.quad) }), -1, true);
-    } else {
-      pulse.value = withTiming(1, { duration: 220 });
+      pulse.setValue(0);
+      const loop = Animated.loop(
+        Animated.sequence([
+          Animated.timing(pulse, {
+            toValue: 1,
+            duration: 1100,
+            easing: Easing.inOut(Easing.quad),
+            useNativeDriver: true,
+          }),
+          Animated.timing(pulse, {
+            toValue: 0,
+            duration: 1100,
+            easing: Easing.inOut(Easing.quad),
+            useNativeDriver: true,
+          }),
+        ]),
+      );
+      loop.start();
+      return () => loop.stop();
     }
+    pulse.setValue(0);
   }, [phase, pulse]);
 
   useEffect(() => {
     if (!controls.keypadOpen || phase === 'idle') setDigits('');
   }, [controls.keypadOpen, phase]);
 
-  const ringStyle = useAnimatedStyle(() => ({
-    transform: [{ scale: pulse.value }],
-    opacity: 1.85 - pulse.value,
-  }));
-
   if (phase === 'idle' || !call) return null;
+
+  const ringScale = pulse.interpolate({ inputRange: [0, 1], outputRange: [1, 1.22] });
+  const ringOpacity = pulse.interpolate({ inputRange: [0, 1], outputRange: [0.55, 0.12] });
 
   const statusLabel =
     phase === 'outgoing'
@@ -105,7 +123,7 @@ export function CallOverlay() {
 
   if (phase === 'active' && controls.minimized) {
     return (
-      <View style={styles.mini} pointerEvents="box-none">
+      <View style={[styles.mini, { top: padTop }]} pointerEvents="box-none">
         <Pressable style={styles.miniBar} onPress={expand} accessibilityRole="button" accessibilityLabel="Ouvrir l’appel">
           <View style={styles.miniAvatar}>
             <Feather name={controls.muted ? 'mic-off' : 'phone'} size={16} color={colors.onAccent} />
@@ -144,11 +162,20 @@ export function CallOverlay() {
   }
 
   return (
-    <View style={styles.root}>
+    <Modal
+      visible
+      transparent
+      animationType="fade"
+      statusBarTranslucent
+      presentationStyle="overFullScreen"
+      onRequestClose={phase === 'active' ? minimize : hangup}>
+    <View style={[styles.root, { paddingTop: padTop, paddingBottom: padBottom }]}>
       <View style={styles.glow} />
       <View style={styles.center}>
         <View style={styles.avatarWrap}>
-          {phase === 'outgoing' || phase === 'incoming' ? <Animated.View style={[styles.pulse, ringStyle]} /> : null}
+          {phase === 'outgoing' || phase === 'incoming' ? (
+            <Animated.View style={[styles.pulse, { transform: [{ scale: ringScale }], opacity: ringOpacity }]} />
+          ) : null}
           <View style={styles.avatar}>
             <Text style={styles.initials}>{initials}</Text>
           </View>
@@ -231,19 +258,16 @@ export function CallOverlay() {
         <Text style={styles.protectText}>Audio seulement · numéro masqué</Text>
       </View>
     </View>
+    </Modal>
   );
 }
 
 const styles = StyleSheet.create({
   root: {
-    ...StyleSheet.absoluteFill,
+    flex: 1,
     backgroundColor: '#0b1220',
-    zIndex: 9999,
-    elevation: 9999,
     justifyContent: 'space-between',
     alignItems: 'center',
-    paddingTop: 72,
-    paddingBottom: 36,
     paddingHorizontal: 24,
   },
   glow: {
@@ -329,7 +353,7 @@ const styles = StyleSheet.create({
     backgroundColor: 'rgba(250,250,249,0.06)',
   },
   protectText: { ...bodyFont('500'), fontSize: 12, color: 'rgba(250,250,249,0.45)' },
-  mini: { position: 'absolute', top: 12, left: 12, right: 12, zIndex: 9999, elevation: 9999 },
+  mini: { position: 'absolute', left: 12, right: 12, zIndex: 9999, elevation: 9999 },
   miniBar: {
     backgroundColor: '#111827',
     borderRadius: 18,

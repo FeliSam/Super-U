@@ -10,6 +10,7 @@ import { useStaffAuth } from '@/context/StaffAuthContext';
 import { useAppViewport } from '@/components/PhoneShell';
 import { useRoadRoute } from '@/hooks/useRoadRoute';
 import { useMultiRoadRoute } from '@/hooks/useMultiRoadRoute';
+import { useCourierTourPlan } from '@/hooks/useCourierTourPlan';
 import { courierThreadId, kmLabel, minLabel, shortOrderId } from '@/lib/format';
 import { showToast } from '@/lib/toastBus';
 import { ApiError } from '@/lib/api/http';
@@ -19,8 +20,7 @@ import { goBack, tabPaths } from '@/lib/navigation';
 import { prefetchRoadRoute } from '@/lib/roadRoute';
 import { headingAlongRoute, liveEtaSeconds } from '@/lib/vehicleMotion';
 import {
-  buildCourierTourPlan,
-  buildTourMapMarkers,
+    buildTourMapMarkers,
   googleMapsTourUrl,
   nextDeliveryInTour,
   rememberLastDropoff,
@@ -228,7 +228,7 @@ export default function RunScreen() {
       return;
     }
     clearLastDropoff(staff.id);
-    router.replace('/(tabs)/missions');
+    router.replace('/tour-complete');
   }, [d?.delivery_status, d?.id, deliveries, staff?.id, nextLeg]);
 
   useEffect(() => {
@@ -241,17 +241,14 @@ export default function RunScreen() {
   const dest = toClient ? drop : pickup;
 
   const rememberedDrop = staff?.id ? readLastDropoff(staff.id, d?.store_id) : null;
-  const tourPlan = useMemo(
-    () =>
-      buildCourierTourPlan(deliveries, staff?.id, {
-        focusDeliveryId: d?.id,
-        courierPosition: mapPosition,
-        lastDrop: rememberedDrop?.from ?? (tourHop ? [tourHop.lng, tourHop.lat] : null),
-        lastDropLabel: rememberedDrop?.label ?? tourHop?.label,
-        lastDropStoreId: rememberedDrop?.storeId ?? tourHop?.storeId,
-      }),
-    [deliveries, staff?.id, d?.id, mapPosition, tourHop, rememberedDrop?.from?.[0], rememberedDrop?.from?.[1], hop],
-  );
+  const tourPlan = useCourierTourPlan(deliveries, staff?.id, {
+    focusDeliveryId: d?.id,
+    courierPosition: mapPosition,
+    lastDrop: rememberedDrop?.from ?? (tourHop ? [tourHop.lng, tourHop.lat] : null),
+    lastDropLabel: rememberedDrop?.label ?? tourHop?.label,
+    lastDropStoreId: rememberedDrop?.storeId ?? tourHop?.storeId,
+    vehicle: staff?.vehicle,
+  });
 
   const vehicle = staff?.vehicle;
   // Origine stable (magasin / dernière remise) — le tronçon restant est coupé sur la carte.
@@ -380,7 +377,7 @@ export default function RunScreen() {
       return;
     }
     if (staff?.id) clearLastDropoff(staff.id);
-    router.replace('/(tabs)/missions');
+    router.replace('/tour-complete');
   };
 
   const act = async (

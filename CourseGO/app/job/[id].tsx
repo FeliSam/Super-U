@@ -8,12 +8,14 @@ import { useStaffAuth } from '@/context/StaffAuthContext';
 import { ApiError } from '@/lib/api/http';
 import { claimDelivery, claimPick, fetchOrder, packPick, patchPickLines, startPick, type OrderLine } from '@/lib/api/ops';
 import { deliveryJobId, PICK_STEPS } from '@/lib/opsModel';
+import { goBack, tabPaths } from '@/lib/navigation';
 import { productBarcode } from '@/lib/productMedia';
 import { formatFcfa, shortOrderId } from '@/lib/format';
+import { keyboardScrollProps, useKeyboardAvoidProps } from '@/lib/keyboardAvoid';
 import { showToast } from '@/lib/toastBus';
 import { router, useFocusEffect, useLocalSearchParams } from 'expo-router';
 import { useCallback, useEffect, useState } from 'react';
-import { Alert, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
+import { Alert, KeyboardAvoidingView, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
 
 function lineDone(line: OrderLine) {
   return Boolean(line.unavailable) || (line.picked_qty ?? 0) >= line.qty;
@@ -47,6 +49,7 @@ export default function JobScreen() {
   const [scanLine, setScanLine] = useState<OrderLine | null>(null);
   const [packedDone, setPackedDone] = useState(false);
   const [live, setLive] = useState<Record<string, unknown> | null>(null);
+  const kav = useKeyboardAvoidProps();
 
   const load = useCallback(async () => {
     if (!orderId) return;
@@ -207,8 +210,9 @@ export default function JobScreen() {
 
   return (
     <Screen>
+      <KeyboardAvoidingView {...kav} style={{ flex: 1 }}>
       <View style={styles.nav}>
-        <Pressable onPress={() => router.back()}>
+        <Pressable onPress={() => goBack(tabPaths.missions)}>
           <Text style={styles.back}>Retour</Text>
         </Pressable>
         <Text style={styles.title}>Préparation {shortOrderId(orderId)}</Text>
@@ -230,7 +234,7 @@ export default function JobScreen() {
           <View style={[styles.fill, { width: `${pct}%` }]} />
         </View>
       </View>
-      <ScrollView contentContainerStyle={styles.list}>
+      <ScrollView contentContainerStyle={styles.list} {...keyboardScrollProps()}>
         {lines.map((line) => {
           const done = lineDone(line);
           const active = !done && !queued;
@@ -341,6 +345,7 @@ export default function JobScreen() {
           />
         )}
       </View>
+      </KeyboardAvoidingView>
       <ScanSheet
         line={scanLine}
         lines={lines}

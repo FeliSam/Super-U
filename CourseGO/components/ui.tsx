@@ -1,4 +1,5 @@
-import { colors, displayFont, bodyFont } from '@/constants/theme';
+import { iosKeyboardAccessoryProps } from '@/components/KeyboardDismissBar';
+import { colors, displayFont, bodyFont, iceSurface, liquidIce } from '@/constants/theme';
 import { Feather } from '@expo/vector-icons';
 import type { ReactNode } from 'react';
 import { useState } from 'react';
@@ -25,11 +26,13 @@ export function PillButton({
   onPress,
   disabled,
   variant = 'primary',
+  compact,
 }: {
   label: string;
   onPress?: () => void;
   disabled?: boolean;
   variant?: 'primary' | 'ghost' | 'danger';
+  compact?: boolean;
 }) {
   return (
     <Pressable
@@ -39,6 +42,7 @@ export function PillButton({
       disabled={disabled}
       style={({ pressed }) => [
         styles.pill,
+        compact && styles.pillCompact,
         variant === 'primary' && styles.pillPrimary,
         variant === 'ghost' && styles.pillGhost,
         variant === 'danger' && styles.pillDanger,
@@ -48,6 +52,7 @@ export function PillButton({
       <Text
         style={[
           styles.pillText,
+          compact && styles.pillTextCompact,
           variant === 'ghost' && { color: colors.muted },
           variant === 'danger' && { color: colors.danger },
         ]}>
@@ -60,22 +65,31 @@ export function PillButton({
 export function Field({
   label,
   secureToggle,
+  compact,
   ...props
-}: TextInputProps & { label: string; secureToggle?: boolean }) {
+}: TextInputProps & { label: string; secureToggle?: boolean; compact?: boolean }) {
   const [hidden, setHidden] = useState(!!props.secureTextEntry);
   return (
-    <View style={{ gap: 8, width: '100%' }}>
-      <Text style={styles.fieldLabel}>{label}</Text>
-      <View style={styles.inputWrap}>
+    <View style={{ gap: compact ? 5 : 8, width: '100%' }}>
+      <Text style={[styles.fieldLabel, compact && styles.fieldLabelCompact]}>{label}</Text>
+      <View style={[styles.inputWrap, compact && styles.inputWrapCompact]}>
         <TextInput
           placeholderTextColor={colors.placeholder}
-          style={[styles.input, secureToggle && { paddingRight: 48, borderWidth: 0 }]}
+          style={[
+            styles.input,
+            compact && styles.inputCompact,
+            secureToggle && { paddingRight: compact ? 40 : 48, borderWidth: 0 },
+          ]}
+          {...iosKeyboardAccessoryProps()}
           {...props}
           secureTextEntry={secureToggle ? hidden : props.secureTextEntry}
         />
         {secureToggle ? (
-          <Pressable style={styles.eye} onPress={() => setHidden((v) => !v)} accessibilityLabel={hidden ? 'Afficher le mot de passe' : 'Masquer le mot de passe'}>
-            <Feather name={hidden ? 'eye-off' : 'eye'} size={18} color={colors.muted} />
+          <Pressable
+            style={[styles.eye, compact && styles.eyeCompact]}
+            onPress={() => setHidden((v) => !v)}
+            accessibilityLabel={hidden ? 'Afficher le mot de passe' : 'Masquer le mot de passe'}>
+            <Feather name={hidden ? 'eye-off' : 'eye'} size={compact ? 16 : 18} color={colors.muted} />
           </Pressable>
         ) : null}
       </View>
@@ -88,18 +102,24 @@ export function IconBtn({
   onPress,
   size = 44,
   bg = colors.bg,
+  ice = false,
   badge,
 }: {
   name: React.ComponentProps<typeof Feather>['name'];
   onPress?: () => void;
   size?: number;
   bg?: string;
+  ice?: boolean;
   badge?: number;
 }) {
   return (
     <Pressable
       onPress={onPress}
-      style={[styles.iconBtn, { width: size, height: size, borderRadius: size / 2, backgroundColor: bg }]}>
+      style={[
+        styles.iconBtn,
+        { width: size, height: size, borderRadius: size / 2, backgroundColor: ice ? liquidIce.backgroundColor : bg },
+        ice ? iceSurface() : null,
+      ]}>
       <Feather name={name} size={20} color={colors.text} />
       {badge && badge > 0 ? (
         <View style={styles.badge}>
@@ -119,6 +139,7 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     width: '100%',
   },
+  pillCompact: { height: 46 },
   pillPrimary: {
     backgroundColor: colors.teal,
     shadowColor: colors.teal,
@@ -130,7 +151,9 @@ const styles = StyleSheet.create({
   pillGhost: { backgroundColor: colors.bg },
   pillDanger: { backgroundColor: colors.dangerSoft },
   pillText: { ...displayFont('800'), color: colors.onAccent, fontSize: 16 },
+  pillTextCompact: { fontSize: 14 },
   fieldLabel: { ...displayFont('700'), color: colors.muted, fontSize: 13, letterSpacing: 0.4 },
+  fieldLabelCompact: { fontSize: 11, letterSpacing: 0.35 },
   inputWrap: {
     width: '100%',
     borderRadius: 16,
@@ -139,6 +162,7 @@ const styles = StyleSheet.create({
     backgroundColor: colors.bg,
     justifyContent: 'center',
   },
+  inputWrapCompact: { borderRadius: 12 },
   input: {
     ...bodyFont('400'),
     fontSize: 16,
@@ -149,7 +173,9 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: colors.border,
   },
+  inputCompact: { fontSize: 15, paddingVertical: 11, paddingHorizontal: 12, borderRadius: 12 },
   eye: { position: 'absolute', right: 14, top: 0, bottom: 0, justifyContent: 'center' },
+  eyeCompact: { right: 10 },
   iconBtn: {
     alignItems: 'center',
     justifyContent: 'center',

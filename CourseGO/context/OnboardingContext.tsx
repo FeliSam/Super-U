@@ -43,29 +43,45 @@ async function writeFlag(key: string) {
 
 export function OnboardingProvider({ children }: { children: React.ReactNode }) {
   const { staff } = useStaffAuth();
-  const [ready, setReady] = useState(false);
-  const [welcomeDone, setWelcomeDone] = useState(true);
-  const [permsDone, setPermsDone] = useState(true);
+  /** Staff id for which welcome/perms flags are loaded. Gate must wait until this matches. */
+  const [loadedForId, setLoadedForId] = useState<string | null>(null);
+  const [welcomeDone, setWelcomeDone] = useState(false);
+  const [permsDone, setPermsDone] = useState(false);
 
   useEffect(() => {
     if (!staff) {
-      setWelcomeDone(true);
-      setPermsDone(true);
-      setReady(true);
+      setLoadedForId(null);
+      setWelcomeDone(false);
+      setPermsDone(false);
       return;
     }
+
+    const staffId = staff.id;
     let live = true;
-    setReady(false);
+    // Block Gate until AsyncStorage resolves — do not inherit "done" from logged-out state.
+    setLoadedForId(null);
+    setWelcomeDone(false);
+    setPermsDone(false);
+
+    const wPeek = typeof localStorage !== 'undefined' && localStorage.getItem(kWelcome(staffId)) === '1';
+    const pPeek = typeof localStorage !== 'undefined' && localStorage.getItem(kPerms(staffId)) === '1';
+    if (wPeek || pPeek) {
+      setWelcomeDone(Boolean(wPeek));
+      setPermsDone(Boolean(pPeek));
+      setLoadedForId(staffId);
+    }
+
     void (async () => {
       try {
-        const [w, p] = await Promise.all([readFlag(kWelcome(staff.id)), readFlag(kPerms(staff.id))]);
+        const [w, p] = await Promise.all([readFlag(kWelcome(staffId)), readFlag(kPerms(staffId))]);
         if (!live) return;
         setWelcomeDone(w);
         setPermsDone(p);
       } finally {
-        if (live) setReady(true);
+        if (live) setLoadedForId(staffId);
       }
     })();
+
     return () => {
       live = false;
     };
@@ -80,6 +96,8 @@ export function OnboardingProvider({ children }: { children: React.ReactNode }) 
     if (staff) await writeFlag(kPerms(staff.id));
     setPermsDone(true);
   }, [staff]);
+
+  const ready = !staff || loadedForId === staff.id;
 
   const value = useMemo(
     () => ({ ready, welcomeDone, permsDone, completeWelcome, completePerms }),

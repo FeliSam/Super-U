@@ -10,6 +10,8 @@ import {
   type CommsMessage,
 } from '@/lib/api/comms';
 import { formatChatClock } from '@/lib/format';
+import { keyboardScrollProps, useKeyboardAvoidProps } from '@/lib/keyboardAvoid';
+import { goBack, tabPaths } from '@/lib/navigation';
 import { staffPhotoSource } from '@/lib/staffPhoto';
 import { userPhotoSource } from '@/lib/userPhoto';
 import { Feather } from '@expo/vector-icons';
@@ -18,13 +20,13 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   Image,
   KeyboardAvoidingView,
-  Platform,
   Pressable,
   ScrollView,
   StyleSheet,
   Text,
   TextInput,
   View,
+  Platform,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
@@ -36,6 +38,7 @@ export default function ChatScreen() {
   const { startOutgoing } = useCall();
   const { staff } = useStaffAuth();
   const insets = useSafeAreaInsets();
+  const kav = useKeyboardAvoidProps();
   const [peer, setPeer] = useState('Client');
   const [peerUserId, setPeerUserId] = useState<string | null>(null);
   const [archived, setArchived] = useState(false);
@@ -87,9 +90,9 @@ export default function ChatScreen() {
 
   return (
     <Screen>
-      <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
+      <KeyboardAvoidingView style={{ flex: 1 }} {...kav}>
         <View style={styles.header}>
-          <IconBtn name="chevron-left" size={36} onPress={() => router.back()} />
+          <IconBtn name="chevron-left" size={36} onPress={() => goBack(tabPaths.home)} />
           <Image source={userPhotoSource(peerUserId)} style={styles.headerAvatar} />
           <View style={{ flex: 1 }}>
             <Text style={styles.name}>{peer}</Text>
@@ -105,6 +108,7 @@ export default function ChatScreen() {
         </View>
         <ScrollView
           ref={scrollRef}
+          {...keyboardScrollProps()}
           contentContainerStyle={styles.stream}
           onContentSizeChange={() => {
             const last = messages.at(-1)?.id ?? null;

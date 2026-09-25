@@ -5,12 +5,14 @@ import {
   fetchDeliveries,
   fetchMapStores,
   fetchPickJobs,
+  postPresence,
   type DeliveryJob,
   type MapStore,
   type PickJob,
   type TourHop,
 } from '@/lib/api/ops';
 import { pauseBlockedMessage, staffOpenMission } from '@/lib/opsModel';
+import { subscribeLastDrop } from '@/lib/tourRoute';
 import { showToast } from '@/lib/toastBus';
 import React, { createContext, useCallback, useContext, useEffect, useMemo, useState } from 'react';
 import { AppState, Platform } from 'react-native';
@@ -40,7 +42,7 @@ function isHidden() {
 
 export function BoardProvider({ children }: { children: React.ReactNode }) {
   const { staff } = useStaffAuth();
-  const { prefs, patchPrefs } = useStaffPrefs();
+  const { prefs, patchPrefs, ready } = useStaffPrefs();
   const [jobs, setJobs] = useState<PickJob[]>([]);
   const [deliveries, setDeliveries] = useState<DeliveryJob[]>([]);
   const [tourHop, setTourHop] = useState<TourHop | null>(null);
@@ -62,6 +64,7 @@ export function BoardProvider({ children }: { children: React.ReactNode }) {
         return;
       }
       patchPrefs({ online: v });
+      void postPresence(v).catch(() => undefined);
     },
     [canPause, openMission, patchPrefs],
   );
@@ -90,8 +93,18 @@ export function BoardProvider({ children }: { children: React.ReactNode }) {
         setJobs(p.value.jobs.filter((j) => !j.picker_id || j.picker_id === staff.id));
       } else errors.push(errorMessage(p.reason));
       if (d.status === 'fulfilled') {
-        setDeliveries(d.value.deliveries.filter((row) => !row.courier_id || row.courier_id === staff.id));
-        setTourHop(d.value.tourHop ?? null);
+        const rows = d.value.deliveries.filter((row) => !row.courier_id || row.courier_id === staff.id);
+        setDeliveries(rows);
+        const serverHop = d.value.tourHop ?? null;
+        setTourHop((prev) => {
+          if (serverHop) return serverHop;
+          const stillOut = rows.some(
+            (row) =>
+              row.courier_id === staff.id &&
+              ['assigned', 'at_store', 'picked_up', 'en_route', 'arrived'].includes(String(row.delivery_status)),
+          );
+          return stillOut ? prev : null;
+        });
       } else errors.push(errorMessage(d.reason));
       if (s.status === 'fulfilled') setMapStores(s.value.stores);
       if (errors.length) setLastError(errors[0] ?? null);
@@ -105,8 +118,30 @@ export function BoardProvider({ children }: { children: React.ReactNode }) {
   }, [staff]);
 
   useEffect(() => {
+    if (!staff || !ready) return;
+    void postPresence(online).catch(() => undefined);
+    const t = setInterval(() => {
+      if (isHidden()) return;
+      void postPresence(online).catch(() => undefined);
+    }, 12000);
+    return () => clearInterval(t);
+  }, [staff, ready, online]);
+
+  useEffect(() => {
     void refresh();
   }, [refresh]);
+
+  useEffect(() => {
+    return subscribeLastDrop((hop) => {
+      if (!hop) return;
+      setTourHop({
+        lng: hop.from[0],
+        lat: hop.from[1],
+        storeId: hop.storeId,
+        label: hop.label,
+      });
+    });
+  }, []);
 
   useEffect(() => {
     if (!staff) return;
@@ -114,7 +149,7 @@ export function BoardProvider({ children }: { children: React.ReactNode }) {
       if (isHidden()) return;
       void refresh({ silent: true });
     };
-    const t = setInterval(tick, 2000);
+    const t = setInterval(tick, 1200);
     const onVis = () => {
       if (!isHidden()) void refresh({ silent: true });
     };

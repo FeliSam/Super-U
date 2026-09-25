@@ -52,6 +52,7 @@ export function MissionCard({
   nearest?: boolean;
 }) {
   const speed = slotKind(slotId, slotLabel);
+  const takePending = !selected && cta.trim().toUpperCase().includes('PRENDRE');
   const icon = ctaIcon(cta, selected, kind);
   const iconColor = selected ? colors.teal : colors.onAccent;
   return (
@@ -91,15 +92,23 @@ export function MissionCard({
             styles.accept,
             selected
               ? styles.acceptSelected
-              : kind === 'deliver'
-                ? styles.acceptDeliver
-                : styles.acceptPick,
+              : takePending
+                ? styles.acceptTake
+                : kind === 'deliver'
+                  ? styles.acceptDeliver
+                  : styles.acceptPick,
           ]}>
           <Feather name={icon} size={15} color={iconColor} />
           <Text
             style={[
               styles.acceptText,
-              selected ? styles.acceptTextSelected : kind === 'deliver' ? styles.acceptTextDeliver : styles.acceptTextPick,
+              selected
+                ? styles.acceptTextSelected
+                : takePending
+                  ? styles.acceptTextTake
+                  : kind === 'deliver'
+                    ? styles.acceptTextDeliver
+                    : styles.acceptTextPick,
             ]}>
             {cta}
           </Text>
@@ -225,6 +234,10 @@ const styles = StyleSheet.create({
     backgroundColor: colors.coral,
     borderColor: colors.coral,
   },
+  acceptTake: {
+    backgroundColor: colors.amber,
+    borderColor: colors.amber,
+  },
   acceptSelected: {
     backgroundColor: colors.tealSoft,
     borderColor: colors.teal,
@@ -232,5 +245,6 @@ const styles = StyleSheet.create({
   acceptText: { ...displayFont('800'), fontSize: 13 },
   acceptTextPick: { color: colors.onAccent },
   acceptTextDeliver: { color: colors.onAccent },
+  acceptTextTake: { color: colors.onAccent },
   acceptTextSelected: { color: colors.teal },
 });

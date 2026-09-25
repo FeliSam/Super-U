@@ -31,6 +31,9 @@ import React, {
   useRef,
   useState,
 } from 'react';
+import { Platform } from 'react-native';
+
+const IS_WEB = Platform.OS === 'web';
 
 export type CallPhase = 'idle' | 'outgoing' | 'incoming' | 'active';
 
@@ -78,6 +81,22 @@ type Value = {
 
 const Ctx = createContext<Value | null>(null);
 
+function safeStopMedia() {
+  try {
+    stopCallMedia();
+  } catch {
+    /* native / no WebRTC */
+  }
+}
+
+function safeStopRing() {
+  try {
+    stopRingtone();
+  } catch {
+    /* ignore */
+  }
+}
+
 export function CallProvider({ children }: { children: React.ReactNode }) {
   const { prefs } = useStaffPrefs();
   const [remote, setRemote] = useState<CommsCall | null>(null);
@@ -99,8 +118,8 @@ export function CallProvider({ children }: { children: React.ReactNode }) {
   };
 
   const resetCall = useCallback(() => {
-    stopCallMedia();
-    stopRingtone();
+    safeStopMedia();
+    safeStopRing();
     mediaFor.current = null;
     clearMiss();
     setRemote(null);
@@ -149,28 +168,47 @@ export function CallProvider({ children }: { children: React.ReactNode }) {
     return () => clearInterval(t);
   }, [resetCall]);
 
+  // Web-only: unlock AudioContext after first gesture. RN exposes a `window`
+  // polyfill without addEventListener — calling it crashes boot.
   useEffect(() => {
-    if (typeof window === 'undefined') return;
-    const unlock = () => unlockAudio();
+    if (!IS_WEB || typeof window === 'undefined') return;
+    if (typeof window.addEventListener !== 'function') return;
+    const unlock = () => {
+      try {
+        unlockAudio();
+      } catch {
+        /* ignore */
+      }
+    };
     window.addEventListener('pointerdown', unlock, { once: true });
-    return () => window.removeEventListener('pointerdown', unlock);
+    return () => {
+      if (typeof window.removeEventListener === 'function') {
+        window.removeEventListener('pointerdown', unlock);
+      }
+    };
   }, []);
 
   useEffect(() => {
+    if (!IS_WEB) return;
     if (!prefs.sound) {
-      stopRingtone();
+      safeStopRing();
       return;
     }
-    if (phase === 'incoming') startRingtone('in');
-    else if (phase === 'outgoing') startRingtone('out');
-    else stopRingtone();
+    try {
+      if (phase === 'incoming') startRingtone('in');
+      else if (phase === 'outgoing') startRingtone('out');
+      else safeStopRing();
+    } catch {
+      /* Web Audio missing */
+    }
   }, [phase, prefs.sound]);
 
   useEffect(() => {
+    if (!IS_WEB) return;
     const id = remote?.id;
     if (!id || phase === 'idle') {
       if (mediaFor.current) {
-        stopCallMedia();
+        safeStopMedia();
         mediaFor.current = null;
       }
       return;
@@ -194,53 +232,86 @@ export function CallProvider({ children }: { children: React.ReactNode }) {
   }, [remote?.id, remote?.role, phase, resetCall]);
 
   useEffect(() => {
-    updateCallMedia({
-      muted: controls.muted,
-      held: controls.onHold,
-      speakerOn: controls.speakerOn,
-      live: phase === 'active',
-    });
-    if (phase === 'active') resumeCallPlayback();
+    if (!IS_WEB) return;
+    try {
+      updateCallMedia({
+        muted: controls.muted,
+        held: controls.onHold,
+        speakerOn: controls.speakerOn,
+        live: phase === 'active',
+      });
+      if (phase === 'active') resumeCallPlayback();
+    } catch {
+      /* ignore */
+    }
   }, [controls.muted, controls.onHold, controls.speakerOn, phase]);
 
-  const startOutgoing = useCallback(async (threadId: string, peerNameValue: string) => {
-    if (phase !== 'idle') return;
-    primeCallAudio();
-    startingRef.current = true;
-    setControls(IDLE);
-    setElapsedSec(0);
-    setPeerName(peerNameValue);
-    setPhase('outgoing');
-    try {
-      const res = await startCall(threadId, 'audio');
-      mediaFor.current = null;
-      setRemote(res.call);
-      setPhase(res.call.status === 'accepted' ? 'active' : 'outgoing');
-      clearMiss();
-      if (res.call.status === 'accepted') return;
-      missTimer.current = setTimeout(() => {
-        if (phaseRef.current === 'active') return;
-        void hangupCall(res.call.id).catch(() => undefined);
+  const startOutgoing = useCallback(
+    async (threadId: string, peerNameValue: string) => {
+      if (phaseRef.current !== 'idle') return;
+      if (IS_WEB) {
+        try {
+          primeCallAudio();
+        } catch {
+          /* ignore */
+        }
+      }
+      startingRef.current = true;
+      setControls(IDLE);
+      setElapsedSec(0);
+      setPeerName(peerNameValue);
+      setPhase('outgoing');
+      try {
+        const res = await startCall(threadId, 'audio');
+        mediaFor.current = null;
+        setRemote(res.call);
+        setPhase(res.call.status === 'accepted' ? 'active' : 'outgoing');
+        clearMiss();
+        if (res.call.status === 'accepted') return;
+        missTimer.current = setTimeout(() => {
+          if (phaseRef.current === 'active') return;
+          void hangupCall(res.call.id).catch(() => undefined);
+          setPhase('idle');
+          setRemote(null);
+        }, 45000);
+      } catch (e) {
+        showToast({
+          title: 'Appel',
+          body: e instanceof Error ? e.message : 'Impossible de démarrer l’appel.',
+          tone: 'error',
+        });
         setPhase('idle');
         setRemote(null);
-      }, 45000);
-    } catch (e) {
-      showToast({
-        title: 'Appel',
-        body: e instanceof Error ? e.message : 'Impossible de démarrer l’appel.',
-        tone: 'error',
-      });
-      setPhase('idle');
-      setRemote(null);
-    } finally {
-      startingRef.current = false;
-    }
-  }, [phase, resetCall]);
+      } finally {
+        startingRef.current = false;
+      }
+    },
+    [],
+  );
 
   const accept = useCallback(async () => {
     if (!remote) return;
-    primeCallAudio();
-    resumeCallPlayback();
+    if (!IS_WEB) {
+      try {
+        const res = await acceptCall(remote.id);
+        setRemote(res.call);
+        setPhase('active');
+        clearMiss();
+      } catch (e) {
+        showToast({
+          title: 'Appel',
+          body: e instanceof Error ? e.message : 'Impossible de décrocher.',
+          tone: 'error',
+        });
+      }
+      return;
+    }
+    try {
+      primeCallAudio();
+      resumeCallPlayback();
+    } catch {
+      /* ignore */
+    }
     const id = remote.id;
     try {
       const local = await captureLocalMic();
@@ -278,7 +349,10 @@ export function CallProvider({ children }: { children: React.ReactNode }) {
 
   const hangupFn = useCallback(async () => {
     const id = remoteRef.current?.id;
-    if (!id) return;
+    if (!id) {
+      resetCall();
+      return;
+    }
     const outgoing = phaseRef.current === 'outgoing';
     void postCallSignal(id, 'hangup', {}).catch(() => undefined);
     if (outgoing) await cancelCall(id).catch(() => hangupCall(id));
@@ -288,7 +362,14 @@ export function CallProvider({ children }: { children: React.ReactNode }) {
 
   const value = useMemo<Value>(
     () => ({
-      call: remote ? { id: remote.id, threadId: remote.thread_id, peerName } : null,
+      call:
+        phase !== 'idle'
+          ? {
+              id: remote?.id ?? 'pending',
+              threadId: remote?.thread_id ?? '',
+              peerName: peerName || remote?.peer_name || 'Client',
+            }
+          : null,
       phase,
       elapsedSec,
       controls,

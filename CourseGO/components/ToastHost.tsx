@@ -2,7 +2,7 @@ import { TAB_BAR_HEIGHT, TAB_BAR_MARGIN } from '@/constants/theme';
 import { showToast, subscribeToasts, type ToastPayload, type ToastTone } from '@/lib/toastBus';
 import { router } from 'expo-router';
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { Animated, Pressable, StyleSheet, Text, View } from 'react-native';
+import { Animated, Platform, Pressable, StyleSheet, Text, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 type Item = ToastPayload & { id: string; exiting?: boolean };
@@ -13,22 +13,24 @@ const TONE: Record<ToastTone, { bg: string; border: string }> = {
   success: { bg: '#163A22', border: '#2E8B4A' },
 };
 
+const NATIVE_DRIVER = Platform.OS !== 'web';
+
 function ToastCard({ item, onGone }: { item: Item; onGone: (id: string) => void }) {
   const opacity = useRef(new Animated.Value(0)).current;
   const translateY = useRef(new Animated.Value(28)).current;
 
   useEffect(() => {
     Animated.parallel([
-      Animated.timing(opacity, { toValue: 1, duration: 260, useNativeDriver: true }),
-      Animated.spring(translateY, { toValue: 0, friction: 8, tension: 90, useNativeDriver: true }),
+      Animated.timing(opacity, { toValue: 1, duration: 260, useNativeDriver: NATIVE_DRIVER }),
+      Animated.spring(translateY, { toValue: 0, friction: 8, tension: 90, useNativeDriver: NATIVE_DRIVER }),
     ]).start();
   }, [opacity, translateY]);
 
   useEffect(() => {
     if (!item.exiting) return;
     Animated.parallel([
-      Animated.timing(opacity, { toValue: 0, duration: 220, useNativeDriver: true }),
-      Animated.timing(translateY, { toValue: 36, duration: 220, useNativeDriver: true }),
+      Animated.timing(opacity, { toValue: 0, duration: 220, useNativeDriver: NATIVE_DRIVER }),
+      Animated.timing(translateY, { toValue: 36, duration: 220, useNativeDriver: NATIVE_DRIVER }),
     ]).start(({ finished }) => {
       if (finished) onGone(item.id);
     });

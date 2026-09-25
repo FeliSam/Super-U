@@ -141,3 +141,10 @@ export async function fetchCallSignals(callId: string, afterId = 0) {
     `/comms/calls/${encodeURIComponent(callId)}/signals?afterId=${encodeURIComponent(String(afterId))}`,
   );
 }
+
+export async function registerCommsDevice(platform: 'ios' | 'android' | 'web', pushToken: string | null, voipToken: string | null = null) {
+  return apiFetch<{ ok: true }>('/comms/devices', {
+    method: 'POST',
+    body: JSON.stringify({ platform, pushToken, voipToken }),
+  });
+}

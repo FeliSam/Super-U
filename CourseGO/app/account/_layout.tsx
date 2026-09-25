@@ -5,6 +5,7 @@ export default function AccountLayout() {
   return (
     <Stack screenOptions={{ headerShown: false, contentStyle: { backgroundColor: colors.bg } }}>
       <Stack.Screen name="personal" />
+      <Stack.Screen name="stores" />
       <Stack.Screen name="vehicle" />
       <Stack.Screen name="documents" />
       <Stack.Screen name="security" />

@@ -33,22 +33,30 @@ function saveSeen(staffId: string, ids: Set<string>) {
   }
 }
 
-/** Toasts only true new events this session. Calls already on overlay are skipped. */
+/** Toasts only events that arrive after this session is already open. */
 export function StaffNotificationToasts() {
   const { items, ready, markRead } = useStaffNotifications();
   const { prefs } = useStaffPrefs();
   const { staff } = useStaffAuth();
   const { phase, call } = useCall();
   const seen = useRef<Set<string> | null>(null);
+  const primed = useRef(false);
   const staffKey = staff?.id ?? null;
 
   useEffect(() => {
     seen.current = staffKey ? loadSeen(staffKey) : new Set();
+    primed.current = false;
   }, [staffKey]);
 
   useEffect(() => {
     if (!ready || !staffKey) return;
     if (seen.current === null) seen.current = loadSeen(staffKey);
+    if (!primed.current) {
+      for (const n of items) seen.current.add(n.id);
+      saveSeen(staffKey, seen.current);
+      primed.current = true;
+      return;
+    }
     const onCall = phase === 'incoming' || phase === 'outgoing' || phase === 'active';
     for (const n of items) {
       if (n.read_at) {

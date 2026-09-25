@@ -1,6 +1,8 @@
 import { PhoneShell } from '@/components/PhoneShell';
 import { CallOverlay } from '@/components/CallOverlay';
 import { CourseSplash } from '@/components/CourseSplash';
+import { KeyboardDismissBar } from '@/components/KeyboardDismissBar';
+import { StaffLiveActivityHost } from '@/components/StaffLiveActivityHost';
 import { StaffNotificationToasts } from '@/components/StaffNotificationToasts';
 import { ToastHost } from '@/components/ToastHost';
 import { BoardProvider } from '@/context/BoardContext';
@@ -8,41 +10,65 @@ import { CallProvider } from '@/context/CallContext';
 import { ChatProvider } from '@/context/ChatContext';
 import { LocationProvider } from '@/context/LocationContext';
 import { NotificationsProvider } from '@/context/NotificationsContext';
+import { PushNotificationsProvider } from '@/context/PushNotificationsContext';
 import { OnboardingProvider, useOnboarding } from '@/context/OnboardingContext';
 import { StaffPrefsProvider } from '@/context/StaffPrefsContext';
 import { StaffAuthProvider, useStaffAuth } from '@/context/StaffAuthContext';
 import { colors } from '@/constants/theme';
 import { loadBrandFonts } from '@/lib/fonts';
+import { loadApiBaseOverride } from '@/lib/api/http';
+import { hydrateStaffSessionPeek, peekStaffHasSession } from '@/lib/sessionPeek';
+import { clearPendingToasts } from '@/lib/toastBus';
+import { Feather } from '@expo/vector-icons';
+import * as Font from 'expo-font';
 import { Stack, router, useSegments } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
-import { useEffect, useState } from 'react';
-import { ActivityIndicator, LogBox, Platform, StyleSheet, View } from 'react-native';
+import { useCallback, useEffect, useState } from 'react';
+import { ActivityIndicator, StyleSheet, View } from 'react-native';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 
-LogBox.ignoreLogs(['Map cannot fit within canvas']);
+export { ErrorBoundary } from '@/components/AppErrorBoundary';
 
-export { ErrorBoundary } from 'expo-router';
+void loadApiBaseOverride();
+void hydrateStaffSessionPeek();
 
-export const unstable_settings = { initialRouteName: '(auth)' };
+export const unstable_settings = { initialRouteName: peekStaffHasSession() ? '(tabs)' : '(auth)' };
 
-function Gate() {
+function Gate({ splash }: { splash: boolean }) {
   const { ready, staff } = useStaffAuth();
   const onboarding = useOnboarding();
   const segments = useSegments();
+  const inAuth = segments[0] === '(auth)';
+  const authPage = String(segments[1] ?? '');
+  const peekSession = peekStaffHasSession();
 
   useEffect(() => {
-    if (!ready || !onboarding.ready) return;
-    const inAuth = segments[0] === '(auth)';
-    const authPage = String(segments[1] ?? '');
-    if (!staff && !inAuth) {
-      router.replace('/(auth)/login');
+    // Pendant le splash : préparer l’accueil si session connue (évite flash login).
+    if (splash) {
+      if (ready && staff && onboarding.ready && onboarding.welcomeDone && onboarding.permsDone && !staff.mustResetPassword) {
+        if (inAuth) router.replace('/(tabs)');
+      }
       return;
     }
-    if (!staff) return;
+
+    if (!ready) {
+      // Session en cache / hydratation : ne pas renvoyer vers login.
+      if (peekSession && inAuth) return;
+      return;
+    }
+
+    if (!staff) {
+      if (peekSession) return;
+      clearPendingToasts();
+      if (!inAuth) router.replace('/(auth)/login');
+      return;
+    }
+
     if (staff.mustResetPassword) {
       if (authPage !== 'reset-password') router.replace('/(auth)/reset-password');
       return;
     }
+    if (!onboarding.ready) return;
     if (!onboarding.welcomeDone) {
       if (authPage !== 'welcome') router.replace('/(auth)/welcome');
       return;
@@ -52,7 +78,24 @@ function Gate() {
       return;
     }
     if (inAuth) router.replace('/(tabs)');
-  }, [ready, staff, segments, onboarding.ready, onboarding.welcomeDone, onboarding.permsDone]);
+  }, [
+    ready,
+    staff,
+    segments,
+    splash,
+    inAuth,
+    authPage,
+    peekSession,
+    onboarding.ready,
+    onboarding.welcomeDone,
+    onboarding.permsDone,
+  ]);
+
+  useEffect(() => {
+    if (inAuth) clearPendingToasts();
+  }, [inAuth]);
+
+  const showChrome = !splash && !inAuth;
 
   return (
     <>
@@ -60,9 +103,8 @@ function Gate() {
         screenOptions={{
           headerShown: false,
           contentStyle: { backgroundColor: colors.bg },
-          animation: Platform.OS === 'web' ? 'none' : 'default',
+          animation: 'none',
           freezeOnBlur: false,
-          detachInactiveScreens: false,
         }}>
         <Stack.Screen name="(auth)" />
         <Stack.Screen name="(tabs)" />
@@ -76,12 +118,18 @@ function Gate() {
         <Stack.Screen name="wait/[id]" />
         <Stack.Screen name="confirm/[id]" />
         <Stack.Screen name="rate/[id]" />
+        <Stack.Screen name="reviews" />
         <Stack.Screen name="incident/[id]" />
       </Stack>
-      <CallOverlay />
-      <StaffNotificationToasts />
-      <ToastHost />
-      {!ready || !onboarding.ready ? (
+      {showChrome ? (
+        <>
+          <CallOverlay />
+          <StaffLiveActivityHost />
+          <StaffNotificationToasts />
+          <ToastHost />
+        </>
+      ) : null}
+      {!splash && (!ready || (staff && !onboarding.ready)) && (peekSession || staff) ? (
         <View style={styles.boot}>
           <ActivityIndicator color={colors.teal} size="large" />
         </View>
@@ -90,30 +138,50 @@ function Gate() {
   );
 }
 
+function CourseSplashHost({ onDone }: { onDone: () => void }) {
+  const { ready, staff } = useStaffAuth();
+  const onboarding = useOnboarding();
+  const allowExit = ready && (!staff || onboarding.ready);
+  return <CourseSplash onFinish={onDone} allowExit={allowExit} />;
+}
+
 export default function Root() {
   const [splash, setSplash] = useState(true);
+  const onSplashDone = useCallback(() => setSplash(false), []);
+
   useEffect(() => {
-    void loadBrandFonts();
+    void (async () => {
+      try {
+        await Font.loadAsync(Feather.font);
+      } catch {
+        /* Expo Go / system icons */
+      }
+      await loadBrandFonts();
+    })();
   }, []);
+
   return (
-    <GestureHandlerRootView style={{ flex: 1, backgroundColor: '#0f172a' }}>
+    <GestureHandlerRootView style={{ flex: 1, backgroundColor: colors.bg }}>
       <PhoneShell>
         <StaffAuthProvider>
           <OnboardingProvider>
             <NotificationsProvider>
-              <StaffPrefsProvider>
-                <BoardProvider>
-                  <LocationProvider>
-                    <ChatProvider>
-                      <CallProvider>
-                        <StatusBar style="dark" />
-                        <Gate />
-                        {splash ? <CourseSplash onFinish={() => setSplash(false)} /> : null}
-                      </CallProvider>
-                    </ChatProvider>
-                  </LocationProvider>
-                </BoardProvider>
-              </StaffPrefsProvider>
+              <PushNotificationsProvider>
+                <StaffPrefsProvider>
+                  <BoardProvider>
+                    <LocationProvider>
+                      <ChatProvider>
+                        <CallProvider>
+                          <StatusBar style="dark" />
+                          <Gate splash={splash} />
+                          {splash ? <CourseSplashHost onDone={onSplashDone} /> : null}
+                          <KeyboardDismissBar />
+                        </CallProvider>
+                      </ChatProvider>
+                    </LocationProvider>
+                  </BoardProvider>
+                </StaffPrefsProvider>
+              </PushNotificationsProvider>
             </NotificationsProvider>
           </OnboardingProvider>
         </StaffAuthProvider>

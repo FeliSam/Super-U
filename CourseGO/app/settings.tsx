@@ -1,9 +1,12 @@
+import { ConfirmModal } from '@/components/ConfirmModal';
+import { ApiHostEditor } from '@/components/ApiHostEditor';
 import { IconBtn, Screen } from '@/components/ui';
 import { bodyFont, colors, displayFont, radius, shadow } from '@/constants/theme';
 import { useBoard } from '@/context/BoardContext';
 import { useStaffAuth } from '@/context/StaffAuthContext';
 import { useStaffPrefs } from '@/context/StaffPrefsContext';
-import { getApiBaseUrl } from '@/lib/api/http';
+import { usePushNotifications } from '@/context/PushNotificationsContext';
+import { goBack, tabPaths } from '@/lib/navigation';
 import { Feather } from '@expo/vector-icons';
 import Constants from 'expo-constants';
 import { Camera } from 'expo-camera';
@@ -88,7 +91,9 @@ export default function SettingsScreen() {
   const { staff, signOut } = useStaffAuth();
   const { online, canPause, setOnline } = useBoard();
   const { prefs, patchPrefs } = useStaffPrefs();
+  const { registerDevice } = usePushNotifications();
   const [permBusy, setPermBusy] = useState<string | null>(null);
+  const [logoutOpen, setLogoutOpen] = useState(false);
   const version = Constants.expoConfig?.version ?? '1.0.0';
 
   const askGps = useCallback(async () => {
@@ -115,16 +120,18 @@ export default function SettingsScreen() {
     try {
       if (Platform.OS === 'web' && typeof Notification !== 'undefined') {
         await Notification.requestPermission();
+      } else {
+        await registerDevice();
       }
     } finally {
       setPermBusy(null);
     }
-  }, []);
+  }, [registerDevice]);
 
   return (
     <Screen>
       <View style={styles.nav}>
-        <IconBtn name="chevron-left" bg={colors.white} onPress={() => router.back()} />
+        <IconBtn name="chevron-left" bg={colors.white} onPress={() => goBack(tabPaths.profile)} />
         <Text style={styles.title}>Paramètres</Text>
         <View style={{ width: 44 }} />
       </View>
@@ -150,6 +157,13 @@ export default function SettingsScreen() {
             hint="Le client voit votre pin pendant la livraison."
             value={prefs.shareLocation}
             onValueChange={(v) => patchPrefs({ shareLocation: v })}
+          />
+          <ToggleRow
+            icon="map-pin"
+            label="Super U le plus proche"
+            hint="Carte suggérée sur l’écran Maintenant (désactivé par défaut)."
+            value={prefs.showNearestStore}
+            onValueChange={(v) => patchPrefs({ showNearestStore: v })}
             last
           />
         </View>
@@ -258,11 +272,11 @@ export default function SettingsScreen() {
             <View style={styles.icon}>
               <Feather name="server" size={18} color={colors.teal} />
             </View>
-            <View style={styles.rowText}>
+            <View style={[styles.rowText, { flex: 1 }]}>
               <Text style={styles.rowLabel}>API SuperU</Text>
-              <Text style={styles.rowHint} numberOfLines={2}>
-                {getApiBaseUrl()}
-              </Text>
+              <View style={{ marginTop: 8 }}>
+                <ApiHostEditor />
+              </View>
             </View>
           </View>
         </View>
@@ -284,13 +298,27 @@ export default function SettingsScreen() {
           <LinkRow icon="info" label="À propos" hint="Cartes, API, version" onPress={() => router.push('/account/about')} last />
         </View>
 
-        <Pressable style={styles.logout} onPress={() => void signOut()}>
+        <Pressable style={styles.logout} onPress={() => setLogoutOpen(true)}>
           <Text style={styles.logoutTxt}>Se déconnecter</Text>
         </Pressable>
         <Text style={styles.legal}>
           Auth ops.staff uniquement — distincte du login client Marché Doré. Une seule base SuperU.
         </Text>
       </ScrollView>
+      <ConfirmModal
+        visible={logoutOpen}
+        icon="log-out"
+        danger
+        title="Se déconnecter ?"
+        body="Vous quittez CourseGo sur cet appareil. Les courses en cours restent au magasin."
+        cancelLabel="Rester"
+        confirmLabel="Se déconnecter"
+        onCancel={() => setLogoutOpen(false)}
+        onConfirm={() => {
+          setLogoutOpen(false);
+          void signOut();
+        }}
+      />
     </Screen>
   );
 }

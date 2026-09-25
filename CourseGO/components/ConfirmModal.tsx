@@ -1,6 +1,7 @@
+import { PhoneModalFrame } from '@/components/PhoneShell';
 import { bodyFont, colors, displayFont, radius, shadow } from '@/constants/theme';
 import { Feather } from '@expo/vector-icons';
-import type { ReactNode } from 'react';
+import type { ComponentProps, ReactNode } from 'react';
 import { Modal, Pressable, StyleSheet, Text, View } from 'react-native';
 
 export function StarPicker({
@@ -26,9 +27,10 @@ export function ConfirmModal({
   title,
   body,
   children,
+  icon,
+  danger,
   cancelLabel = 'Annuler',
   confirmLabel = 'Confirmer',
-  danger,
   busy,
   onCancel,
   onConfirm,
@@ -37,9 +39,10 @@ export function ConfirmModal({
   title: string;
   body?: string;
   children?: ReactNode;
+  icon?: ComponentProps<typeof Feather>['name'];
+  danger?: boolean;
   cancelLabel?: string;
   confirmLabel?: string;
-  danger?: boolean;
   busy?: boolean;
   onCancel: () => void;
   onConfirm?: () => void;
@@ -47,9 +50,13 @@ export function ConfirmModal({
   if (!visible) return null;
   return (
     <Modal visible transparent animationType="fade" onRequestClose={onCancel}>
-      <View style={styles.backdrop}>
-        <Pressable style={StyleSheet.absoluteFill} onPress={onCancel} />
+      <PhoneModalFrame align="center" onDismiss={onCancel}>
         <View style={styles.card}>
+          {icon ? (
+            <View style={[styles.iconWrap, danger ? styles.iconDanger : styles.iconTeal]}>
+              <Feather name={icon} size={26} color={danger ? colors.danger : colors.teal} />
+            </View>
+          ) : null}
           <Text style={styles.title}>{title}</Text>
           {body ? <Text style={styles.body}>{body}</Text> : null}
           {children}
@@ -67,27 +74,34 @@ export function ConfirmModal({
             ) : null}
           </View>
         </View>
-      </View>
+      </PhoneModalFrame>
     </Modal>
   );
 }
 
 const styles = StyleSheet.create({
-  backdrop: {
-    flex: 1,
-    backgroundColor: 'rgba(15,23,42,0.45)',
-    justifyContent: 'center',
-    padding: 24,
-  },
   card: {
+    width: '100%',
     backgroundColor: colors.white,
     borderRadius: radius.card,
-    padding: 22,
-    gap: 12,
+    padding: 24,
+    gap: 10,
+    alignItems: 'stretch',
     ...shadow.tabBar,
   },
-  title: { ...displayFont('800'), fontSize: 20, color: colors.text },
-  body: { ...bodyFont('500'), fontSize: 15, color: colors.muted, lineHeight: 22 },
+  iconWrap: {
+    width: 56,
+    height: 56,
+    borderRadius: 18,
+    alignItems: 'center',
+    justifyContent: 'center',
+    alignSelf: 'center',
+    marginBottom: 4,
+  },
+  iconTeal: { backgroundColor: colors.tealSoft },
+  iconDanger: { backgroundColor: colors.dangerSoft },
+  title: { ...displayFont('800'), fontSize: 20, color: colors.text, textAlign: 'center' },
+  body: { ...bodyFont('500'), fontSize: 15, color: colors.muted, lineHeight: 22, textAlign: 'center' },
   stars: { flexDirection: 'row', gap: 8, marginVertical: 4 },
   actions: { flexDirection: 'row', gap: 10, marginTop: 8 },
   ghost: {

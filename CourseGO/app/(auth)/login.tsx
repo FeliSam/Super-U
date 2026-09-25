@@ -1,18 +1,20 @@
-import { colors, displayFont, bodyFont } from '@/constants/theme';
+import { ApiHostEditor } from '@/components/ApiHostEditor';
+import { colors, displayFont, bodyFont, radius, shadow } from '@/constants/theme';
 import { useStaffAuth } from '@/context/StaffAuthContext';
 import { CourseLogo } from '@/components/CourseLogo';
 import { Field, PillButton, Screen } from '@/components/ui';
-import { getApiBaseUrl } from '@/lib/api/http';
+import { keyboardScrollProps, useKeyboardAvoidProps } from '@/lib/keyboardAvoid';
 import { router } from 'expo-router';
 import { useState } from 'react';
-import { Pressable, StyleSheet, Text, View } from 'react-native';
+import { KeyboardAvoidingView, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 
 export default function LoginScreen() {
-  const { signIn, demoHint } = useStaffAuth();
+  const { signIn, demoHint, sessionNotice, clearSessionNotice, offline } = useStaffAuth();
   const [identifier, setIdentifier] = useState(demoHint.email);
   const [password, setPassword] = useState(demoHint.password);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
+  const kav = useKeyboardAvoidProps();
 
   const submit = async () => {
     if (!identifier.trim()) {
@@ -24,6 +26,7 @@ export default function LoginScreen() {
       return;
     }
     setError(null);
+    clearSessionNotice();
     setLoading(true);
     try {
       const res = await signIn(identifier, password);
@@ -33,76 +36,148 @@ export default function LoginScreen() {
     }
   };
 
+  const banner = error || sessionNotice;
+
   return (
     <Screen style={styles.wrap}>
-      <View>
-        <View style={styles.hero}>
-          <CourseLogo width={210} style={styles.logo} />
-          <Text style={styles.title}>Connectez-vous à votre compte</Text>
-          <Text style={styles.sub}>E-mail staff et mot de passe pour entrer en course.</Text>
-        </View>
+      <KeyboardAvoidingView {...kav} style={{ flex: 1 }}>
+        <ScrollView
+          contentContainerStyle={styles.scroll}
+          {...keyboardScrollProps()}
+          showsVerticalScrollIndicator={false}>
+          <View style={styles.hero}>
+            <CourseLogo width={196} />
+            <Text style={styles.kicker}>Espace staff</Text>
+            <Text style={styles.title}>Connexion CourseGo</Text>
+            <Text style={styles.sub}>
+              E-mail ou téléphone ops. Sans serveur : compte démo courier@ / marche2024 (mode local).
+            </Text>
+          </View>
 
-        <View style={styles.form}>
-          {error ? <Text style={styles.err}>{error}</Text> : null}
+          <View style={styles.card}>
+            {offline ? (
+              <View style={[styles.errBox, styles.warnBox]}>
+                <Text style={[styles.errKicker, styles.warnKicker]}>Mode local</Text>
+                <Text style={[styles.err, styles.warnTxt]}>
+                  API coupée — vous pouvez quand même entrer avec le compte démo.
+                </Text>
+              </View>
+            ) : null}
+            {banner ? (
+              <View style={[styles.errBox, sessionNotice && !error ? styles.warnBox : null]}>
+                <Text style={[styles.errKicker, sessionNotice && !error ? styles.warnKicker : null]}>
+                  {error ? 'Erreur' : 'Pourquoi vous êtes ici'}
+                </Text>
+                <Text style={[styles.err, sessionNotice && !error ? styles.warnTxt : null]}>{banner}</Text>
+              </View>
+            ) : null}
 
-          <Field
-            label="E-MAIL OU TÉLÉPHONE"
-            value={identifier}
-            onChangeText={setIdentifier}
-            autoCapitalize="none"
-            autoCorrect={false}
-            keyboardType="email-address"
-            textContentType="username"
-            placeholder={demoHint.email}
-            returnKeyType="next"
-          />
+            <Field
+              label="E-MAIL OU TÉLÉPHONE"
+              value={identifier}
+              onChangeText={setIdentifier}
+              autoCapitalize="none"
+              autoCorrect={false}
+              keyboardType="email-address"
+              textContentType="username"
+              placeholder={demoHint.email}
+              returnKeyType="next"
+            />
 
-          <Field
-            label="MOT DE PASSE"
-            value={password}
-            onChangeText={setPassword}
-            secureTextEntry
-            secureToggle
-            textContentType="password"
-            placeholder="••••••••"
-            returnKeyType="done"
-            onSubmitEditing={() => void submit()}
-          />
+            <Field
+              label="MOT DE PASSE"
+              value={password}
+              onChangeText={setPassword}
+              secureTextEntry
+              secureToggle
+              textContentType="password"
+              placeholder="••••••••"
+              returnKeyType="done"
+              onSubmitEditing={() => void submit()}
+            />
 
-          <PillButton label={loading ? '…' : 'CONTINUER'} onPress={() => void submit()} disabled={loading} />
+            <PillButton label={loading ? '…' : 'CONTINUER'} onPress={() => void submit()} disabled={loading} />
+          </View>
 
-          <Pressable onPress={() => router.push('/(auth)/register')}>
-            <Text style={styles.forgot}>Créer un compte livreur</Text>
+          <Pressable onPress={() => router.push('/(auth)/register')} style={styles.linkBtn}>
+            <Text style={styles.link}>Créer un compte livreur</Text>
           </Pressable>
           <Pressable
             onPress={() => {
               setIdentifier(demoHint.email);
               setPassword(demoHint.password);
               setError(null);
-            }}>
-            <Text style={styles.forgot}>Compte démo · {demoHint.email} / {demoHint.password}</Text>
+            }}
+            style={styles.demo}>
+            <Text style={styles.demoKicker}>Compte démo</Text>
+            <Text style={styles.demoTxt}>{demoHint.email}</Text>
           </Pressable>
-        </View>
-      </View>
 
-      <View style={styles.bottom}>
-        <Text style={styles.foot}>API {getApiBaseUrl()}</Text>
-        <View style={styles.indicator} />
-      </View>
+          <View style={styles.bottom}>
+            <ApiHostEditor />
+            <View style={styles.indicator} />
+          </View>
+        </ScrollView>
+      </KeyboardAvoidingView>
     </Screen>
   );
 }
 
 const styles = StyleSheet.create({
   wrap: { justifyContent: 'space-between' },
-  hero: { gap: 8, paddingHorizontal: 24, paddingTop: 28, paddingBottom: 24, alignItems: 'center' },
-  logo: { marginBottom: 8, alignSelf: 'center' },
-  title: { ...displayFont('800'), fontSize: 20, color: colors.text, textAlign: 'center' },
-  sub: { ...bodyFont('400'), fontSize: 14, color: colors.muted },
-  form: { paddingHorizontal: 24, gap: 20 },
-  err: { ...bodyFont('600'), color: colors.danger },
-  forgot: { ...bodyFont('600'), fontSize: 14, color: colors.muted, textAlign: 'center' },
-  bottom: { padding: 24, alignItems: 'center', gap: 12 },
-  foot: { ...bodyFont('400'), fontSize: 12, color: colors.placeholder, textAlign: 'center' },
-  indicator: { width: 134, height: 5, borderRadius: 10, backgroundColor: colors.teal },
+  scroll: { paddingHorizontal: 20, paddingTop: 16, paddingBottom: 12, gap: 16, flexGrow: 1, justifyContent: 'center' },
+  hero: { alignItems: 'center', gap: 8, paddingBottom: 4 },
+  kicker: {
+    ...displayFont('800'),
+    fontSize: 11,
+    letterSpacing: 1,
+    textTransform: 'uppercase',
+    color: colors.teal,
+  },
+  title: { ...displayFont('800'), fontSize: 24, color: colors.text, textAlign: 'center', letterSpacing: -0.4 },
+  sub: { ...bodyFont('400'), fontSize: 14, color: colors.muted, textAlign: 'center', lineHeight: 20, paddingHorizontal: 12 },
+  card: {
+    backgroundColor: colors.white,
+    borderRadius: radius.card,
+    padding: 18,
+    gap: 16,
+    borderWidth: 1,
+    borderColor: colors.border,
+    ...shadow.card,
+  },
+  errBox: {
+    backgroundColor: colors.dangerSoft,
+    borderRadius: 12,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    gap: 4,
+  },
+  warnBox: {
+    backgroundColor: colors.tealSoft,
+  },
+  errKicker: {
+    ...displayFont('800'),
+    fontSize: 10,
+    letterSpacing: 0.6,
+    textTransform: 'uppercase',
+    color: colors.danger,
+  },
+  warnKicker: { color: colors.teal },
+  err: { ...bodyFont('600'), color: colors.danger, fontSize: 13, lineHeight: 18 },
+  warnTxt: { color: colors.text },
+  linkBtn: { alignItems: 'center', paddingVertical: 4 },
+  link: { ...bodyFont('700'), fontSize: 14, color: colors.teal, textAlign: 'center' },
+  demo: {
+    alignItems: 'center',
+    alignSelf: 'center',
+    backgroundColor: colors.tealSoft,
+    borderRadius: 14,
+    paddingHorizontal: 16,
+    paddingVertical: 10,
+    gap: 2,
+  },
+  demoKicker: { ...displayFont('800'), fontSize: 10, letterSpacing: 0.6, textTransform: 'uppercase', color: colors.teal },
+  demoTxt: { ...bodyFont('600'), fontSize: 12, color: colors.muted },
+  bottom: { padding: 16, alignItems: 'center', gap: 10 },
+  indicator: { width: 120, height: 5, borderRadius: 10, backgroundColor: colors.teal },
 });

@@ -1,8 +1,8 @@
 import type { LibreMapProps } from '@/components/LibreMap.types';
-import { cotonouMap, haversineMeters, mapStyles, routeLineGeoJSON, type LngLat } from '@/constants/map';
-import { colors } from '@/constants/theme';
+import { cotonouMap, haversineMeters, mapRasterTiles, mapStyles, routeLineGeoJSON, type LngLat } from '@/constants/map';
+import { colors, liquidIce } from '@/constants/theme';
 import { mapPinHtml } from '@/lib/mapPins';
-import { easeOutCubic, headingDeg } from '@/lib/vehicleMotion';
+import { easeOutCubic, headingDeg, lerpHeading, offsetLngLat } from '@/lib/vehicleMotion';
 import {
   GeoJSONSource,
   LngLatBounds,
@@ -15,6 +15,11 @@ import {
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { LogBox, StyleSheet, View } from 'react-native';
 
+/**
+ * MapLibre v6 needs an explicit same-origin worker under Metro/Expo web.
+ * Files in /public/maplibre must match node_modules/maplibre-gl (see scripts/sync-maplibre.js).
+ * A stale worker causes cryptic tile errors (e.g. "codePointAt is not a function").
+ */
 let workerConfigured = false;
 function ensureMapLibreWorker() {
   if (workerConfigured || typeof window === 'undefined') return;
@@ -24,6 +29,56 @@ function ensureMapLibreWorker() {
 
 const styleCache = new Map<string, StyleSpecification>();
 let warmPromise: Promise<void> | null = null;
+
+/** OpenFreeMap TileJSON `/planet` is often CORS-blocked (AJAXError status 0). Use ZXY directly. */
+const OPENFREEMAP_PLANET_TILES = 'https://tiles.openfreemap.org/planet/current/{z}/{x}/{y}.pbf';
+
+function osmRasterFallback(): StyleSpecification {
+  return {
+    version: 8,
+    sources: {
+      osm: {
+        type: 'raster',
+        tiles: [mapRasterTiles.voyager],
+        tileSize: 256,
+        attribution: mapRasterTiles.attribution,
+        maxzoom: 20,
+      },
+    },
+    layers: [{ id: 'osm', type: 'raster', source: 'osm' }],
+  };
+}
+
+function inlineOpenFreeMapSources(style: StyleSpecification): StyleSpecification {
+  const sources = { ...style.sources };
+  for (const [id, src] of Object.entries(sources)) {
+    if (!src || typeof src !== 'object') continue;
+    const url = 'url' in src && typeof (src as { url?: string }).url === 'string' ? (src as { url: string }).url : '';
+    if (!url.includes('tiles.openfreemap.org') || !url.includes('planet')) continue;
+    const rest = { ...(src as object) } as Record<string, unknown>;
+    delete rest.url;
+    sources[id] = {
+      ...rest,
+      type: 'vector',
+      tiles: [OPENFREEMAP_PLANET_TILES],
+      minzoom: typeof rest.minzoom === 'number' ? rest.minzoom : 0,
+      maxzoom: typeof rest.maxzoom === 'number' ? rest.maxzoom : 14,
+    } as StyleSpecification['sources'][string];
+  }
+  return { ...style, sources };
+}
+
+async function loadMapStyle(styleUrl: string): Promise<StyleSpecification> {
+  const cached = styleCache.get(styleUrl);
+  if (cached) return cached;
+  const style = (await prefetchJson(styleUrl)) as StyleSpecification | null;
+  if (style) {
+    const inlined = inlineOpenFreeMapSources(style);
+    styleCache.set(styleUrl, inlined);
+    return inlined;
+  }
+  return osmRasterFallback();
+}
 
 function ensureMapLibreCss() {
   if (typeof document === 'undefined') return;
@@ -108,8 +163,7 @@ export function warmLibreMap(
       prefetchBytes(`${window.location.origin}/maplibre/maplibre-gl-shared.mjs`),
       (async () => {
         if (styleCache.has(styleUrl)) return;
-        const style = (await prefetchJson(styleUrl)) as StyleSpecification | null;
-        if (style) styleCache.set(styleUrl, style);
+        await loadMapStyle(styleUrl);
       })(),
     ]);
   })().catch(() => undefined);
@@ -120,11 +174,11 @@ function validLngLat(c: LngLat | undefined): c is LngLat {
   return !!c && Number.isFinite(c[0]) && Number.isFinite(c[1]) && Math.abs(c[0]) > 0.2 && Math.abs(c[1]) > 0.2;
 }
 
-function resolveStyle(mapStyle: string): string | StyleSpecification {
-  return styleCache.get(mapStyle) ?? mapStyle;
+function resolveStyle(mapStyle: string): StyleSpecification {
+  return styleCache.get(mapStyle) ?? osmRasterFallback();
 }
 
-LogBox.ignoreLogs(['Map cannot fit within canvas']);
+LogBox.ignoreLogs(['Map cannot fit within canvas', 'AJAXError', 'tiles.openfreemap.org']);
 
 function paddingForMap(
   map: MapLibreMap,
@@ -177,6 +231,7 @@ export function LibreMap({
   const markerAnimRef = useRef<Map<string, number>>(new Map());
   const markerPosRef = useRef<Map<string, LngLat>>(new Map());
   const userMovedRef = useRef(false);
+  const navGestureResumeRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const fittedRef = useRef(false);
   const fitSigRef = useRef('');
   const onMarkerPressRef = useRef(onMarkerPress);
@@ -190,6 +245,9 @@ export function LibreMap({
   onFollowBreakRef.current = onFollowBreak;
   const navigationModeRef = useRef(navigationMode);
   navigationModeRef.current = navigationMode;
+  const bearingRef = useRef(bearing);
+  bearingRef.current = bearing;
+  const followCamRef = useRef<{ lng: number; lat: number; bearing: number; pitch: number; zoom: number; primed: boolean } | null>(null);
 
   const routeKey = useMemo(() => (route ? JSON.stringify(route) : ''), [route]);
   const markersKey = useMemo(() => JSON.stringify(markers), [markers]);
@@ -198,8 +256,6 @@ export function LibreMap({
     ensurePreconnect();
     ensureMapLibreCss();
     ensureMapLibreWorker();
-    void warmLibreMap(mapStyle, centerRef.current, zoomRef.current);
-
     const el = hostRef.current;
     if (!el) return;
 
@@ -236,17 +292,65 @@ export function LibreMap({
       mapRef.current = map;
       userMovedRef.current = false;
       fittedRef.current = false;
+      const resumeNavFollow = () => {
+        if (navGestureResumeRef.current) clearTimeout(navGestureResumeRef.current);
+        navGestureResumeRef.current = setTimeout(() => {
+          if (!navigationModeRef.current) return;
+          userMovedRef.current = false;
+          if (followCamRef.current) followCamRef.current.primed = false;
+        }, 420);
+      };
       const markUserMoved = () => {
+        if (navigationModeRef.current) {
+          userMovedRef.current = true;
+          resumeNavFollow();
+          return;
+        }
         userMovedRef.current = true;
-        if (navigationModeRef.current) onFollowBreakRef.current?.();
+        onFollowBreakRef.current?.();
       };
       map.on('dragstart', markUserMoved);
       map.on('rotatestart', markUserMoved);
+      map.on('dragend', () => {
+        if (navigationModeRef.current) resumeNavFollow();
+      });
+      map.on('zoomend', () => {
+        if (navigationModeRef.current) resumeNavFollow();
+      });
       map.on('zoomstart', (e) => {
         if (e.originalEvent) markUserMoved();
       });
       if (showNavigation && interactive) {
         map.addControl(new NavigationControl({ showCompass: true, visualizePitch: true }), 'top-right');
+        const cssId = 'cg-maplibre-nav-ice';
+        let css = document.getElementById(cssId) as HTMLStyleElement | null;
+        if (!css) {
+          css = document.createElement('style');
+          css.id = cssId;
+          document.head.appendChild(css);
+        }
+        css.textContent = `
+          .maplibregl-ctrl-group {
+            background: ${liquidIce.backgroundColor} !important;
+            border: 1px solid ${liquidIce.borderColor} !important;
+            backdrop-filter: ${liquidIce.webFilter};
+            -webkit-backdrop-filter: ${liquidIce.webFilter};
+            box-shadow: ${liquidIce.webShadow};
+            border-radius: 14px !important;
+            overflow: hidden;
+          }
+          .maplibregl-ctrl-group button {
+            width: 42px !important;
+            height: 42px !important;
+            background: transparent !important;
+          }
+          .maplibregl-ctrl-group button:hover {
+            background: rgba(255,255,255,0.35) !important;
+          }
+          .maplibregl-ctrl-group button + button {
+            border-top: 1px solid ${liquidIce.borderColor} !important;
+          }
+        `;
       }
       const bump = () => map?.resize();
       map.once('load', () => {
@@ -261,9 +365,12 @@ export function LibreMap({
       }
     };
 
-    start();
+    void loadMapStyle(mapStyle).finally(() => {
+      if (!cancelled) start();
+    });
     return () => {
       cancelled = true;
+      if (navGestureResumeRef.current) clearTimeout(navGestureResumeRef.current);
       ro?.disconnect();
       markerAnimRef.current.forEach((id) => cancelAnimationFrame(id));
       markerAnimRef.current.clear();
@@ -277,55 +384,111 @@ export function LibreMap({
 
   useEffect(() => {
     userMovedRef.current = false;
+    followCamRef.current = null;
   }, [followResumeTick, navigationMode]);
 
   useEffect(() => {
     const map = mapRef.current;
     if (!map) return;
     if (navigationMode) {
-      map.dragRotate.enable();
+      map.dragRotate.disable();
       try {
-        map.touchPitch.enable();
+        map.touchPitch.disable();
       } catch {
         /* older maplibre */
       }
+      map.easeTo({
+        pitch: 58,
+        zoom: Math.max(zoomRef.current, 16.7),
+        duration: 900,
+        essential: true,
+        padding: { top: 48, bottom: 280, left: 36, right: 36 },
+        easing: (t) => 1 - (1 - t) ** 3,
+      });
     } else {
       map.dragRotate.disable();
-      map.easeTo({ pitch: 0, bearing: 0, duration: 380, essential: true });
+      followCamRef.current = null;
+      map.easeTo({ pitch: 0, bearing: 0, duration: 520, essential: true, easing: (t) => 1 - (1 - t) ** 3 });
     }
   }, [navigationMode, tick]);
 
   useEffect(() => {
+    if (!navigationMode) return;
+    let live = true;
+    let raf = 0;
+    const tickFollow = () => {
+      if (!live) return;
+      const map = mapRef.current;
+      if (!map || !map.isStyleLoaded() || userMovedRef.current) {
+        raf = requestAnimationFrame(tickFollow);
+        return;
+      }
+      const pos = centerRef.current;
+      const heading = bearingRef.current;
+      const look = offsetLngLat(pos, heading, 70);
+      const wantZoom = Math.max(zoomRef.current, 16.7);
+      const wantPitch = 58;
+      let cam = followCamRef.current;
+      if (!cam) {
+        const c = map.getCenter();
+        cam = {
+          lng: c.lng,
+          lat: c.lat,
+          bearing: map.getBearing(),
+          pitch: map.getPitch(),
+          zoom: map.getZoom(),
+          primed: false,
+        };
+        followCamRef.current = cam;
+      }
+      const k = cam.primed ? 0.045 : 0.13;
+      const kb = cam.primed ? 0.038 : 0.1;
+      cam.lng += (look[0] - cam.lng) * k;
+      cam.lat += (look[1] - cam.lat) * k;
+      cam.bearing = lerpHeading(cam.bearing, heading, kb);
+      cam.pitch += (wantPitch - cam.pitch) * (cam.primed ? 0.06 : 0.14);
+      cam.zoom += (wantZoom - cam.zoom) * (cam.primed ? 0.05 : 0.12);
+      const close =
+        Math.abs(cam.lng - look[0]) < 0.00004 &&
+        Math.abs(cam.lat - look[1]) < 0.00004 &&
+        Math.abs(((cam.bearing - heading + 540) % 360) - 180) < 3;
+      if (close) cam.primed = true;
+      map.jumpTo({
+        center: [cam.lng, cam.lat],
+        bearing: cam.bearing,
+        pitch: cam.pitch,
+        zoom: cam.zoom,
+      });
+      raf = requestAnimationFrame(tickFollow);
+    };
+    raf = requestAnimationFrame(tickFollow);
+    return () => {
+      live = false;
+      cancelAnimationFrame(raf);
+    };
+  }, [navigationMode, tick, followResumeTick]);
+
+  useEffect(() => {
     const map = mapRef.current;
     if (!map || !map.isStyleLoaded() || fitToMarkers) return;
-    if (!followCamera && !navigationMode) return;
+    if (!followCamera || navigationMode) return;
     if (userMovedRef.current) return;
+    if (typeof map.isMoving === 'function' && map.isMoving()) return;
     const cur = map.getCenter();
     const z = map.getZoom();
-    const targetZoom = navigationMode ? Math.max(zoom, 16.6) : zoom;
-    const targetPitch = navigationMode ? 56 : 0;
-    const targetBearing = navigationMode ? bearing : 0;
     const moved =
-      Math.abs(cur.lng - center[0]) > 0.00005 ||
-      Math.abs(cur.lat - center[1]) > 0.00005 ||
-      Math.abs(z - targetZoom) > 0.08 ||
-      (navigationMode && Math.abs((map.getBearing() - targetBearing + 540) % 360 - 180) > 4) ||
-      Math.abs(map.getPitch() - targetPitch) > 2;
-    if (!moved && !navigationMode) return;
-    if (navigationMode) {
-      map.easeTo({
-        center,
-        zoom: targetZoom,
-        pitch: targetPitch,
-        bearing: targetBearing,
-        duration: 480,
-        essential: true,
-        padding: { top: 72, bottom: 300, left: 48, right: 48 },
-      });
-      return;
-    }
-    map.easeTo({ center, zoom: targetZoom, duration: 280, essential: true });
-  }, [center[0], center[1], zoom, fitToMarkers, followCamera, navigationMode, bearing, followResumeTick, tick]);
+      Math.abs(cur.lng - center[0]) > 0.00008 ||
+      Math.abs(cur.lat - center[1]) > 0.00008 ||
+      Math.abs(z - zoom) > 0.12;
+    if (!moved) return;
+    map.easeTo({
+      center,
+      zoom,
+      duration: 860,
+      essential: true,
+      easing: (t) => 1 - (1 - t) ** 3,
+    });
+  }, [center[0], center[1], zoom, fitToMarkers, followCamera, navigationMode, followResumeTick, tick]);
 
   useEffect(() => {
     const map = mapRef.current;
@@ -388,16 +551,18 @@ export function LibreMap({
           return;
         }
         const start = performance.now();
-        const dur = Math.min(280, Math.max(70, jump * 6));
+        const slow = navigationModeRef.current;
+        const dur = Math.min(slow ? 780 : 280, Math.max(70, jump * (slow ? 14 : 6)));
         const step = (now: number) => {
           const t = easeOutCubic((now - start) / dur);
           const at: LngLat = [prev[0] + (next[0] - prev[0]) * t, prev[1] + (next[1] - prev[1]) * t];
           existing.setLngLat(at);
           markerPosRef.current.set(marker.id, at);
-          const rot = headingDeg(prev, next);
           const inner = existing.getElement().querySelector('[data-kind="courier"] span') as HTMLElement | null
             ?? existing.getElement().querySelector('span:last-of-type') as HTMLElement | null;
-          if (inner && marker.kind === 'courier') inner.style.transform = `rotate(${rot}deg)`;
+          if (inner && marker.kind === 'courier' && !navigationModeRef.current) {
+            inner.style.transform = `rotate(${headingDeg(prev, next)}deg)`;
+          }
           if (t < 1) markerAnimRef.current.set(marker.id, requestAnimationFrame(step));
           else {
             markerPosRef.current.set(marker.id, next);

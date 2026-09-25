@@ -13,6 +13,7 @@ import { useStaffNotifications } from '@/context/NotificationsContext';
 import { useAppViewport } from '@/components/PhoneShell';
 import { useRoadRoute } from '@/hooks/useRoadRoute';
 import { useMultiRoadRoute } from '@/hooks/useMultiRoadRoute';
+import { useCourierTourPlan } from '@/hooks/useCourierTourPlan';
 import { kmLabel, minLabel, shortOrderId } from '@/lib/format';
 import {
   deliveryNavLeg,
@@ -25,7 +26,6 @@ import {
 import { livePosKey, mapStoresForNow, suggestedStore } from '@/lib/nearestStore';
 import { liveEtaSeconds, motoEtaSeconds } from '@/lib/vehicleMotion';
 import {
-  buildCourierTourPlan,
   buildTourMapMarkers,
   readLastDropoff,
   tourRouteSummary,
@@ -112,16 +112,13 @@ export default function HomeScreen() {
   );
 
   const localDrop = staff?.id ? readLastDropoff(staff.id, mineDel[0]?.store_id) : null;
-  const tourPlan = useMemo(
-    () =>
-      buildCourierTourPlan(deliveries, staff?.id, {
-        courierPosition: mapPosition,
-        lastDrop: localDrop?.from ?? (tourHop ? [tourHop.lng, tourHop.lat] : null),
-        lastDropLabel: localDrop?.label ?? tourHop?.label,
-        lastDropStoreId: localDrop?.storeId ?? tourHop?.storeId,
-      }),
-    [deliveries, staff?.id, mapPosition, tourHop, localDrop?.from?.[0], localDrop?.from?.[1]],
-  );
+  const tourPlan = useCourierTourPlan(deliveries, staff?.id, {
+    courierPosition: mapPosition,
+    lastDrop: localDrop?.from ?? (tourHop ? [tourHop.lng, tourHop.lat] : null),
+    lastDropLabel: localDrop?.label ?? tourHop?.label,
+    lastDropStoreId: localDrop?.storeId ?? tourHop?.storeId,
+    vehicle: staff?.vehicle,
+  });
 
   const focusDel = tourPlan?.focusDelivery ?? mineDel[0] ?? deliveries.find((d) => d.order_id === minePick[0]?.order_id);
   const storePt: LngLat = tourPlan?.store ??

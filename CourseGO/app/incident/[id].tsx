@@ -7,16 +7,19 @@ import { INCIDENT_REASONS, type IncidentId } from '@/lib/incidents';
 import { ApiError } from '@/lib/api/http';
 import { setDeliveryStatus } from '@/lib/api/ops';
 import { orderIdFromOpsId } from '@/lib/opsModel';
+import { keyboardScrollProps, useKeyboardAvoidProps } from '@/lib/keyboardAvoid';
+import { goBack, tabPaths } from '@/lib/navigation';
 import { rememberLastDropoff } from '@/lib/tourRoute';
 import { router, useLocalSearchParams } from 'expo-router';
 import { useState } from 'react';
-import { Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
+import { KeyboardAvoidingView, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
 
 export default function IncidentScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
   const delId = decodeURIComponent(id ?? '');
   const { refresh, deliveries } = useBoard();
   const { staff } = useStaffAuth();
+  const kav = useKeyboardAvoidProps();
   const [kind, setKind] = useState<IncidentId | null>(null);
   const [note, setNote] = useState('');
   const [busy, setBusy] = useState(false);
@@ -47,40 +50,42 @@ export default function IncidentScreen() {
 
   return (
     <Screen>
-      <View style={styles.nav}>
-        <Pressable onPress={() => router.back()}>
-          <Text style={styles.back}>Retour</Text>
-        </Pressable>
-        <Text style={styles.navTitle}>Signaler un incident</Text>
-        <View style={{ width: 56 }} />
-      </View>
-      <ScrollView contentContainerStyle={styles.body}>
-        <Text style={styles.sub}>Choisissez la situation. La course quittera vos missions.</Text>
-        {INCIDENT_REASONS.map((r) => (
-          <Pressable
-            key={r.id}
-            style={[styles.card, kind === r.id && styles.cardOn]}
-            onPress={() => setKind(r.id)}>
-            <Text style={styles.cardTitle}>{r.title}</Text>
-            <Text style={styles.cardHint}>{r.hint}</Text>
+      <KeyboardAvoidingView {...kav} style={{ flex: 1 }}>
+        <View style={styles.nav}>
+          <Pressable onPress={() => goBack(tabPaths.history)}>
+            <Text style={styles.back}>Retour</Text>
           </Pressable>
-        ))}
-        <TextInput
-          style={styles.input}
-          placeholder="Précision (optionnel)"
-          placeholderTextColor={colors.placeholder}
-          value={note}
-          onChangeText={setNote}
-          multiline
-        />
-        {error ? <Text style={styles.err}>{error}</Text> : null}
-        <PillButton
-          label={busy ? '…' : 'ENVOYER L’INCIDENT'}
-          variant="danger"
-          onPress={() => void submit()}
-          disabled={busy}
-        />
-      </ScrollView>
+          <Text style={styles.navTitle}>Signaler un incident</Text>
+          <View style={{ width: 56 }} />
+        </View>
+        <ScrollView contentContainerStyle={styles.body} {...keyboardScrollProps()}>
+          <Text style={styles.sub}>Choisissez la situation. La course quittera vos missions.</Text>
+          {INCIDENT_REASONS.map((r) => (
+            <Pressable
+              key={r.id}
+              style={[styles.card, kind === r.id && styles.cardOn]}
+              onPress={() => setKind(r.id)}>
+              <Text style={styles.cardTitle}>{r.title}</Text>
+              <Text style={styles.cardHint}>{r.hint}</Text>
+            </Pressable>
+          ))}
+          <TextInput
+            style={styles.input}
+            placeholder="Précision (optionnel)"
+            placeholderTextColor={colors.placeholder}
+            value={note}
+            onChangeText={setNote}
+            multiline
+          />
+          {error ? <Text style={styles.err}>{error}</Text> : null}
+          <PillButton
+            label={busy ? '…' : 'ENVOYER L’INCIDENT'}
+            variant="danger"
+            onPress={() => void submit()}
+            disabled={busy}
+          />
+        </ScrollView>
+      </KeyboardAvoidingView>
       <ConfirmModal
         visible={done}
         title="Incident enregistré"

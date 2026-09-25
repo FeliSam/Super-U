@@ -20,7 +20,7 @@ export function ProductThumb({
   style?: StyleProp<ImageStyle>;
 }) {
   const [failed, setFailed] = useState(false);
-  const local = productImageFallback(productId, categoryId);
+  const local = productImageFallback(productId, categoryId, name);
 
   useEffect(() => {
     setFailed(false);
@@ -35,8 +35,8 @@ export function ProductThumb({
   }
   return (
     <Image
-      source={failed ? local : productImageUrl(productId, imageUrl)}
-      placeholder={local}
+      source={local ?? productImageUrl(productId, imageUrl)}
+      placeholder={local ?? undefined}
       placeholderContentFit="cover"
       cachePolicy="memory-disk"
       contentFit="cover"

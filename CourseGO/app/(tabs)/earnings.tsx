@@ -38,6 +38,7 @@ const EMPTY: Omit<Earnings, 'ok'> = {
 };
 
 const WEEKDAYS = ['D', 'L', 'M', 'M', 'J', 'V', 'S'];
+const BAR_H = 88;
 
 function last7Days(rows: { date: string; amount: number }[]) {
   const map = new Map(rows.map((r) => [r.date, r.amount]));
@@ -107,10 +108,19 @@ export default function EarningsScreen() {
   return (
     <Screen>
       <ScrollView
+        style={styles.scroller}
         contentContainerStyle={[styles.content, { paddingBottom: pad }]}
-        refreshControl={pullRefreshControl(refreshing, () => void load())}>
+        refreshControl={pullRefreshControl(refreshing, () => void load())}
+        showsVerticalScrollIndicator={false}
+        showsHorizontalScrollIndicator={false}
+        horizontal={false}
+        bounces={false}>
         <PullBanner visible={refreshing} />
-        <Text style={styles.title}>Performance</Text>
+        <View style={styles.head}>
+          <Text style={styles.title}>Performance</Text>
+          <Text style={styles.sub}>Gains, qualité et rythme de la semaine</Text>
+        </View>
+
         <View style={styles.hero}>
           <Text style={styles.heroLabel}>Gains du jour</Text>
           <Text style={styles.heroAmt}>{formatFcfa(data.today)}</Text>
@@ -133,87 +143,116 @@ export default function EarningsScreen() {
           </View>
         ) : null}
 
-        <Text style={styles.section}>Cette semaine</Text>
-        <View style={styles.chart}>
-          {bars.map((b) => (
-            <View key={b.key} style={styles.barCol}>
-              <View style={styles.barTrack}>
-                <View style={[styles.barFill, { height: `${Math.max(8, (b.amount / maxBar) * 100)}%` }]} />
+        <View style={styles.group}>
+          <Text style={styles.groupTitle}>Cette semaine</Text>
+          <View style={styles.chart}>
+            {bars.map((b) => (
+              <View key={b.key} style={styles.barCol}>
+                <View style={styles.barTrack}>
+                  <View
+                    style={[
+                      styles.barFill,
+                      { height: Math.max(6, Math.round((b.amount / maxBar) * BAR_H)) },
+                    ]}
+                  />
+                </View>
+                <Text style={styles.barLbl}>{b.label}</Text>
               </View>
-              <Text style={styles.barLbl}>{b.label}</Text>
-            </View>
-          ))}
-        </View>
-        <View style={styles.row}>
-          <View style={styles.cell}>
-            <Text style={styles.cellLabel}>Gains semaine</Text>
-            <Text style={styles.cellVal}>{formatFcfa(data.week)}</Text>
+            ))}
           </View>
-          <View style={styles.cell}>
-            <Text style={styles.cellLabel}>Total</Text>
-            <Text style={styles.cellVal}>{formatFcfa(data.allTime)}</Text>
+          <View style={styles.row}>
+            <View style={styles.cell}>
+              <Text style={styles.cellLabel}>Gains semaine</Text>
+              <Text style={styles.cellVal} numberOfLines={2}>
+                {formatFcfa(data.week)}
+              </Text>
+            </View>
+            <View style={styles.cell}>
+              <Text style={styles.cellLabel}>Total</Text>
+              <Text style={styles.cellVal} numberOfLines={2}>
+                {formatFcfa(data.allTime)}
+              </Text>
+            </View>
           </View>
         </View>
 
-        <Text style={styles.section}>Répartition du jour</Text>
-        <View style={styles.row}>
-          <View style={styles.cell}>
-            <Text style={styles.cellLabel}>Livraisons</Text>
-            <Text style={styles.cellVal}>{formatFcfa(data.deliverToday)}</Text>
-            <Text style={styles.cellHint}>{data.deliveriesToday} course{data.deliveriesToday > 1 ? 's' : ''}</Text>
+        <View style={styles.group}>
+          <Text style={styles.groupTitle}>Répartition du jour</Text>
+          <View style={styles.row}>
+            <View style={styles.cell}>
+              <Text style={styles.cellLabel}>Livraisons</Text>
+              <Text style={styles.cellVal} numberOfLines={2}>
+                {formatFcfa(data.deliverToday)}
+              </Text>
+              <Text style={styles.cellHint}>
+                {data.deliveriesToday} course{data.deliveriesToday > 1 ? 's' : ''}
+              </Text>
+            </View>
+            <View style={styles.cell}>
+              <Text style={styles.cellLabel}>Ramassages</Text>
+              <Text style={styles.cellVal} numberOfLines={2}>
+                {formatFcfa(data.pickToday)}
+              </Text>
+              <Text style={styles.cellHint}>
+                {data.picksToday} panier{data.picksToday > 1 ? 's' : ''}
+              </Text>
+            </View>
           </View>
-          <View style={styles.cell}>
-            <Text style={styles.cellLabel}>Ramassages</Text>
-            <Text style={styles.cellVal}>{formatFcfa(data.pickToday)}</Text>
-            <Text style={styles.cellHint}>{data.picksToday} panier{data.picksToday > 1 ? 's' : ''}</Text>
-          </View>
-        </View>
-        <View style={styles.row}>
-          <View style={styles.cell}>
-            <Text style={styles.cellLabel}>Pourboires du jour</Text>
-            <Text style={styles.cellVal}>{formatFcfa(data.tipToday)}</Text>
-            <Text style={styles.cellHint}>Total {formatFcfa(data.tipAll)}</Text>
-          </View>
-          <View style={styles.cell}>
-            <Text style={styles.cellLabel}>Note clients</Text>
-            <Text style={styles.cellVal}>
-              {data.ratingCount > 0 ? data.ratingAvg.toFixed(1) : '—'}
-            </Text>
-            <Text style={styles.cellHint}>
-              {data.ratingCount > 0 ? `${data.ratingCount} avis` : 'Aucun avis'}
-            </Text>
-          </View>
-        </View>
-        <Text style={styles.section}>Qualité</Text>
-        <View style={styles.row}>
-          <View style={styles.cell}>
-            <Text style={styles.cellLabel}>Taux de succès</Text>
-            <Text style={styles.cellVal}>{data.successRate != null ? `${data.successRate} %` : '—'}</Text>
-            <Text style={styles.cellHint}>{data.failedAll} échec{data.failedAll > 1 ? 's' : ''}</Text>
-          </View>
-          <View style={styles.cell}>
-            <Text style={styles.cellLabel}>Temps moyen</Text>
-            <Text style={styles.cellVal}>{data.avgMinutes > 0 ? `${data.avgMinutes} min` : '—'}</Text>
-            <Text style={styles.cellHint}>Prise → livré</Text>
-          </View>
-        </View>
-        <View style={styles.row}>
-          <View style={styles.cell}>
-            <Text style={styles.cellLabel}>Gain / livraison</Text>
-            <Text style={styles.cellVal}>
-              {data.avgDeliveryPayout > 0 ? formatFcfa(data.avgDeliveryPayout) : '—'}
-            </Text>
-            <Text style={styles.cellHint}>Moyenne</Text>
+          <View style={styles.row}>
+            <Pressable style={styles.cell} onPress={() => router.push('/reviews')}>
+              <Text style={styles.cellLabel}>Pourboires</Text>
+              <Text style={styles.cellVal} numberOfLines={2}>
+                {formatFcfa(data.tipToday)}
+              </Text>
+              <Text style={styles.cellHint}>Total {formatFcfa(data.tipAll)}</Text>
+            </Pressable>
+            <Pressable style={styles.cell} onPress={() => router.push('/reviews')}>
+              <Text style={styles.cellLabel}>Note clients</Text>
+              <Text style={styles.cellVal}>
+                {data.ratingCount > 0 ? data.ratingAvg.toFixed(1) : '—'}
+              </Text>
+              <Text style={styles.cellHint}>
+                {data.ratingCount > 0 ? `${data.ratingCount} avis` : 'Aucun avis'}
+              </Text>
+            </Pressable>
           </View>
         </View>
-        <View style={styles.row}>
-          <View style={styles.cell}>
-            <Text style={styles.cellLabel}>Semaine · livraisons</Text>
-            <Text style={styles.cellVal}>{data.deliveriesWeek}</Text>
+
+        <View style={styles.group}>
+          <Text style={styles.groupTitle}>Qualité</Text>
+          <View style={styles.row}>
+            <View style={styles.cell}>
+              <Text style={styles.cellLabel}>Taux de succès</Text>
+              <Text style={styles.cellVal}>
+                {data.successRate != null ? `${data.successRate} %` : '—'}
+              </Text>
+              <Text style={styles.cellHint}>
+                {data.failedAll} échec{data.failedAll > 1 ? 's' : ''}
+              </Text>
+            </View>
+            <View style={styles.cell}>
+              <Text style={styles.cellLabel}>Temps moyen</Text>
+              <Text style={styles.cellVal}>
+                {data.avgMinutes > 0 ? `${data.avgMinutes} min` : '—'}
+              </Text>
+              <Text style={styles.cellHint}>Prise → livré</Text>
+            </View>
           </View>
-          <View style={styles.cell}>
-            <Text style={styles.cellLabel}>Semaine · ramassages</Text>
-            <Text style={styles.cellVal}>{data.picksWeek}</Text>
+          <View style={styles.row}>
+            <View style={styles.cell}>
+              <Text style={styles.cellLabel}>Gain / livraison</Text>
+              <Text style={styles.cellVal} numberOfLines={2}>
+                {data.avgDeliveryPayout > 0 ? formatFcfa(data.avgDeliveryPayout) : '—'}
+              </Text>
+              <Text style={styles.cellHint}>Moyenne</Text>
+            </View>
+            <View style={styles.cell}>
+              <Text style={styles.cellLabel}>Semaine</Text>
+              <Text style={styles.cellVal}>{data.deliveriesWeek + data.picksWeek}</Text>
+              <Text style={styles.cellHint}>
+                {data.deliveriesWeek} liv. · {data.picksWeek} ram.
+              </Text>
+            </View>
           </View>
         </View>
 
@@ -227,61 +266,93 @@ export default function EarningsScreen() {
 }
 
 const styles = StyleSheet.create({
-  content: { padding: 24, gap: 12 },
-  title: { ...displayFont('900'), fontSize: 22, color: colors.text },
-  section: {
+  scroller: { flex: 1, width: '100%', overflow: 'hidden' },
+  content: {
+    paddingHorizontal: 20,
+    paddingTop: 8,
+    gap: 16,
+    width: '100%',
+    maxWidth: '100%',
+    overflow: 'hidden',
+  },
+  head: { gap: 4, paddingHorizontal: 4 },
+  title: { ...displayFont('800'), fontSize: 26, color: colors.text, letterSpacing: -0.4 },
+  sub: { ...bodyFont('500'), fontSize: 13, color: colors.muted },
+  group: { gap: 8, width: '100%' },
+  groupTitle: {
     ...displayFont('800'),
-    fontSize: 13,
-    letterSpacing: 0.5,
+    fontSize: 11,
+    letterSpacing: 0.8,
     textTransform: 'uppercase',
     color: colors.muted,
-    marginTop: 8,
+    paddingLeft: 4,
   },
-  hero: { backgroundColor: colors.teal, borderRadius: 24, padding: 24, gap: 8 },
-  heroLabel: { ...bodyFont('700'), color: colors.onAccent, fontSize: 12, textTransform: 'uppercase' },
-  heroAmt: { ...displayFont('900'), color: colors.onAccent, fontSize: 28 },
-  heroSub: { ...bodyFont('600'), color: colors.onAccent, fontSize: 13, opacity: 0.9 },
+  hero: {
+    backgroundColor: colors.teal,
+    borderRadius: radius.card,
+    padding: 22,
+    gap: 6,
+    width: '100%',
+    ...shadow.card,
+  },
+  heroLabel: {
+    ...bodyFont('700'),
+    color: colors.onAccent,
+    fontSize: 11,
+    letterSpacing: 0.8,
+    textTransform: 'uppercase',
+    opacity: 0.9,
+  },
+  heroAmt: { ...displayFont('800'), color: colors.onAccent, fontSize: 30, letterSpacing: -0.5 },
+  heroSub: { ...bodyFont('600'), color: colors.onAccent, fontSize: 13, opacity: 0.88 },
   chart: {
     flexDirection: 'row',
     alignItems: 'flex-end',
-    gap: 8,
+    justifyContent: 'space-between',
+    gap: 4,
+    width: '100%',
+    maxWidth: '100%',
     backgroundColor: colors.white,
     borderRadius: 20,
-    padding: 16,
-    height: 132,
+    paddingVertical: 14,
+    paddingHorizontal: 10,
     borderWidth: 1,
     borderColor: colors.border,
+    overflow: 'hidden',
+    ...shadow.card,
   },
-  barCol: { flex: 1, alignItems: 'center', height: '100%', justifyContent: 'flex-end', gap: 6 },
-  barTrack: {
+  barCol: {
     flex: 1,
-    width: '70%',
+    minWidth: 0,
+    alignItems: 'center',
+    justifyContent: 'flex-end',
+    gap: 6,
+  },
+  barTrack: {
+    width: '100%',
+    maxWidth: 22,
+    height: BAR_H,
     backgroundColor: colors.bg,
     borderRadius: 8,
     justifyContent: 'flex-end',
     overflow: 'hidden',
   },
-  barFill: { width: '100%', backgroundColor: colors.teal, borderRadius: 8, minHeight: 6 },
-  barLbl: { ...bodyFont('700'), fontSize: 11, color: colors.muted },
-  row: { flexDirection: 'row', gap: 12 },
+  barFill: { width: '100%', backgroundColor: colors.teal, borderRadius: 8 },
+  barLbl: { ...bodyFont('700'), fontSize: 10, color: colors.muted },
+  row: { flexDirection: 'row', gap: 10, width: '100%', maxWidth: '100%' },
   cell: {
     flex: 1,
+    minWidth: 0,
     backgroundColor: colors.white,
     borderRadius: 20,
-    padding: 16,
+    padding: 14,
     borderWidth: 1,
     borderColor: colors.border,
+    ...shadow.card,
   },
-  cellWide: {
-    backgroundColor: colors.white,
-    borderRadius: 20,
-    padding: 16,
-    borderWidth: 1,
-    borderColor: colors.border,
-  },
-  cellLabel: { ...bodyFont('400'), color: colors.placeholder, fontSize: 12 },
-  cellVal: { ...displayFont('800'), fontSize: 18, color: colors.text, marginTop: 4 },
-  cellHint: { ...bodyFont('500'), fontSize: 11, color: colors.muted, marginTop: 4 },
+  cellLabel: { ...bodyFont('500'), color: colors.muted, fontSize: 12 },
+  cellVal: { ...displayFont('800'), fontSize: 16, color: colors.text, marginTop: 6 },
+  cellHint: { ...bodyFont('500'), fontSize: 11, color: colors.placeholder, marginTop: 4 },
   emptyCard: {
     backgroundColor: colors.white,
     borderRadius: 20,
@@ -290,7 +361,6 @@ const styles = StyleSheet.create({
     gap: 8,
     borderWidth: 1,
     borderColor: colors.border,
-    borderStyle: 'dashed',
   },
   emptyIcon: {
     width: 48,
@@ -309,6 +379,9 @@ const styles = StyleSheet.create({
     backgroundColor: colors.white,
     borderRadius: radius.card,
     padding: 16,
+    borderWidth: 1,
+    borderColor: colors.border,
+    width: '100%',
     ...shadow.card,
   },
   linkTxt: { ...bodyFont('700'), fontSize: 14, color: colors.teal },

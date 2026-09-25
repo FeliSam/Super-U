@@ -3,7 +3,9 @@ export function formatFcfa(amount: number) {
 }
 
 export function shortOrderId(id: string) {
-  const clean = id.replace(/^#/, '');
+  const clean = String(id ?? '').replace(/^#/, '');
+  const tail = clean.match(/(\d{3,5})$/);
+  if (tail) return `#${tail[1]}`;
   return `#${clean.slice(-5)}`;
 }
 
@@ -18,6 +20,8 @@ export function kmLabel(meters?: number | null) {
 
 export function minLabel(seconds?: number | null) {
   if (seconds == null || !Number.isFinite(seconds)) return '—';
+  if (seconds <= 20) return 'Sur place';
+  if (seconds < 50) return '< 1 min';
   const m = Math.max(1, Math.round(seconds / 60));
   return `${m} min`;
 }

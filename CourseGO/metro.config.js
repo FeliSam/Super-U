@@ -6,7 +6,10 @@ const { getDefaultConfig } = require('expo/metro-config');
 const config = getDefaultConfig(__dirname);
 
 const monorepoRoot = path.resolve(__dirname, '..');
-config.watchFolders = [path.join(monorepoRoot, 'marche-dore/assets')];
+config.watchFolders = [
+  path.join(monorepoRoot, 'marche-dore/assets'),
+  path.join(monorepoRoot, 'marche-dore/lib'),
+];
 
 if (!config.resolver.assetExts.includes('wasm')) {
   config.resolver.assetExts.push('wasm');

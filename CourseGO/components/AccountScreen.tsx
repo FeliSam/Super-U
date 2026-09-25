@@ -1,7 +1,7 @@
 import { IconBtn, Screen } from '@/components/ui';
 import { bodyFont, colors, displayFont } from '@/constants/theme';
+import { goBack, tabPaths } from '@/lib/navigation';
 import { Feather } from '@expo/vector-icons';
-import { router } from 'expo-router';
 import type { ComponentProps, ReactNode } from 'react';
 import { ScrollView, StyleSheet, Text, View } from 'react-native';
 
@@ -9,7 +9,7 @@ export function AccountScreen({ title, children }: { title: string; children: Re
   return (
     <Screen>
       <View style={styles.nav}>
-        <IconBtn name="chevron-left" bg={colors.white} onPress={() => router.back()} />
+        <IconBtn name="chevron-left" bg={colors.white} onPress={() => goBack(tabPaths.profile)} />
         <Text style={styles.title}>{title}</Text>
         <View style={{ width: 44 }} />
       </View>

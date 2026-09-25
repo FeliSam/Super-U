@@ -2,7 +2,7 @@ import { bodyFont, colors, displayFont, radius } from '@/constants/theme';
 import { Feather } from '@expo/vector-icons';
 import { useEffect, useRef } from 'react';
 import type { ComponentProps } from 'react';
-import { Animated, Pressable, StyleSheet, Text, View } from 'react-native';
+import { Animated, Platform, Pressable, StyleSheet, Text, View } from 'react-native';
 
 type Props = {
   online: boolean;
@@ -12,6 +12,8 @@ type Props = {
   tourStarted: boolean;
   onResume: () => void;
 };
+
+const USE_NATIVE_DRIVER = Platform.OS !== 'web';
 
 export function NowPresence({
   online,
@@ -30,12 +32,12 @@ export function NowPresence({
         Animated.timing(pulse, {
           toValue: 1,
           duration: online ? 1100 : 1600,
-          useNativeDriver: true,
+          useNativeDriver: USE_NATIVE_DRIVER,
         }),
         Animated.timing(pulse, {
           toValue: 0,
           duration: online ? 1100 : 1600,
-          useNativeDriver: true,
+          useNativeDriver: USE_NATIVE_DRIVER,
         }),
       ]),
     );

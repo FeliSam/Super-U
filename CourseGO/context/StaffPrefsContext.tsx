@@ -9,6 +9,8 @@ export type StaffPrefs = {
   notifCalls: boolean;
   shareLocation: boolean;
   sound: boolean;
+  /** Carte « Super U le plus proche » sur Maintenant (off par défaut). */
+  showNearestStore: boolean;
 };
 
 export const DEFAULT_PREFS: StaffPrefs = {
@@ -18,6 +20,7 @@ export const DEFAULT_PREFS: StaffPrefs = {
   notifCalls: true,
   shareLocation: true,
   sound: true,
+  showNearestStore: false,
 };
 
 type Value = {

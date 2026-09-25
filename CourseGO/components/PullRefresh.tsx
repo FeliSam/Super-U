@@ -2,11 +2,17 @@ import { colors, displayFont } from '@/constants/theme';
 import { useEffect, useRef } from 'react';
 import { Animated, Easing, Platform, RefreshControl, StyleSheet, Text, View } from 'react-native';
 
-export function pullRefreshControl(refreshing: boolean, onRefresh: () => void) {
+export function pullRefreshControl(
+  refreshing: boolean,
+  onRefresh: () => void | Promise<void>,
+) {
   return (
     <RefreshControl
       refreshing={refreshing}
-      onRefresh={onRefresh}
+      onRefresh={() => {
+        // RN ScrollView warns if onRefresh returns a rejected promise.
+        void Promise.resolve(onRefresh()).catch(() => undefined);
+      }}
       tintColor={colors.teal}
       colors={[colors.teal]}
       progressBackgroundColor={colors.white}
@@ -29,7 +35,7 @@ export function PullBanner({ visible }: { visible: boolean }) {
         toValue: 1,
         duration: 1100,
         easing: Easing.inOut(Easing.cubic),
-        useNativeDriver: true,
+        useNativeDriver: Platform.OS !== 'web',
       }),
     );
     loop.start();

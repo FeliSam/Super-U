@@ -20,8 +20,13 @@ import {
   isDeliveryStarted,
   MAX_ACTIVE_DELIVERIES,
 } from '@/lib/opsModel';
-import { clearLastDropoff } from '@/lib/tourRoute';
-import { sortBySlot } from '@/lib/slotKind';
+import {
+  claimProximityMeters,
+  clearLastDropoff,
+  closestClaimableId,
+  sortClaimableByProximity,
+} from '@/lib/tourRoute';
+import { slotKind, slotKindRank, sortBySlot } from '@/lib/slotKind';
 import { livePosKey, sortNearStore, storeDistanceM, suggestedStore } from '@/lib/nearestStore';
 import { Feather } from '@expo/vector-icons';
 import { router, useFocusEffect } from 'expo-router';
@@ -75,9 +80,16 @@ export default function MissionsScreen() {
   const coursesDel = heldDel;
   const readyDel = useMemo(() => {
     const ready = deliveries.filter((d) => isDeliveryClaimable(d) && !d.courier_id);
-    if (!suggested) return sortBySlot(ready);
-    return sortNearStore(ready, suggested.id, distOf);
-  }, [deliveries, suggested, distOf]);
+    const preferredStore = lockedStoreId ?? suggested?.id ?? null;
+    return sortClaimableByProximity(ready, mapPosition, {
+      preferredStoreId: preferredStore,
+      slotRank: (d) => slotKindRank(slotKind(undefined, d.slot_label)),
+    });
+  }, [deliveries, mapPosition, lockedStoreId, suggested?.id]);
+  const nearestReadyId = useMemo(
+    () => closestClaimableId(readyDel, mapPosition),
+    [readyDel, mapPosition],
+  );
   const slotsLeft = Math.max(0, MAX_ACTIVE_DELIVERIES - mineDel.length);
   /** Ramassages actifs : visibles uniquement sur Maintenant, pas dans Courses. */
   const ongoingCount = coursesDel.length;
@@ -249,6 +261,9 @@ export default function MissionsScreen() {
         {showDel ? (
           <>
             {filter === 'all' ? <Text style={styles.section}>À livrer</Text> : null}
+            {readyDel.length > 1 ? (
+              <Text style={styles.hint}>Plus proche du GPS en premier — claim manuel (Ajouter).</Text>
+            ) : null}
             {readyDel.map((d) => {
               const locked = tourStarted || slotsLeft <= 0;
               return (
@@ -269,11 +284,8 @@ export default function MissionsScreen() {
                   }>
                   <MissionCard
                     {...deliveryCardProps(d)}
-                    nearest={Boolean(suggested?.id && d.store_id === suggested.id)}
-                    distanceM={
-                      d.route_distance_m ??
-                      (Number.isFinite(distOf(d.store_id)) ? distOf(d.store_id) : undefined)
-                    }
+                    nearest={nearestReadyId === d.id}
+                    distanceM={claimProximityMeters(d, mapPosition)}
                     cta={
                       locked
                         ? tourStarted

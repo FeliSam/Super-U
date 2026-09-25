@@ -4,7 +4,7 @@ import { useStaffAuth } from '@/context/StaffAuthContext';
 import { postLocation } from '@/lib/api/ops';
 import { useStaffPrefs } from '@/context/StaffPrefsContext';
 import { clientCoord, courierAnchor, offsetBeside, pointAlongRoute, storeCoord } from '@/lib/courierTrack';
-import { buildCourierTourPlan } from '@/lib/tourRoute';
+import { useCourierTourPlan } from '@/hooks/useCourierTourPlan';
 import { isDeliveryActive } from '@/lib/opsModel';
 import { fetchRoadRoute } from '@/lib/roadRoute';
 import { asVehicleKind, headingDeg, travelSeconds, tripProgress } from '@/lib/vehicleMotion';
@@ -59,10 +59,9 @@ export function LocationProvider({ children }: { children: React.ReactNode }) {
   const lastSent = useRef(0);
   const lastGpsShift = useRef(0);
   const routeStartedRef = useRef<{ id: string; at: string } | null>(null);
-  const tourPlan = useMemo(
-    () => buildCourierTourPlan(deliveries, staff?.id),
-    [deliveries, staff?.id],
-  );
+  const tourPlan = useCourierTourPlan(deliveries, staff?.id, {
+    vehicle: staff?.vehicle,
+  });
   const active =
     tourPlan?.focusDelivery ??
     deliveries.find(isDeliveryActive) ??

@@ -1,6 +1,6 @@
 import { PHONE_MAX_WIDTH, colors } from '@/constants/theme';
 import { createContext, useContext, useMemo, useState, type ReactNode } from 'react';
-import { Platform, StyleSheet, useWindowDimensions, View } from 'react-native';
+import { Platform, Pressable, StyleSheet, useWindowDimensions, View } from 'react-native';
 
 type Viewport = { width: number; height: number };
 
@@ -55,4 +55,51 @@ const styles = StyleSheet.create({
     overflow: 'hidden',
   },
   fill: { flex: 1, width: '100%', overflow: 'hidden', position: 'relative' },
+  modalStage: {
+    flex: 1,
+    alignItems: 'center',
+  },
+  modalDim: {
+    backgroundColor: 'rgba(15, 23, 42, 0.45)',
+  },
+  modalPhone: {
+    width: '100%',
+    maxWidth: PHONE_MAX_WIDTH,
+    flex: 1,
+    justifyContent: 'flex-end',
+  },
+  modalPhoneCenter: {
+    justifyContent: 'center',
+    paddingHorizontal: 20,
+  },
+  modalPhoneFill: {
+    justifyContent: 'flex-start',
+    position: 'relative',
+  },
 });
+
+/** Cadre 430 px pour Modal RN Web (sinon la feuille s’étale sur tout l’écran). */
+export function PhoneModalFrame({
+  children,
+  align = 'bottom',
+  onDismiss,
+}: {
+  children: ReactNode;
+  align?: 'bottom' | 'center' | 'fill';
+  onDismiss?: () => void;
+}) {
+  return (
+    <View style={styles.modalStage}>
+      <Pressable style={[StyleSheet.absoluteFill, styles.modalDim]} onPress={onDismiss} />
+      <View
+        style={[
+          styles.modalPhone,
+          align === 'center' && styles.modalPhoneCenter,
+          align === 'fill' && styles.modalPhoneFill,
+        ]}
+        pointerEvents="box-none">
+        {children}
+      </View>
+    </View>
+  );
+}

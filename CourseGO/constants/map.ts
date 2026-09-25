@@ -83,6 +83,60 @@ export function remainingAlongPolyline(coords: LngLat[], from: LngLat): number {
   return Math.max(0, total - cum[bestI] + bestD * 0.15);
 }
 
+/**
+ * Tracé restant depuis la position livreur — efface le chemin déjà parcouru.
+ * Projette sur le segment le plus proche pour éviter une ligne droite parasite.
+ */
+export function remainingRouteCoordinates(route: LngLat[], from: LngLat): LngLat[] {
+  if (route.length < 2) return route.slice();
+
+  let bestI = 0;
+  let bestT = 0;
+  let bestD = Infinity;
+  for (let i = 0; i < route.length - 1; i++) {
+    const a = route[i]!;
+    const b = route[i + 1]!;
+    const dx = b[0] - a[0];
+    const dy = b[1] - a[1];
+    const len2 = dx * dx + dy * dy;
+    const t = len2 > 0 ? Math.max(0, Math.min(1, ((from[0] - a[0]) * dx + (from[1] - a[1]) * dy) / len2)) : 0;
+    const proj: LngLat = [a[0] + dx * t, a[1] + dy * t];
+    const d = haversineMeters(from, proj);
+    if (d < bestD) {
+      bestD = d;
+      bestI = i;
+      bestT = t;
+    }
+  }
+
+  const onSeg: LngLat =
+    bestT > 0.02
+      ? [
+          route[bestI]![0] + (route[bestI + 1]![0] - route[bestI]![0]) * bestT,
+          route[bestI]![1] + (route[bestI + 1]![1] - route[bestI]![1]) * bestT,
+        ]
+      : route[bestI]!;
+
+  let startIdx = bestT > 0.85 ? bestI + 1 : bestI;
+  while (startIdx < route.length - 1 && haversineMeters(from, route[startIdx]!) < 14) startIdx += 1;
+
+  const pts: LngLat[] = [];
+  if (bestD > 80) pts.push(from);
+  if (bestD <= 80 || bestT > 0.02) {
+    if (!pts.length || haversineMeters(pts[0]!, onSeg) > 2) pts.push(onSeg);
+  }
+  for (let i = startIdx + (bestT > 0.02 ? 1 : 0); i < route.length; i++) {
+    const p = route[i]!;
+    const prev = pts[pts.length - 1];
+    if (prev && haversineMeters(prev, p) < 1.5) continue;
+    pts.push(p);
+  }
+  if (pts.length < 2) {
+    return [from, route[route.length - 1]!];
+  }
+  return pts;
+}
+
 export function remainingToPoint(from: LngLat, to: LngLat, route?: LngLat[] | null) {
   const air = haversineMeters(from, to);
   if (!route || route.length < 2) return air * 1.28;

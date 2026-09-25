@@ -10,3 +10,7 @@ dist/
 
 expo-env.d.ts
 # @end expo-cli
+
+# generated native folders (EAS prebuild on the server)
+/ios
+/android

@@ -1,5 +1,5 @@
 import type { LibreMapProps } from '@/components/LibreMap.types';
-import { cotonouMap, haversineMeters, mapRasterTiles, type LngLat, type MapMarker } from '@/constants/map';
+import { cotonouMap, haversineMeters, mapRasterTiles, remainingRouteCoordinates, type LngLat, type MapMarker } from '@/constants/map';
 import { colors, iceSurface } from '@/constants/theme';
 import { easeOutCubic, headingDeg, lerpHeading, offsetLngLat } from '@/lib/vehicleMotion';
 import { Feather } from '@expo/vector-icons';
@@ -46,60 +46,10 @@ function padOf(
 
 /** Tracé restant depuis la position livreur (suivi dynamique). */
 function remainingRouteLatLng(route: LngLat[], from: LngLat): { latitude: number; longitude: number }[] {
-  if (route.length < 2) {
-    return route.map(([lng, lat]) => ({ latitude: lat, longitude: lng }));
-  }
-
-  // Projection sur le segment le plus proche (évite une grande ligne droite livreur → nœud).
-  let bestI = 0;
-  let bestT = 0;
-  let bestD = Infinity;
-  for (let i = 0; i < route.length - 1; i++) {
-    const a = route[i];
-    const b = route[i + 1];
-    const dx = b[0] - a[0];
-    const dy = b[1] - a[1];
-    const len2 = dx * dx + dy * dy;
-    const t = len2 > 0 ? Math.max(0, Math.min(1, ((from[0] - a[0]) * dx + (from[1] - a[1]) * dy) / len2)) : 0;
-    const proj: LngLat = [a[0] + dx * t, a[1] + dy * t];
-    const d = haversineMeters(from, proj);
-    if (d < bestD) {
-      bestD = d;
-      bestI = i;
-      bestT = t;
-    }
-  }
-
-  const onSeg: LngLat =
-    bestT > 0.02
-      ? [
-          route[bestI][0] + (route[bestI + 1][0] - route[bestI][0]) * bestT,
-          route[bestI][1] + (route[bestI + 1][1] - route[bestI][1]) * bestT,
-        ]
-      : route[bestI];
-
-  let startIdx = bestT > 0.85 ? bestI + 1 : bestI;
-  while (startIdx < route.length - 1 && haversineMeters(from, route[startIdx]) < 14) startIdx += 1;
-
-  const pts: LngLat[] = [];
-  // Si on est près du tracé (< 80 m), démarrer sur la route ; sinon raccorder depuis le livreur.
-  if (bestD > 80) pts.push(from);
-  if (bestD <= 80 || bestT > 0.02) {
-    if (!pts.length || haversineMeters(pts[0], onSeg) > 2) pts.push(onSeg);
-  }
-  for (let i = startIdx + (bestT > 0.02 ? 1 : 0); i < route.length; i++) {
-    const p = route[i];
-    const prev = pts[pts.length - 1];
-    if (prev && haversineMeters(prev, p) < 1.5) continue;
-    pts.push(p);
-  }
-  if (pts.length < 2) {
-    return [
-      { latitude: from[1], longitude: from[0] },
-      { latitude: route[route.length - 1][1], longitude: route[route.length - 1][0] },
-    ];
-  }
-  return pts.map(([lng, lat]) => ({ latitude: lat, longitude: lng }));
+  return remainingRouteCoordinates(route, from).map(([lng, lat]) => ({
+    latitude: lat,
+    longitude: lng,
+  }));
 }
 
 function pinColors(marker: MapMarker) {

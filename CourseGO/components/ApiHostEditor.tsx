@@ -24,10 +24,6 @@ export function ApiHostEditor({ onSaved }: { onSaved?: (url: string) => void }) 
     });
   }, []);
 
-  if (Platform.OS === 'web') {
-    return <Text style={styles.foot}>API {url}</Text>;
-  }
-
   const loopback = isLoopbackApiUrl(url);
   const suggested = getSuggestedApiBaseUrl();
 
@@ -47,7 +43,7 @@ export function ApiHostEditor({ onSaved }: { onSaved?: (url: string) => void }) 
 
   return (
     <View style={styles.wrap}>
-      {loopback ? (
+      {loopback && Platform.OS !== 'web' ? (
         <Text style={styles.warn}>
           127.0.0.1 sur le téléphone = cet appareil, pas votre PC. Entrez l’IP Wi‑Fi du PC (port 8787) ou l’URL https ngrok.
         </Text>
@@ -68,7 +64,7 @@ export function ApiHostEditor({ onSaved }: { onSaved?: (url: string) => void }) 
           style={[styles.btn, styles.btnGhost]}
           onPress={() => void save(suggested)}
           disabled={saving}>
-          <Text style={styles.btnGhostTxt}>IP PC</Text>
+          <Text style={styles.btnGhostTxt}>{/https:\/\//i.test(suggested) ? 'Tunnel' : 'IP PC'}</Text>
         </Pressable>
         <Pressable style={styles.btn} onPress={() => void save(draft)} disabled={saving}>
           <Text style={styles.btnTxt}>{saving ? '…' : 'Enregistrer'}</Text>

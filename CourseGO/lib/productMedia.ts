@@ -1,34 +1,7 @@
 import type { ImageSourcePropType } from 'react-native';
 import { catalogImages } from '@/lib/catalogImages.generated';
 import { getApiBaseUrl } from '@/lib/api/http';
-
-const CAT_FALLBACK: Record<string, string> = {
-  'fruits-legumes': 'cat-fruits',
-  viandes: 'cat-viandes',
-  charcuterie: 'cat-viandes',
-  poissons: 'cat-poissons',
-  surgeles: 'glace-assortiment',
-  laitiers: 'cat-laitiers',
-  oeufs: 'poulet',
-  boulangerie: 'cat-boulangerie',
-  'petit-dej': 'miel',
-  'cafe-the': 'glace-cafe',
-  feculents: 'cuisine-riz',
-  huiles: 'cat-epicerie',
-  epices: 'circle-epices',
-  conserves: 'cat-poissons',
-  epicerie: 'cat-epicerie',
-  snacking: 'plantains',
-  boissons: 'cat-boissons',
-  alcools: 'cat-boissons',
-  bio: 'cat-fruits',
-  cuisine: 'cat-cuisine',
-  glaces: 'cat-glaces',
-  hygiene: 'cat-hygiene',
-  maison: 'cat-maison',
-  bebe: 'cat-bebe',
-  animalerie: 'cat-maison',
-};
+import { pickCatalogStem } from '../../marche-dore/lib/productVisualMatch';
 
 export function productBarcode(productId: string) {
   let h = 0;
@@ -46,16 +19,15 @@ function ean13Check(body12: string) {
   return String((10 - (sum % 10)) % 10);
 }
 
-function lookupLocal(productId: string, categoryId?: string | null) {
+function lookupLocal(productId: string, categoryId?: string | null, productName?: string | null) {
   const id = productId.replace(/[^a-z0-9_-]/gi, '');
   if (catalogImages[id]) return catalogImages[id];
   const prefix = Object.keys(catalogImages).find(
     (name) => name.startsWith(`${id}-`) || name.startsWith(`cart-${id}`),
   );
   if (prefix) return catalogImages[prefix];
-  const fallback = categoryId ? CAT_FALLBACK[categoryId] : null;
-  if (fallback && catalogImages[fallback]) return catalogImages[fallback];
-  return catalogImages['cat-epicerie'] ?? null;
+  const stem = pickCatalogStem(productId, categoryId, productName);
+  return catalogImages[stem] ?? catalogImages['cat-epicerie'] ?? null;
 }
 
 function absoluteMediaUrl(imageUrl: string) {
@@ -63,15 +35,22 @@ function absoluteMediaUrl(imageUrl: string) {
   return `${getApiBaseUrl()}${imageUrl.startsWith('/') ? '' : '/'}${imageUrl}`;
 }
 
-/** Local bundle/category fallback retained for offline and failed API images. */
-export function productImageSource(productId: string, categoryId?: string | null): ImageSourcePropType {
-  const local = lookupLocal(productId, categoryId);
+export function productImageSource(
+  productId: string,
+  categoryId?: string | null,
+  productName?: string | null,
+): ImageSourcePropType {
+  const local = lookupLocal(productId, categoryId, productName);
   if (local) return local;
   return { uri: `${getApiBaseUrl()}/catalog/media/${encodeURIComponent(productId)}` };
 }
 
-export function productImageFallback(productId: string, categoryId?: string | null) {
-  return lookupLocal(productId, categoryId);
+export function productImageFallback(
+  productId: string,
+  categoryId?: string | null,
+  productName?: string | null,
+) {
+  return lookupLocal(productId, categoryId, productName);
 }
 
 export function productImageUrl(productId: string, imageUrl?: string | null) {

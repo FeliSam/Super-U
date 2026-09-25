@@ -21,6 +21,8 @@ html, body, #root { height: 100%; }
 html { background: #0f172a; }
 body { margin: 0; background: #0f172a; overflow: hidden; font-family: Manrope, system-ui, sans-serif; -webkit-font-smoothing: antialiased; text-rendering: optimizeLegibility; }
 #root { display: flex; flex-direction: column; min-height: 100%; min-height: 100dvh; }
+#root *::-webkit-scrollbar { width: 0 !important; height: 0 !important; display: none; }
+#root * { scrollbar-width: none; -ms-overflow-style: none; }
 @media (max-width: 430px) {
   html, body { background: #fafaf9; }
 }

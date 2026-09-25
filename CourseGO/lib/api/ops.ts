@@ -360,6 +360,21 @@ export async function fetchEarnings() {
   }>('/ops/earnings');
 }
 
+export type StaffRatingItem = {
+  id: string;
+  orderId: string;
+  rating: number;
+  comment: string;
+  tipAmount: number;
+  createdAt: string;
+  customer: string;
+  addressLabel: string | null;
+};
+
+export async function fetchRatings() {
+  return apiFetch<{ ok: true; items: StaffRatingItem[] }>('/ops/ratings');
+}
+
 export type StaffNotification = {
   id: string;
   kind: string;
@@ -388,6 +403,13 @@ export async function postLocation(lng: number, lat: number, heading?: number, s
   return apiFetch<{ ok: true }>('/ops/location', {
     method: 'POST',
     body: JSON.stringify({ lng, lat, heading, speedMps }),
+  });
+}
+
+export async function postPresence(online: boolean) {
+  return apiFetch<{ ok: true; online: boolean }>('/ops/presence', {
+    method: 'POST',
+    body: JSON.stringify({ online }),
   });
 }
 

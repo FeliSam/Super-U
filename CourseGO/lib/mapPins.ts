@@ -32,18 +32,19 @@ export function mapPinHtml(
   const pulse = kind === 'courier' ? 'animation:cgPulse 1.6s ease-out infinite;' : '';
   const highlight = Boolean(marker.highlight);
   const count = Number(marker.badge ?? 0);
+  const pinSize = count || highlight ? 55 : 48;
   const badge =
     count > 0
-      ? `<span class="cg-badge" style="position:absolute;top:-6px;right:-8px;min-width:20px;height:20px;padding:0 5px;border-radius:999px;background:${highlight ? '#0f766e' : '#111827'};color:#fff;border:2px solid #fff;font:800 11px/16px system-ui,sans-serif;display:flex;align-items:center;justify-content:center;box-shadow:0 4px 10px rgba(15,23,42,.35)">${count > 9 ? '9+' : count}</span>`
+      ? `<span class="cg-badge" style="position:absolute;top:-6px;right:-8px;min-width:22px;height:22px;padding:0 5px;border-radius:999px;background:${highlight ? '#0f766e' : '#111827'};color:#fff;border:2px solid #fff;font:800 12px/18px system-ui,sans-serif;display:flex;align-items:center;justify-content:center;box-shadow:0 4px 10px rgba(15,23,42,.35)">${count > 9 ? '9+' : count}</span>`
       : '';
   const waitBit = count > 0 ? ` · ${count} en attente` : '';
   const nearBit = highlight ? 'Plus proche · ' : '';
   const label = marker.label
-    ? `<span style="background:${highlight ? '#0f766e' : 'rgba(17,24,39,0.9)'};color:#fff;font:700 10px/1.2 system-ui,sans-serif;padding:4px 8px;border-radius:999px;white-space:nowrap;max-width:168px;overflow:hidden;text-overflow:ellipsis">${nearBit}${marker.label}${waitBit}</span>`
+    ? `<span style="background:${highlight ? '#0f766e' : 'rgba(17,24,39,0.9)'};color:#fff;font:700 11px/1.2 system-ui,sans-serif;padding:5px 9px;border-radius:999px;white-space:nowrap;max-width:190px;overflow:hidden;text-overflow:ellipsis">${nearBit}${marker.label}${waitBit}</span>`
     : '';
   return `<div class="cg-pin" data-kind="${kind}" style="display:flex;flex-direction:column;align-items:center;gap:4px;transform:translateY(-4px);will-change:transform;cursor:pointer">
     ${label}
-    <span style="position:relative;width:${count || highlight ? 44 : 38}px;height:${count || highlight ? 44 : 38}px;border-radius:14px;background:${bg};border:${highlight ? '3px' : '2px'} solid ${highlight ? '#fbbf24' : '#fff'};display:flex;align-items:center;justify-content:center;box-shadow:0 8px 18px rgba(15,23,42,0.32);${pulse}transform:rotate(${heading}deg);transform-origin:center;transition:transform 280ms ease-out">
+    <span style="position:relative;width:${pinSize}px;height:${pinSize}px;border-radius:16px;background:${bg};border:${highlight ? '3px' : '2px'} solid ${highlight ? '#fbbf24' : '#fff'};display:flex;align-items:center;justify-content:center;box-shadow:0 8px 18px rgba(15,23,42,0.32);${pulse}transform:rotate(${heading}deg);transform-origin:center;transition:transform 280ms ease-out">
       ${glyph}${badge}
     </span>
   </div>
