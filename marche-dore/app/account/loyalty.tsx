@@ -1,7 +1,8 @@
 import { LoyaltyQrCode } from '@/components/LoyaltyQrCode';
 import { MobileModalFrame } from '@/components/MobileModalFrame';
-import { CtaButton, IconCircle, Page, Screen } from '@/components/ui';
-import { displayFont, type AppColors, spacing } from '@/constants/theme';
+import { ScreenHeader } from '@/components/ScreenHeader';
+import { CtaButton, Page, Screen } from '@/components/ui';
+import { type AppColors, spacing } from '@/constants/theme';
 import { useCart } from '@/context/CartContext';
 import { useColors } from '@/context/ThemeContext';
 import { useUiState } from '@/context/UiStateContext';
@@ -12,7 +13,7 @@ import {
   loyaltyTiers } from '@/data/account';
 import { formatFcfa } from '@/lib/format';
 import { LOYALTY_RATE_LABEL, useLiveLoyalty } from '@/lib/loyalty';
-import { goBack, navigateTab, tabPaths } from '@/lib/navigation';
+import { navigateTab, tabPaths } from '@/lib/navigation';
 import { Feather } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
 import { router } from 'expo-router';
@@ -56,11 +57,7 @@ export default function LoyaltyScreen() {
   return (
     <Screen>
       <Page style={styles.flex}>
-        <View style={styles.header}>
-          <IconCircle name="chevron-left" onPress={() => goBack()} />
-          <Text style={styles.title}>Carte de fidélité</Text>
-          <View style={styles.headerSpacer} />
-        </View>
+        <ScreenHeader title="Carte de fidélité" />
 
         <ScrollView contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
           <LinearGradient
@@ -245,14 +242,6 @@ export default function LoyaltyScreen() {
 function createStyles(colors: AppColors) {
   return StyleSheet.create({
   flex: { flex: 1 },
-  header: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    paddingHorizontal: spacing.screen,
-    paddingVertical: 12 },
-  headerSpacer: { width: 40 },
-  title: { color: colors.text, fontSize: 17, ...displayFont('700') },
   content: { padding: 20, gap: 14, paddingBottom: 40 },
   card: {
     borderRadius: 22,

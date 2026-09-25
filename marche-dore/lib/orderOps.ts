@@ -1,5 +1,5 @@
 import { offsetBeside, type LngLat } from '@/constants/map';
-import { haversineMeters } from '@/lib/deliveryRouting';
+import { haversineMeters, pointAlongPolyline, remainingAlongPolyline } from '@/lib/deliveryRouting';
 import { asVehicleKind, travelSeconds, tripProgress } from '@/lib/vehicleMotion';
 
 export type PickStatus = 'queued' | 'assigned' | 'picking' | 'packed' | 'cancelled';
@@ -190,30 +190,71 @@ export function opsProgressPercent(order: FulfillmentSnapshot): number {
   return 10;
 }
 
+export const NEAR_CLIENT_METERS = 300;
+
+export function isNearClient(from: LngLat | undefined, dest: LngLat | undefined, maxM = NEAR_CLIENT_METERS) {
+  if (!from || !dest) return false;
+  return haversineMeters(from, dest) <= maxM;
+}
+
+/** Position livreur = dernier GPS, sinon interpolation sur la polyligne affichée. */
+export function courierLivePosition(
+  order: FulfillmentSnapshot,
+  poly: LngLat[],
+  store: LngLat,
+  now = Date.now(),
+): LngLat {
+  const dest = order.addressCoordinate ?? poly[poly.length - 1] ?? store;
+  const del = order.deliveryStatus;
+  if (order.courierCoordinate) {
+    return order.courierCoordinate;
+  }
+  const kind = asVehicleKind(order.courierVehicle);
+  const trip = travelSeconds(
+    order.routeDistanceMeters || (poly.length >= 2 ? remainingAlongPolyline(poly, poly[0]) : haversineMeters(store, dest)),
+    kind,
+    order.routeDurationSeconds,
+  );
+  const progress = tripProgress(order.enRouteAt || order.pickedUpAt, trip, now);
+  if (progress != null && poly.length >= 2 && (del === 'picked_up' || del === 'en_route')) {
+    return pointAlongPolyline(poly, progress);
+  }
+  if (order.courierCoordinate) return order.courierCoordinate;
+  return offsetBeside(store, dest);
+}
+
+/** Distance restante entre le pin livreur et le client (route si dispo, sinon vol d’oiseau). */
+export function remainingCourierToClientMeters(
+  order: FulfillmentSnapshot,
+  courierAt: LngLat,
+): number {
+  const dest = order.addressCoordinate;
+  const poly = order.routeCoordinates && order.routeCoordinates.length >= 2 ? order.routeCoordinates : null;
+  const air = dest ? haversineMeters(courierAt, dest) : 0;
+  if (!poly) return air;
+  const along = remainingAlongPolyline(poly, courierAt);
+  if (air > 0 && along > air * 2.2) return air * 1.25;
+  return along;
+}
+
 export function remainingEnRouteSeconds(order: FulfillmentSnapshot, now = Date.now()): number | null {
   const dest = order.addressCoordinate;
   const kind = asVehicleKind(order.courierVehicle);
-  const trip = travelSeconds(order.routeDistanceMeters || 0, kind, order.routeDurationSeconds);
-  const started = order.enRouteAt || order.pickedUpAt;
-  const progress = tripProgress(started, trip, now);
-  if (progress != null) return Math.max(0, Math.round(trip * (1 - progress)));
-  if (isCourierGpsFresh(order.courierLocatedAt, now) && order.courierCoordinate && dest) {
-    const meters = haversineMeters(order.courierCoordinate, dest);
-    return travelSeconds(meters, kind, order.routeDurationSeconds);
+  const del = order.deliveryStatus;
+  if (del === 'arrived' || del === 'delivered' || order.status === 'delivered') return 0;
+  const poly = order.routeCoordinates && order.routeCoordinates.length >= 2 ? order.routeCoordinates : [];
+  const store = order.storeCoordinate ?? poly[0] ?? dest;
+  if (!store && !dest) {
+    const fullM = order.routeDistanceMeters || 0;
+    return fullM > 0 ? travelSeconds(fullM, kind, order.routeDurationSeconds) : null;
   }
-  return trip > 0 ? trip : null;
-}
-
-function pointAlongRoute(coords: LngLat[], progress: number): LngLat {
-  if (!coords.length) return coords[0];
-  const t = Math.min(1, Math.max(0, progress));
-  const idx = t * (coords.length - 1);
-  const i = Math.floor(idx);
-  const next = Math.min(coords.length - 1, i + 1);
-  const f = idx - i;
-  const a = coords[i];
-  const b = coords[next];
-  return [a[0] + (b[0] - a[0]) * f, a[1] + (b[1] - a[1]) * f];
+  const at = courierLivePosition(order, poly, store ?? dest!, now);
+  const remainM = remainingCourierToClientMeters(order, at);
+  if (remainM <= 35) return 0;
+  const fullM = order.routeDistanceMeters || (poly.length >= 2 ? remainingAlongPolyline(poly, poly[0]) : remainM);
+  const osrmRemain =
+    order.routeDurationSeconds && fullM > 0 ? order.routeDurationSeconds * (remainM / fullM) : null;
+  return travelSeconds(remainM, kind, osrmRemain, 0);
 }
 
 export function courierMapCoordinate(
@@ -224,19 +265,16 @@ export function courierMapCoordinate(
 ): LngLat {
   const dest = order.addressCoordinate ?? poly[poly.length - 1] ?? store;
   const del = order.deliveryStatus;
+  const atClient = () => offsetBeside(dest, store, 28);
   if (del === 'arrived' || order.status === 'delivered' || del === 'delivered') {
-    return offsetBeside(poly[poly.length - 1] ?? dest, store);
+    return atClient();
   }
-  const kind = asVehicleKind(order.courierVehicle);
-  const trip = travelSeconds(order.routeDistanceMeters || haversineMeters(store, dest), kind, order.routeDurationSeconds);
-  const progress = tripProgress(order.enRouteAt || order.pickedUpAt, trip, now);
-  if (progress != null && poly.length >= 2 && (del === 'picked_up' || del === 'en_route')) {
-    return pointAlongRoute(poly, progress);
+  const at = courierLivePosition(order, poly, store, now);
+  const remain = remainingCourierToClientMeters(order, at);
+  if (remain <= NEAR_CLIENT_METERS || haversineMeters(at, dest) <= NEAR_CLIENT_METERS) {
+    return atClient();
   }
-  if (isCourierGpsFresh(order.courierLocatedAt, now) && order.courierCoordinate) {
-    return order.courierCoordinate;
-  }
-  return offsetBeside(store, dest);
+  return at;
 }
 
 export function applyOrderLive<T extends FulfillmentSnapshot>(order: T, live: OrderLive): T {

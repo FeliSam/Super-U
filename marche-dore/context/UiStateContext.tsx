@@ -15,6 +15,8 @@ type UiStateContextValue = {
   addRecentSearch: (term: string) => void;
   removeRecentSearch: (term: string) => void;
   clearRecentSearches: () => void;
+  recentProductIds: string[];
+  addRecentProduct: (productId: string) => void;
   searchPriceSort: SearchSort;
   setSearchPriceSort: React.Dispatch<React.SetStateAction<SearchSort>>;
   searchInStockOnly: boolean;
@@ -37,6 +39,10 @@ type UiStateContextValue = {
   addLoyaltyBonus: (pts: number) => void;
   redeemedRewardIds: string[];
   redeemReward: (id: string, cost: number) => boolean;
+  appTourDone: boolean;
+  setAppTourDone: (v: boolean) => void;
+  liveIslandEnabled: boolean;
+  setLiveIslandEnabled: (v: boolean) => void;
 };
 
 const UiStateContext = createContext<UiStateContextValue | null>(null);
@@ -44,6 +50,7 @@ const UiStateContext = createContext<UiStateContextValue | null>(null);
 const DEFAULT_PREFS = {
   homeActiveChipId: 'fruits',
   searchRecents: [] as string[],
+  recentProductIds: [] as string[],
   pushEnabled: true,
   smsEnabled: false,
   emailEnabled: true,
@@ -58,6 +65,7 @@ export function UiStateProvider({ children }: { children: React.ReactNode }) {
   const [homeActiveChipId, setHomeActiveChipIdState] = useState(DEFAULT_PREFS.homeActiveChipId);
   const [searchQuery, setSearchQuery] = useState('');
   const [searchRecents, setSearchRecents] = useState<string[]>([]);
+  const [recentProductIds, setRecentProductIds] = useState<string[]>([]);
   const [searchPriceSort, setSearchPriceSort] = useState<SearchSort>('price-asc');
   const [searchInStockOnly, setSearchInStockOnly] = useState(false);
   const [searchPromoOnly, setSearchPromoOnly] = useState(false);
@@ -69,6 +77,8 @@ export function UiStateProvider({ children }: { children: React.ReactNode }) {
   const [alertsOn, setAlertsOn] = useState(true);
   const [loyaltyBonusPts, setLoyaltyBonusPts] = useState(0);
   const [redeemedRewardIds, setRedeemedRewardIds] = useState<string[]>([]);
+  const [appTourDone, setAppTourDone] = useState(true);
+  const [liveIslandEnabled, setLiveIslandEnabled] = useState(false);
   const hydrated = useRef(false);
   const skipSave = useRef(true);
 
@@ -109,12 +119,19 @@ export function UiStateProvider({ children }: { children: React.ReactNode }) {
           ? prefs.searchRecents.slice(0, 8)
           : [],
       );
+      setRecentProductIds(
+        Array.isArray(prefs.recentProductIds)
+          ? prefs.recentProductIds.filter((x): x is string => typeof x === 'string').slice(0, 24)
+          : [],
+      );
       setPushEnabled(prefs.pushEnabled ?? true);
       setSmsEnabled(prefs.smsEnabled ?? false);
       setEmailEnabled(prefs.emailEnabled ?? true);
       setPromoEnabled(prefs.promoEnabled ?? true);
       setInterests(Array.isArray(prefs.interests) ? prefs.interests : []);
       setAlertsOn(prefs.alertsOn ?? true);
+      setAppTourDone(prefs.appTourDone ?? true);
+      setLiveIslandEnabled(prefs.liveIslandEnabled === true);
       setLoyaltyBonusPts(Number.isFinite(bonus) ? bonus : 0);
       setRedeemedRewardIds(redeemed);
       hydrated.current = true;
@@ -130,12 +147,15 @@ export function UiStateProvider({ children }: { children: React.ReactNode }) {
     const prefs: AccountPrefs = {
       homeActiveChipId,
       searchRecents,
+      recentProductIds,
       pushEnabled,
       smsEnabled,
       emailEnabled,
       promoEnabled,
       interests,
       alertsOn,
+      appTourDone,
+      liveIslandEnabled,
     };
     void saveAccountJson(STORAGE_KEY, accountId, {
       ...prefs,
@@ -146,12 +166,15 @@ export function UiStateProvider({ children }: { children: React.ReactNode }) {
   }, [
     homeActiveChipId,
     searchRecents,
+    recentProductIds,
     pushEnabled,
     smsEnabled,
     emailEnabled,
     promoEnabled,
     interests,
     alertsOn,
+    appTourDone,
+    liveIslandEnabled,
     loyaltyBonusPts,
     redeemedRewardIds,
     accountId,
@@ -173,6 +196,12 @@ export function UiStateProvider({ children }: { children: React.ReactNode }) {
 
   const clearRecentSearches = useCallback(() => {
     setSearchRecents([]);
+  }, []);
+
+  const addRecentProduct = useCallback((productId: string) => {
+    const id = productId.trim();
+    if (!id) return;
+    setRecentProductIds((prev) => [id, ...prev.filter((x) => x !== id)].slice(0, 24));
   }, []);
 
   const addLoyaltyBonus = useCallback((pts: number) => {
@@ -202,6 +231,8 @@ export function UiStateProvider({ children }: { children: React.ReactNode }) {
       addRecentSearch,
       removeRecentSearch,
       clearRecentSearches,
+      recentProductIds,
+      addRecentProduct,
       searchPriceSort,
       setSearchPriceSort,
       searchInStockOnly,
@@ -224,6 +255,10 @@ export function UiStateProvider({ children }: { children: React.ReactNode }) {
       addLoyaltyBonus,
       redeemedRewardIds,
       redeemReward,
+      appTourDone,
+      setAppTourDone,
+      liveIslandEnabled,
+      setLiveIslandEnabled,
     }),
     [
       homeActiveChipId,
@@ -233,6 +268,8 @@ export function UiStateProvider({ children }: { children: React.ReactNode }) {
       addRecentSearch,
       removeRecentSearch,
       clearRecentSearches,
+      recentProductIds,
+      addRecentProduct,
       searchPriceSort,
       searchInStockOnly,
       searchPromoOnly,
@@ -246,6 +283,8 @@ export function UiStateProvider({ children }: { children: React.ReactNode }) {
       addLoyaltyBonus,
       redeemedRewardIds,
       redeemReward,
+      appTourDone,
+      liveIslandEnabled,
     ],
   );
 

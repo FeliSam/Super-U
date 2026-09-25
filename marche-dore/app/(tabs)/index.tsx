@@ -10,8 +10,6 @@ import {
   MarcheRefresh,
   smartNavbarClearance,
 } from '@/components/ui';
-import { MotionView, PressScale } from '@/components/motion';
-import { cotonouMap, mapStyles } from '@/constants/map';
 import { displayFont, spacing, tabBarClearance, type AppColors, PRODUCT_FEED_IMAGE_H } from '@/constants/theme';
 import { useAddresses } from '@/context/AddressesContext';
 import { useCatalog } from '@/context/CatalogContext';
@@ -41,12 +39,16 @@ import { openSearchScreen } from '@/lib/searchNav';
 import { findNearestSuperU } from '@/lib/deliveryRouting';
 import { useLiveLoyalty } from '@/lib/loyalty';
 import { etaWindowLabel, useDeliveryEstimate } from '@/lib/useDeliveryEstimate';
+import { DEV_SAFE_HOME, logDev } from '@/lib/devBoot';
 import { Feather } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
 import { Href, router } from 'expo-router';
-import { memo, useCallback, useMemo, useRef, useState } from 'react';
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
+  Animated,
   Image,
+  NativeScrollEvent,
+  NativeSyntheticEvent,
   Platform,
   Pressable,
   ScrollView,
@@ -54,28 +56,17 @@ import {
   Text,
   useWindowDimensions,
   View } from 'react-native';
-import Animated, {
-  Easing,
-  Extrapolation,
-  interpolate,
-  useAnimatedScrollHandler,
-  useAnimatedStyle,
-  useSharedValue,
-  withSpring,
-  withTiming,
-} from 'react-native-reanimated';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 const GRID_IMAGE_HEIGHT = PRODUCT_FEED_IMAGE_H;
+const SHEET_EDGE = Math.round(spacing.screen * 0.2);
+const CUISINE_INSET = spacing.screen - SHEET_EDGE;
 const CUISINE_COLS = 3;
-const CUISINE_COL_GAP = 3;
-const CUISINE_ROW_GAP = 6;
+const CUISINE_COL_GAP = 2;
+const CUISINE_ROW_GAP = 3;
 const CUISINE_ROWS = 2;
 const GLACES_VISIBLE = 3.5;
 const GLACES_GAP = 12;
-const SHEET_EDGE = Math.round(spacing.screen * 0.2);
-
-const NAV_SPRING = { damping: 20, stiffness: 240, mass: 0.55, overshootClamping: false } as const;
 
 function HomeScreen() {
   const { version: catalogVersion, products, productsInCategory, refresh: refreshCatalog } = useCatalog();
@@ -83,13 +74,28 @@ function HomeScreen() {
   const [refreshing, setRefreshing] = useState(false);
   const colors = useColors();
   const insets = useSafeAreaInsets();
-  const navMax = smartNavbarClearance(insets.top);
   const styles = useMemo(() => createStyles(colors), [colors]);
   const { width: windowWidth } = useWindowDimensions();
-  const scrollY = useSharedValue(0);
-  const lastScrollY = useSharedValue(0);
-  const navOffset = useSharedValue(0);
+  const navHideY = useRef(new Animated.Value(0)).current;
+  const lastScrollY = useRef(0);
+  const navOffsetRef = useRef(0);
+  const navHideDistance = Math.max(8, (Platform.OS === 'web' ? 0 : insets.top) + 4) + 48 + 12;
 
+  useEffect(() => {
+    if (DEV_SAFE_HOME) logDev('Home: mode safe (pas de Reanimated / warm map)');
+  }, []);
+
+  const onHomeScroll = useCallback(
+    (event: NativeSyntheticEvent<NativeScrollEvent>) => {
+      const y = Math.max(0, event.nativeEvent.contentOffset.y);
+      const dy = y - lastScrollY.current;
+      lastScrollY.current = y;
+      const next = y < 10 ? 0 : Math.min(navHideDistance, Math.max(0, navOffsetRef.current + dy));
+      navOffsetRef.current = next;
+      navHideY.setValue(next);
+    },
+    [navHideDistance, navHideY],
+  );
   const { count, lines } = useCart();
   const { activeOrders, orders } = useOrders();
   const orderCardWidth = useMemo(() => {
@@ -134,6 +140,7 @@ function HomeScreen() {
   const activeChip =
     plan.rankedChips.find((c) => c.id === homeActiveChipId) ?? plan.rankedChips[0] ?? homeCategories[0];
   const contentW = Math.min(windowWidth, 430) - SHEET_EDGE * 2;
+  const promoW = contentW - CUISINE_INSET * 2;
   const liveBanners = useMemo(
     () => homePromoBanners.filter(bannerIsLive),
     [catalogVersion],
@@ -173,10 +180,19 @@ function HomeScreen() {
     });
     return rotateRail(pool, visitSalt + 19, 6);
   }, [catalogVersion, visitSalt, cuisineReady, plan.rankedFeed]);
+  const [cuisineGridW, setCuisineGridW] = useState(0);
   const cuisineCardWidth = useMemo(() => {
-    const contentW = Math.min(windowWidth, 430) - SHEET_EDGE * 2;
-    return Math.floor((contentW - CUISINE_COL_GAP * (CUISINE_COLS - 1)) / CUISINE_COLS);
-  }, [windowWidth]);
+    const fallback = Math.min(windowWidth, 430) - SHEET_EDGE * 2 - CUISINE_INSET * 2;
+    const contentW = cuisineGridW > 0 ? cuisineGridW : fallback;
+    return Math.max(
+      96,
+      Math.floor((contentW - CUISINE_COL_GAP * (CUISINE_COLS - 1)) / CUISINE_COLS),
+    );
+  }, [windowWidth, cuisineGridW]);
+  const cuisineImageH = useMemo(
+    () => Math.round(Math.min(118, Math.max(96, cuisineCardWidth * 0.92))),
+    [cuisineCardWidth],
+  );
   const glaces = useMemo(
     () => dynamicGlaceRail(productsInCategory('glaces'), visitSalt + plan.hour * 31, 6),
     [catalogVersion, visitSalt, plan.hour, productsInCategory],
@@ -211,53 +227,6 @@ function HomeScreen() {
       ? plan.greeting.slice(0, -firstName.length).trim()
       : plan.greeting;
 
-  const onScroll = useAnimatedScrollHandler({
-    onScroll: (event) => {
-      const y = Math.max(0, event.contentOffset.y);
-      const dy = y - lastScrollY.value;
-      lastScrollY.value = y;
-      scrollY.value = y;
-      if (y < 10) {
-        navOffset.value = withTiming(0, { duration: 320, easing: Easing.out(Easing.cubic) });
-        return;
-      }
-      navOffset.value = Math.min(navMax, Math.max(0, navOffset.value + dy));
-    },
-    onEndDrag: (event) => {
-      const y = event.contentOffset.y;
-      const v = event.velocity?.y ?? 0;
-      if (y < 10) {
-        navOffset.value = withSpring(0, NAV_SPRING);
-        return;
-      }
-      navOffset.value = withSpring(v > 0.35 || navOffset.value > navMax * 0.38 ? navMax : 0, NAV_SPRING);
-    },
-    onMomentumEnd: (event) => {
-      const y = event.contentOffset.y;
-      const v = event.velocity?.y ?? 0;
-      if (y < 10) {
-        navOffset.value = withSpring(0, NAV_SPRING);
-        return;
-      }
-      navOffset.value = withSpring(v > 0.15 || navOffset.value > navMax * 0.38 ? navMax : 0, NAV_SPRING);
-    },
-  });
-
-  const sheetAnimStyle = useAnimatedStyle(() => {
-    const y = scrollY.value;
-    return {
-      transform: [
-        {
-          translateY: interpolate(y, [0, 140], [0, -16], Extrapolation.CLAMP) },
-      ],
-      ...Platform.select({
-        ios: {
-          shadowOpacity: interpolate(y, [0, 80], [0.14, 0.05], Extrapolation.CLAMP) },
-        android: {
-          elevation: interpolate(y, [0, 80], [8, 2], Extrapolation.CLAMP) },
-        default: {} }) };
-  });
-
   const onRefresh = useCallback(async () => {
     setRefreshing(true);
     const started = Date.now();
@@ -276,9 +245,6 @@ function HomeScreen() {
   };
 
   const openAddresses = () => {
-    void import('@/components/LibreMap')
-      .then((m) => m.warmLibreMap?.(mapStyles.light, cotonouMap.home, 14.6))
-      .catch(() => undefined);
     router.push('/account/addresses');
   };
 
@@ -301,12 +267,11 @@ function HomeScreen() {
       <Page style={styles.flex}>
         <SmartNavbar
           split
-          hideOffset={navOffset}
+          hideY={navHideY}
           left={
-            <PressScale
+            <Pressable
               style={styles.heroLocation}
               onPress={openAddresses}
-              scaleTo={0.98}
               accessibilityRole="button"
               accessibilityLabel="Choisir une adresse de livraison">
               <Feather name="map-pin" size={14} color={colors.gold} />
@@ -314,7 +279,7 @@ function HomeScreen() {
                 {defaultAddress?.line ?? 'Choisir une adresse'}
               </Text>
               <Feather name="chevron-down" size={13} color={colors.muted} />
-            </PressScale>
+            </Pressable>
           }
           right={
             <View style={styles.navActionsRow}>
@@ -327,14 +292,13 @@ function HomeScreen() {
                 onPress={() => router.push('/notifications')}
               />
               <SmartNavbarChip round>
-                <PressScale
+                <Pressable
                   style={styles.avatarWrap}
                   onPress={() => navigateTab(tabPaths.profile)}
-                  scaleTo={0.94}
                   accessibilityRole="button"
                   accessibilityLabel="Ouvrir le profil">
                   <Image source={profilePhotoSource(profile.photoUri)} style={styles.avatar} />
-                </PressScale>
+                </Pressable>
               </SmartNavbarChip>
             </View>
           }
@@ -344,14 +308,16 @@ function HomeScreen() {
           products={feedItems}
           extraData={catalogVersion}
           imageHeight={GRID_IMAGE_HEIGHT}
+          edgeInset={SHEET_EDGE}
           style={styles.scrollLayer}
-          onScroll={onScroll as (event: unknown) => void}
+          plain={DEV_SAFE_HOME}
+          onScroll={onHomeScroll as (event: unknown) => void}
           {...(Platform.OS !== 'web'
             ? { refreshControl: <MarcheRefresh refreshing={refreshing} onRefresh={onRefresh} /> }
             : {})}
           contentContainerStyle={styles.scrollContent}
           header={
-          <Animated.View style={[styles.bodySheet, sheetAnimStyle]}>
+          <View style={styles.bodySheet}>
             <LinearGradient
               colors={[colors.cream, colors.white, colors.cream]}
               locations={[0, 0.38, 1]}
@@ -382,7 +348,7 @@ function HomeScreen() {
               </View>
             </View>
 
-            <MotionView delay={80} preset="down">
+            <View>
               <SearchField
                 compact
                 onPress={() => {
@@ -391,12 +357,12 @@ function HomeScreen() {
                 }}
                 placeholder={plan.searchHint}
               />
-            </MotionView>
+            </View>
 
-            <MotionView delay={90} preset="down">
+            <View>
               <View style={styles.quickGrid}>
                 {quickActions.map((action) => (
-                  <PressScale key={action.label} style={styles.quickTile} onPress={action.onPress} scaleTo={0.95}>
+                  <Pressable key={action.label} style={styles.quickTile} onPress={action.onPress}>
                     <View style={styles.quickIconWrap}>
                       <Feather name={action.icon} size={16} color={colors.gold} />
                       {action.badge && action.badge > 0 ? (
@@ -408,17 +374,17 @@ function HomeScreen() {
                       ) : null}
                     </View>
                     <Text style={styles.quickLabel}>{action.label}</Text>
-                  </PressScale>
+                  </Pressable>
                 ))}
               </View>
-            </MotionView>
+            </View>
 
             {plan.cartNudge ? (
-              <PressScale style={styles.cartNudge} onPress={() => navigateTab(tabPaths.cart)} scaleTo={0.98}>
+              <Pressable style={styles.cartNudge} onPress={() => navigateTab(tabPaths.cart)}>
                 <Feather name="shopping-bag" size={13} color={colors.gold} />
                 <Text style={styles.cartNudgeText} numberOfLines={1}>{plan.cartNudge}</Text>
                 <Feather name="chevron-right" size={14} color={colors.gold} />
-              </PressScale>
+              </Pressable>
             ) : null}
 
             {activeOrders.length ? (
@@ -431,11 +397,10 @@ function HomeScreen() {
                 snapToAlignment="start"
                 contentContainerStyle={styles.orderRow}>
                 {activeOrders.map((order, index) => (
-                  <PressScale
+                  <Pressable
                     key={order.id}
                     style={[styles.orderBanner, { width: orderCardWidth }]}
-                    onPress={() => router.push(`/tracking?id=${order.id}` as Href)}
-                    scaleTo={0.985}>
+                    onPress={() => router.push(`/tracking?id=${order.id}` as Href)}>
                     <LinearGradient
                       colors={[colors.cream, colors.white]}
                       start={{ x: 0, y: 0 }}
@@ -464,7 +429,7 @@ function HomeScreen() {
                     <View style={styles.orderChevron}>
                       <Feather name="chevron-right" size={18} color={colors.gold} />
                     </View>
-                  </PressScale>
+                  </Pressable>
                 ))}
               </ScrollView>
             ) : null}
@@ -517,14 +482,13 @@ function HomeScreen() {
                 showsHorizontalScrollIndicator={false}
                 decelerationRate="fast"
                 contentContainerStyle={styles.chips}>
-                {plan.rankedChips.map((cat, i) => {
+                {plan.rankedChips.map((cat) => {
                   const active = cat.id === homeActiveChipId;
                   return (
-                    <MotionView key={cat.id} index={i} preset="zoom" delay={Math.min(i * 18, 90)}>
-                      <PressScale
+                    <View key={cat.id}>
+                      <Pressable
                         style={styles.chipHit}
                         onPress={() => router.push(chipRoute(cat))}
-                        scaleTo={0.94}
                         accessibilityRole="button"
                         accessibilityLabel={`Ouvrir ${cat.label}`}>
                         <View style={[styles.chipRing, active && styles.chipRingActive]}>
@@ -547,14 +511,18 @@ function HomeScreen() {
                         <Text style={[styles.chipLabel, active && styles.chipLabelActive]} numberOfLines={1}>
                           {cat.label}
                         </Text>
-                      </PressScale>
-                    </MotionView>
+                      </Pressable>
+                    </View>
                   );
                 })}
               </ScrollView>
             </View>
 
-            {liveBanners.length ? <PromoCarousel banners={liveBanners} width={contentW} /> : null}
+            {liveBanners.length ? (
+              <View style={{ paddingHorizontal: CUISINE_INSET, width: '100%' }}>
+                <PromoCarousel banners={liveBanners} width={promoW} />
+              </View>
+            ) : null}
 
             <View style={styles.section}>
               <View style={styles.sectionHead}>
@@ -615,18 +583,34 @@ function HomeScreen() {
                 <View
                   style={[
                     styles.gridCuisine,
-                    { columnGap: CUISINE_COL_GAP, rowGap: CUISINE_ROW_GAP },
-                  ]}>
+                    {
+                      columnGap: CUISINE_COL_GAP,
+                      rowGap: CUISINE_ROW_GAP,
+                      paddingHorizontal: CUISINE_INSET,
+                    },
+                  ]}
+                  onLayout={(e) => {
+                    const next = Math.round(e.nativeEvent.layout.width) - CUISINE_INSET * 2;
+                    if (next > 0 && next !== cuisineGridW) setCuisineGridW(next);
+                  }}>
                   {cuisineReady.map((product, i) => (
-                    <ProductCard
+                    <View
                       key={`meal-${product.id}`}
-                      product={product}
-                      width={cuisineCardWidth}
-                      imageHeight={128}
-                      compact
-                      index={i}
-                      animate={false}
-                    />
+                      style={{
+                        width: cuisineCardWidth,
+                        maxWidth: cuisineCardWidth,
+                        flexGrow: 0,
+                        flexShrink: 0,
+                      }}>
+                      <ProductCard
+                        product={product}
+                        width="100%"
+                        imageHeight={cuisineImageH}
+                        compact
+                        index={i}
+                        animate={false}
+                      />
+                    </View>
                   ))}
                 </View>
               </View>
@@ -650,7 +634,7 @@ function HomeScreen() {
                 </View>
               </ScrollView>
             </View>
-          </Animated.View>
+          </View>
           }
           footer={<Text style={styles.feedHint}>Faites défiler pour voir plus de produits…</Text>}
         />
@@ -970,6 +954,7 @@ function createStyles(colors: AppColors) {
       flexWrap: 'wrap',
       width: '100%',
       alignSelf: 'stretch',
+      alignItems: 'flex-start',
     },
     feedHint: {
       color: colors.placeholder,

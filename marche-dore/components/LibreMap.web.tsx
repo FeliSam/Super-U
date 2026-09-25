@@ -1,6 +1,7 @@
 import type { LibreMapProps } from '@/components/LibreMap.types';
 import { cotonouMap, routeLineGeoJSON, mapStyles, type LngLat } from '@/constants/map';
-import { useColors } from '@/context/ThemeContext';
+import { mapHud } from '@/constants/theme';
+import { useColors, useThemeOptional } from '@/context/ThemeContext';
 import { haversineMeters } from '@/lib/deliveryRouting';
 import { shopCourierPinHtml } from '@/lib/mapPins';
 import { easeOutCubic, headingDeg } from '@/lib/vehicleMotion';
@@ -8,17 +9,21 @@ import {
   GeoJSONSource,
   Map as MapLibreMap,
   Marker,
+  GeolocateControl,
   NavigationControl,
   setWorkerUrl,
   type StyleSpecification,
 } from 'maplibre-gl';
-import { useEffect, useMemo, useRef } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { StyleSheet, View } from 'react-native';
+import { MapLoadingOverlay } from '@/components/MapLoadingOverlay';
 
 /**
  * MapLibre v6 needs an explicit worker URL under Metro/Expo web —
  * without it the canvas mounts but vector tiles never load.
- * Files are copied to /public/maplibre (same-origin).
+ * Files in /public/maplibre must match node_modules/maplibre-gl
+ * (scripts/sync-maplibre.js) — a stale worker causes cryptic tile errors
+ * (e.g. "codePointAt is not a function").
  */
 let workerConfigured = false;
 function ensureMapLibreWorker() {
@@ -30,6 +35,48 @@ function ensureMapLibreWorker() {
 const MAPLIBRE_CSS = '/maplibre/maplibre-gl.css';
 const styleCache = new Map<string, StyleSpecification>();
 let warmPromise: Promise<void> | null = null;
+
+const OPENFREEMAP_PLANET_TILES = 'https://tiles.openfreemap.org/planet/current/{z}/{x}/{y}.pbf';
+
+function osmRasterFallback(): StyleSpecification {
+  // OSM FR — gratuit, sans clé API (Carto voyager exige maintenant une clé).
+  return {
+    version: 8,
+    sources: {
+      osm: {
+        type: 'raster',
+        tiles: [
+          'https://a.tile.openstreetmap.fr/osmfr/{z}/{x}/{y}.png',
+          'https://b.tile.openstreetmap.fr/osmfr/{z}/{x}/{y}.png',
+          'https://c.tile.openstreetmap.fr/osmfr/{z}/{x}/{y}.png',
+        ],
+        tileSize: 256,
+        attribution: '© OpenStreetMap',
+        maxzoom: 20,
+      },
+    },
+    layers: [{ id: 'osm', type: 'raster', source: 'osm' }],
+  };
+}
+
+function inlineOpenFreeMapSources(style: StyleSpecification): StyleSpecification {
+  const sources = { ...style.sources };
+  for (const [id, src] of Object.entries(sources)) {
+    if (!src || typeof src !== 'object') continue;
+    const url = 'url' in src && typeof (src as { url?: string }).url === 'string' ? (src as { url: string }).url : '';
+    if (!url.includes('tiles.openfreemap.org') || !url.includes('planet')) continue;
+    const rest = { ...(src as object) } as Record<string, unknown>;
+    delete rest.url;
+    sources[id] = {
+      ...rest,
+      type: 'vector',
+      tiles: [OPENFREEMAP_PLANET_TILES],
+      minzoom: typeof rest.minzoom === 'number' ? rest.minzoom : 0,
+      maxzoom: typeof rest.maxzoom === 'number' ? rest.maxzoom : 14,
+    } as StyleSpecification['sources'][string];
+  }
+  return { ...style, sources };
+}
 
 function ensureMapLibreCss() {
   if (typeof document === 'undefined') return;
@@ -43,13 +90,19 @@ function ensureMapLibreCss() {
 
 function ensurePreconnect() {
   if (typeof document === 'undefined') return;
-  if (document.getElementById('maplibre-preconnect')) return;
-  const link = document.createElement('link');
-  link.id = 'maplibre-preconnect';
-  link.rel = 'preconnect';
-  link.href = 'https://tiles.openfreemap.org';
-  link.crossOrigin = 'anonymous';
-  document.head.appendChild(link);
+  const hosts = [
+    { id: 'maplibre-preconnect', href: 'https://tiles.openfreemap.org' },
+    { id: 'osm-fr-preconnect', href: 'https://a.tile.openstreetmap.fr' },
+  ];
+  for (const h of hosts) {
+    if (document.getElementById(h.id)) continue;
+    const link = document.createElement('link');
+    link.id = h.id;
+    link.rel = 'preconnect';
+    link.href = h.href;
+    link.crossOrigin = 'anonymous';
+    document.head.appendChild(link);
+  }
 }
 
 function long2tile(lon: number, zoom: number) {
@@ -89,6 +142,33 @@ export function warmLibreMap(
   zoom = 14.5,
 ): Promise<void> {
   if (typeof window === 'undefined') return Promise.resolve();
+
+  // Raster OSM : prefetch rapide des tuiles autour du centre (pas de style vectoriel).
+  if (styleUrl.startsWith('raster:')) {
+    ensurePreconnect();
+    ensureMapLibreCss();
+    ensureMapLibreWorker();
+    const z = Math.round(zoom);
+    const cx = long2tile(center[0], z);
+    const cy = lat2tile(center[1], z);
+    const hosts = ['a', 'b', 'c'];
+    const jobs: Promise<unknown>[] = [
+      prefetchBytes(`${window.location.origin}/maplibre/maplibre-gl-worker.mjs`),
+      prefetchBytes(`${window.location.origin}/maplibre/maplibre-gl-shared.mjs`),
+    ];
+    for (let dx = -1; dx <= 1; dx++) {
+      for (let dy = -1; dy <= 1; dy++) {
+        const h = hosts[(Math.abs(cx + dx) + Math.abs(cy + dy)) % 3];
+        jobs.push(
+          prefetchBytes(
+            `https://${h}.tile.openstreetmap.fr/osmfr/${z}/${cx + dx}/${cy + dy}.png`,
+          ),
+        );
+      }
+    }
+    return Promise.all(jobs).then(() => undefined);
+  }
+
   if (warmPromise) return warmPromise;
 
   warmPromise = (async () => {
@@ -104,7 +184,7 @@ export function warmLibreMap(
         const cached = styleCache.get(styleUrl);
         if (cached) return;
         const style = (await prefetchJson(styleUrl)) as StyleSpecification | null;
-        if (style) styleCache.set(styleUrl, style);
+        if (style) styleCache.set(styleUrl, inlineOpenFreeMapSources(style));
       })(),
     ]);
 
@@ -171,8 +251,9 @@ export function warmLibreMap(
   return warmPromise;
 }
 
-function resolveStyle(mapStyle: string): string | StyleSpecification {
-  return styleCache.get(mapStyle) ?? mapStyle;
+function resolveStyle(mapStyle: string): StyleSpecification {
+  if (mapStyle.startsWith('raster:')) return osmRasterFallback();
+  return styleCache.get(mapStyle) ?? osmRasterFallback();
 }
 
 function markerHtml(marker: NonNullable<LibreMapProps['markers']>[number]) {
@@ -244,6 +325,7 @@ export function LibreMap({
   followCamera = false,
 }: LibreMapProps) {
   const colors = useColors();
+  const scheme = useThemeOptional()?.scheme ?? 'light';
   const hostRef = useRef<HTMLDivElement | null>(null);
   const mapRef = useRef<MapLibreMap | null>(null);
   const markersRef = useRef<Map<string, Marker>>(new Map());
@@ -264,15 +346,46 @@ export function LibreMap({
   centerRef.current = center;
   const zoomRef = useRef(zoom);
   zoomRef.current = zoom;
+  const [mapReady, setMapReady] = useState(false);
 
   const routeKey = useMemo(() => (route ? JSON.stringify(route) : ''), [route]);
   const markersKey = useMemo(() => JSON.stringify(markers), [markers]);
 
   useEffect(() => {
+    if (typeof document === 'undefined') return;
+    let css = document.getElementById('md-maplibre-nav-ice') as HTMLStyleElement | null;
+    if (!css) {
+      css = document.createElement('style');
+      css.id = 'md-maplibre-nav-ice';
+      document.head.appendChild(css);
+    }
+    css.textContent = `
+      .maplibregl-ctrl-group {
+        background: ${mapHud.surface} !important;
+        border: 1px solid ${mapHud.border} !important;
+        backdrop-filter: ${mapHud.webFilter};
+        -webkit-backdrop-filter: ${mapHud.webFilter};
+        box-shadow: ${mapHud.webShadow};
+      }
+      .maplibregl-ctrl-group button {
+        background: transparent !important;
+      }
+      .maplibregl-ctrl-group button:hover {
+        background: rgba(28, 22, 19, 0.08) !important;
+      }
+      .maplibregl-ctrl-group button + button {
+        border-top: 1px solid ${mapHud.border} !important;
+      }
+      .maplibregl-ctrl button.maplibregl-ctrl-geolocate .maplibregl-ctrl-icon {
+        background-size: 18px 18px;
+      }
+    `;
+  }, []);
+
+  useEffect(() => {
     ensurePreconnect();
     ensureMapLibreCss();
     ensureMapLibreWorker();
-    void warmLibreMap(mapStyle, centerRef.current, zoomRef.current);
 
     const el = hostRef.current;
     if (!el) return;
@@ -282,10 +395,12 @@ export function LibreMap({
     let ro: ResizeObserver | null = null;
     let tries = 0;
     readySent.current = false;
+    setMapReady(false);
 
     const signalReady = () => {
       if (readySent.current) return;
       readySent.current = true;
+      setMapReady(true);
       onReadyRef.current?.();
     };
 
@@ -313,15 +428,12 @@ export function LibreMap({
           zoom: zoomRef.current,
           attributionControl: { compact: true },
           interactive,
-          pitchWithRotate: false,
+          dragRotate: false,
+          pitchWithRotate: true,
           fadeDuration: 0,
-          maxTileCacheSize: 200,
-          refreshExpiredTiles: false,
           trackResize: true,
           renderWorldCopies: false,
           pixelRatio,
-          // Skip expensive antialiasing on first paint
-          antialias: false,
         });
       } catch {
         signalError('Impossible de charger la carte');
@@ -338,7 +450,24 @@ export function LibreMap({
         if (e.originalEvent) markUserMoved();
       });
       if (showNavigation) {
-        map.addControl(new NavigationControl({ showCompass: false, visualizePitch: false }), 'top-right');
+        map.addControl(new NavigationControl({ showCompass: true, visualizePitch: true }), 'top-right');
+        map.addControl(
+          new GeolocateControl({
+            positionOptions: { enableHighAccuracy: true },
+            trackUserLocation: true,
+            showAccuracyCircle: true,
+            showUserLocation: true,
+          }),
+          'top-right',
+        );
+        const labelGeo = () => {
+          const geoBtn = el.querySelector('.maplibregl-ctrl-geolocate') as HTMLButtonElement | null;
+          if (!geoBtn) return;
+          geoBtn.title = 'Ma position';
+          geoBtn.setAttribute('aria-label', 'Ma position');
+        };
+        map.once('load', labelGeo);
+        requestAnimationFrame(labelGeo);
         const top = navigationOffset?.top ?? 10;
         const right = navigationOffset?.right ?? 10;
         const cssId = 'md-maplibre-nav-offset';
@@ -354,21 +483,25 @@ export function LibreMap({
             right: ${right}px !important;
           }
           .maplibregl-ctrl-group {
-            border: none !important;
             border-radius: 14px !important;
             overflow: hidden;
-            box-shadow: 0 8px 22px rgba(20,17,15,0.22);
-            background: rgba(255,255,255,0.94) !important;
+            background: ${mapHud.surface} !important;
+            border: 1px solid ${mapHud.border} !important;
+            backdrop-filter: ${mapHud.webFilter};
+            -webkit-backdrop-filter: ${mapHud.webFilter};
+            box-shadow: ${mapHud.webShadow};
           }
           .maplibregl-ctrl-group button {
             width: 40px !important;
             height: 40px !important;
+            background: transparent !important;
           }
           .maplibregl-ctrl-group button + button {
-            border-top: 1px solid rgba(20,17,15,0.08) !important;
+            border-top: 1px solid ${mapHud.border} !important;
           }
           .maplibregl-ctrl button.maplibregl-ctrl-zoom-in .maplibregl-ctrl-icon,
-          .maplibregl-ctrl button.maplibregl-ctrl-zoom-out .maplibregl-ctrl-icon {
+          .maplibregl-ctrl button.maplibregl-ctrl-zoom-out .maplibregl-ctrl-icon,
+          .maplibregl-ctrl button.maplibregl-ctrl-geolocate .maplibregl-ctrl-icon {
             background-size: 18px 18px;
           }
         `;
@@ -392,6 +525,7 @@ export function LibreMap({
         const msg =
           (e as { error?: { message?: string } })?.error?.message ||
           'Impossible de charger la carte';
+        if (/openfreemap\.org\/planet(?!\/)/i.test(msg)) return;
         if (/fetch|network|style|cors|failed/i.test(msg)) {
           signalError(msg);
         }
@@ -417,7 +551,15 @@ export function LibreMap({
       }
     };
 
-    start();
+    // Raster : démarrer tout de suite (prefetch en parallèle). Vectoriel : attendre le warm style.
+    if (mapStyle.startsWith('raster:')) {
+      void warmLibreMap(mapStyle, centerRef.current, zoomRef.current);
+      start();
+    } else {
+      void warmLibreMap(mapStyle, centerRef.current, zoomRef.current).finally(() => {
+        if (!cancelled) start();
+      });
+    }
 
     return () => {
       cancelled = true;
@@ -575,6 +717,11 @@ export function LibreMap({
           touchAction: 'none',
         }}
       />
+      <MapLoadingOverlay
+        visible={!mapReady}
+        title="Chargement de la carte"
+        subtitle="Préparation de votre zone de livraison…"
+      />
     </View>
   );
 }
@@ -582,7 +729,7 @@ export function LibreMap({
 const styles = StyleSheet.create({
   wrap: {
     overflow: 'hidden',
-    backgroundColor: '#d9e2ec',
+    backgroundColor: '#ffffff',
     position: 'relative',
     flex: 1,
     minHeight: 120,

@@ -23,17 +23,20 @@ function PagerImage({
   recyclingKey,
   width,
   height,
+  priority = 'low',
 }: {
   source: ImageSourcePropType;
   recyclingKey: string;
   width: number;
   height: number;
+  priority?: 'low' | 'high' | 'normal';
 }) {
   const colors = useColors();
   return (
     <AppImage
       source={source}
       recyclingKey={recyclingKey}
+      priority={priority}
       frameStyle={{ width, height, backgroundColor: colors.border }}
     />
   );
@@ -82,8 +85,10 @@ export const ImagePager = memo(
     onIndexChangeRef.current = onIndexChange;
     onPressRef.current = onPress;
 
-    widthSV.value = Math.max(1, width);
-    lenSV.value = images.length;
+    useEffect(() => {
+      widthSV.value = Math.max(1, width);
+      lenSV.value = images.length;
+    }, [width, images.length, widthSV, lenSV]);
 
     const notifyIndex = useCallback((next: number) => {
       indexRef.current = next;
@@ -189,6 +194,7 @@ export const ImagePager = memo(
               recyclingKey={`${recyclingKeyPrefix}-${i}`}
               width={width}
               height={height}
+              priority={i === 0 ? 'high' : 'low'}
             />
           </View>
         ))}

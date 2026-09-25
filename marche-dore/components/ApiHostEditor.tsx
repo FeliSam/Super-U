@@ -1,6 +1,7 @@
 import { bodyFont, displayFont, type AppColors } from '@/constants/theme';
 import { useColors } from '@/context/ThemeContext';
 import {
+  ensureReachableApiBase,
   getApiBaseUrl,
   getSuggestedApiBaseUrl,
   isLoopbackApiUrl,
@@ -10,27 +11,43 @@ import {
 import { useEffect, useMemo, useState } from 'react';
 import { Platform, Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
 
-export function ApiHostEditor({ onSaved }: { onSaved?: (url: string) => void }) {
+function cleanDraft(raw: string) {
+  const chunks = raw
+    .trim()
+    .split(/(?=https?:\/\/)/i)
+    .map((p) => p.trim())
+    .filter(Boolean);
+  return (chunks.length > 1 ? chunks[chunks.length - 1]! : raw).trim().replace(/\/$/, '');
+}
+
+export function ApiHostEditor({
+  onSaved,
+}: {
+  onSaved?: (url: string) => void;
+}) {
   const colors = useColors();
   const styles = useMemo(() => createStyles(colors), [colors]);
-  const [url, setUrl] = useState(() => getApiBaseUrl());
-  const [draft, setDraft] = useState(() => getApiBaseUrl());
+  const [url, setUrl] = useState(() => cleanDraft(getApiBaseUrl()));
+  const [draft, setDraft] = useState(() => cleanDraft(getApiBaseUrl()));
   const [saving, setSaving] = useState(false);
   const [msg, setMsg] = useState<string | null>(null);
+  const [ok, setOk] = useState<boolean | null>(null);
 
   useEffect(
     () =>
       subscribeApiBase(() => {
-        const next = getApiBaseUrl();
+        const next = cleanDraft(getApiBaseUrl());
         setUrl(next);
         setDraft(next);
       }),
     [],
   );
 
-  if (Platform.OS === 'web') {
-    return <Text style={styles.foot}>API {url}</Text>;
-  }
+  // Répare une ancienne valeur doublée déjà en mémoire
+  useEffect(() => {
+    setDraft((d) => cleanDraft(d));
+    setUrl((u) => cleanDraft(u));
+  }, []);
 
   const loopback = isLoopbackApiUrl(url);
   const suggested = getSuggestedApiBaseUrl();
@@ -38,11 +55,19 @@ export function ApiHostEditor({ onSaved }: { onSaved?: (url: string) => void }) 
   const save = async (value: string) => {
     setSaving(true);
     setMsg(null);
+    setOk(null);
     try {
-      const next = await persistApiBaseOverride(value.trim() || null);
+      const next = await persistApiBaseOverride(cleanDraft(value) || null);
       setUrl(next);
       setDraft(next);
-      setMsg(`API → ${next}`);
+      const reachable = await ensureReachableApiBase(3500);
+      if (reachable) {
+        setOk(true);
+        setMsg(`OK ${reachable} — déconnectez-vous puis reconnectez-vous si vous étiez en mode local.`);
+      } else {
+        setOk(false);
+        setMsg(`Injoignable : ${next}. PC : npm run dev:api + npm run tunnel:ngrok.`);
+      }
       onSaved?.(next);
     } finally {
       setSaving(false);
@@ -51,7 +76,7 @@ export function ApiHostEditor({ onSaved }: { onSaved?: (url: string) => void }) 
 
   return (
     <View style={styles.wrap}>
-      {loopback ? (
+      {loopback && Platform.OS !== 'web' ? (
         <Text style={styles.warn}>
           127.0.0.1 sur le téléphone = cet appareil, pas votre PC. Entrez l’IP Wi‑Fi du PC (port 8787) ou l’URL https ngrok.
         </Text>
@@ -69,13 +94,17 @@ export function ApiHostEditor({ onSaved }: { onSaved?: (url: string) => void }) 
       />
       <View style={styles.row}>
         <Pressable style={[styles.btn, styles.btnGhost]} onPress={() => void save(suggested)} disabled={saving}>
-          <Text style={styles.btnGhostTxt}>IP PC</Text>
+          <Text style={styles.btnGhostTxt}>{/https:\/\//i.test(suggested) ? 'Tunnel' : 'IP PC'}</Text>
         </Pressable>
         <Pressable style={styles.btn} onPress={() => void save(draft)} disabled={saving}>
           <Text style={styles.btnTxt}>{saving ? '…' : 'Enregistrer'}</Text>
         </Pressable>
       </View>
-      {msg ? <Text style={styles.ok}>{msg}</Text> : <Text style={styles.foot}>Actuel : {url}</Text>}
+      {msg ? (
+        <Text style={ok === false ? styles.bad : styles.ok}>{msg}</Text>
+      ) : (
+        <Text style={styles.foot}>Actuel : {url}</Text>
+      )}
     </View>
   );
 }
@@ -123,5 +152,6 @@ function createStyles(colors: AppColors) {
     btnGhostTxt: { ...displayFont('800'), fontSize: 12, color: colors.gold },
     foot: { ...bodyFont('400'), fontSize: 11, color: colors.muted, textAlign: 'center' },
     ok: { ...bodyFont('600'), fontSize: 11, color: colors.gold, textAlign: 'center' },
+    bad: { ...bodyFont('600'), fontSize: 11, color: colors.terracotta, textAlign: 'center' },
   });
 }

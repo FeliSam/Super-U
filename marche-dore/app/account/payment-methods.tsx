@@ -1,7 +1,9 @@
 import { MobileModalFrame } from '@/components/MobileModalFrame';
-import { CtaButton, IconCircle, Screen, Page } from '@/components/ui';
+import { iosKeyboardAccessoryProps } from '@/components/KeyboardDismissBar';
+import { ScreenHeader } from '@/components/ScreenHeader';
+import { CtaButton, Screen, Page } from '@/components/ui';
 import { goBack } from '@/lib/navigation';
-import { displayFont, type AppColors, spacing } from '@/constants/theme';
+import { displayFont, type AppColors } from '@/constants/theme';
 import { useCheckoutPayment, type PaymentId } from '@/context/CheckoutPaymentContext';
 import { usePayments, type WalletMethod } from '@/context/PaymentsContext';
 import { useColors } from '@/context/ThemeContext';
@@ -22,6 +24,7 @@ import {
   Text,
   TextInput,
   View } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 function PaymentCard({
   method,
@@ -36,6 +39,8 @@ function PaymentCard({
   const colors = useColors();
   const styles = useMemo(() => createStyles(colors), [colors]);
   const needsNumber = (method.id === 'om' || method.id === 'wave') && !method.ready;
+  const needsCard = method.id === 'card' && !method.ready;
+  const canConfigure = Boolean(onEdit) && (method.id === 'om' || method.id === 'wave' || method.id === 'card');
 
   return (
     <Pressable style={[styles.card, selected && styles.cardSelected]} onPress={onSelect}>
@@ -52,18 +57,26 @@ function PaymentCard({
           ) : null}
         </View>
         <Text style={styles.detail}>
-          {needsNumber ? 'Ajouter un numéro +229…' : method.detail}
+          {needsNumber
+            ? 'Ajouter un numéro +229…'
+            : needsCard
+              ? 'À configurer'
+              : method.detail}
         </Text>
       </View>
-      {(method.id === 'om' || method.id === 'wave') && onEdit ? (
+      {canConfigure ? (
         <Pressable
           hitSlop={10}
           onPress={(e) => {
             e.stopPropagation?.();
-            onEdit();
+            onEdit?.();
           }}
           style={styles.editBtn}>
-          <Feather name={needsNumber ? 'plus' : 'edit-2'} size={16} color={colors.gold} />
+          <Feather
+            name={needsNumber || needsCard ? 'plus' : 'edit-2'}
+            size={16}
+            color={colors.gold}
+          />
         </Pressable>
       ) : null}
       <View style={[styles.radio, selected && styles.radioOn]} />
@@ -74,6 +87,7 @@ function PaymentCard({
 export default function PaymentMethodsScreen() {
   const colors = useColors();
   const styles = useMemo(() => createStyles(colors), [colors]);
+  const insets = useSafeAreaInsets();
   const { methods, setDefault, saveMobileNumber, defaultMethod } = usePayments();
   const { setSetup } = useCheckoutPayment();
 
@@ -107,9 +121,17 @@ export default function PaymentMethodsScreen() {
     setEditId(null);
   };
 
+  const openCardSetup = () => {
+    router.push('/payment-setup/card');
+  };
+
   const saveDefault = () => {
-    setDefault(selectedId);
     const method = methods.find((m) => m.id === selectedId);
+    if (selectedId === 'card' && !method?.ready) {
+      openCardSetup();
+      return;
+    }
+    setDefault(selectedId);
     if (method?.ready || method?.id === 'cod') {
       setSetup({
         methodId: selectedId as PaymentId,
@@ -125,11 +147,7 @@ export default function PaymentMethodsScreen() {
   return (
     <Screen>
       <Page style={styles.flex}>
-        <View style={styles.header}>
-          <IconCircle name="chevron-left" onPress={() => goBack()} />
-          <Text style={styles.title}>Moyens de paiement</Text>
-          <View style={styles.headerSpacer} />
-        </View>
+        <ScreenHeader title="Moyens de paiement" />
 
         <ScrollView contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
           <Text style={styles.sub}>
@@ -142,11 +160,19 @@ export default function PaymentMethodsScreen() {
               key={method.id}
               method={method}
               selected={selectedId === method.id}
-              onSelect={() => setSelectedId(method.id)}
+              onSelect={() => {
+                if (method.id === 'card' && !method.ready) {
+                  openCardSetup();
+                  return;
+                }
+                setSelectedId(method.id);
+              }}
               onEdit={
                 method.id === 'om' || method.id === 'wave'
                   ? () => openEdit(method.id as 'om' | 'wave')
-                  : undefined
+                  : method.id === 'card'
+                    ? openCardSetup
+                    : undefined
               }
             />
           ))}
@@ -176,7 +202,14 @@ export default function PaymentMethodsScreen() {
 
       <Modal visible={Boolean(editId)} transparent animationType="slide" onRequestClose={() => setEditId(null)}>
         <MobileModalFrame onDismiss={() => setEditId(null)}>
-          <View style={[styles.modalSheet, { backgroundColor: colors.bg }]}>
+          <View
+            style={[
+              styles.modalSheet,
+              {
+                backgroundColor: colors.bg,
+                paddingBottom: Math.max(16, insets.bottom + 8),
+              },
+            ]}>
             <Text style={styles.modalTitle}>
               {editId === 'wave' ? 'MTN MoMo' : 'Orange Money'}
             </Text>
@@ -187,6 +220,7 @@ export default function PaymentMethodsScreen() {
               keyboardType="phone-pad"
               placeholder="+229 01 00 00 00 00"
               placeholderTextColor={colors.placeholder}
+              {...iosKeyboardAccessoryProps()}
               style={[
                 styles.phoneInput,
                 {
@@ -210,14 +244,6 @@ export default function PaymentMethodsScreen() {
 function createStyles(colors: AppColors) {
   return StyleSheet.create({
     flex: { flex: 1 },
-    header: {
-      flexDirection: 'row',
-      alignItems: 'center',
-      justifyContent: 'space-between',
-      paddingHorizontal: spacing.screen,
-      paddingVertical: 12 },
-    headerSpacer: { width: 40 },
-    title: { color: colors.text, fontSize: 17, ...displayFont('700') },
     content: { padding: 20, gap: 10, paddingBottom: 24 },
     sub: { color: colors.muted, fontSize: 14, lineHeight: 20, marginBottom: 6 },
     card: {

@@ -15,11 +15,13 @@ import {
   searchSuggestions,
   type SearchSort } from '@/data/catalog';
 import { rankProductsForShopper } from '@/lib/homeEngine';
+import { keyboardScrollProps, useKeyboardAvoidProps } from '@/lib/keyboardAvoid';
 import { ProductFlashGrid } from '@/components/ProductFlashGrid';
 import { Feather } from '@expo/vector-icons';
 import { router } from 'expo-router';
 import { memo, useCallback, useMemo, useState } from 'react';
 import {
+  KeyboardAvoidingView,
   Platform,
   Pressable,
   ScrollView,
@@ -43,6 +45,7 @@ function SearchScreen() {
   const colors = useColors();
   const styles = useMemo(() => createStyles(colors), [colors]);
   const insets = useSafeAreaInsets();
+  const kav = useKeyboardAvoidProps();
   const heroClearance = frostedBarClearance(insets.top);
 
   const onRefresh = useCallback(async () => {
@@ -238,13 +241,14 @@ function SearchScreen() {
           </Text>
         </FrostedTopBar>
 
+        <KeyboardAvoidingView style={styles.flex} {...kav}>
         <ProductFlashGrid
           plain
           products={results}
           extraData={catalogVersion}
           imageHeight={160}
           style={styles.scrollLayer}
-          keyboardShouldPersistTaps="handled"
+          {...keyboardScrollProps()}
           {...(Platform.OS !== 'web'
             ? { refreshControl: <MarcheRefresh refreshing={refreshing} onRefresh={onRefresh} /> }
             : {})}
@@ -445,6 +449,7 @@ function SearchScreen() {
           </View>
           }
         />
+        </KeyboardAvoidingView>
       </Page>
     </Screen>
   );

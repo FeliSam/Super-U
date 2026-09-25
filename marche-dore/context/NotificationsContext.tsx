@@ -5,6 +5,7 @@ import {
   apiMarkNotificationRead,
 } from '@/lib/api/notifications';
 import { getAuthToken } from '@/lib/api/http';
+import { pollWhileForeground } from '@/lib/foreground';
 import { showToast } from '@/lib/toastBus';
 import { formatNotificationTime, type AppNotification } from '@/data/notifications';
 import { useAuth } from '@/context/AuthContext';
@@ -154,8 +155,7 @@ export function NotificationsProvider({ children }: { children: React.ReactNode 
 
   useEffect(() => {
     if (!authReady || !accountId || !getAuthToken()) return;
-    const t = setInterval(() => void pullRemote({ toastNew: true }), 3000);
-    return () => clearInterval(t);
+    return pollWhileForeground(() => void pullRemote({ toastNew: true }), 8_000);
   }, [authReady, accountId, pullRemote]);
 
   const displayItems = useMemo(() => items.map(withRelativeTime), [items]);

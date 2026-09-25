@@ -1,7 +1,8 @@
 import { getProduct, Product } from '@/data/catalog';
 import { apiGetCart, apiPutCart } from '@/lib/api/cart';
-import { getAuthToken } from '@/lib/api/http';
+import { getAuthToken, userFacingApiMessage } from '@/lib/api/http';
 import { loadAccountJson, saveAccountJson } from '@/lib/accountSync';
+import { showToast } from '@/lib/toastBus';
 import { useAuth } from '@/context/AuthContext';
 import { useCatalogVersion } from '@/context/CatalogContext';
 import React, { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
@@ -13,6 +14,21 @@ export type CartLine = {
 };
 
 const STORAGE_KEY = 'marche-dore.cart.v1';
+
+
+let lastCartSyncToastAt = 0;
+
+function reportCartSyncFailure(error: unknown) {
+  const now = Date.now();
+  if (now - lastCartSyncToastAt < 4000) return;
+  lastCartSyncToastAt = now;
+  showToast({
+    title: 'Panier non synchronisé',
+    body: userFacingApiMessage(error, (id) => getProduct(id)?.name),
+    tone: 'error',
+  });
+}
+
 
 type PersistedCart = {
   lines: CartLine[];
@@ -104,7 +120,7 @@ export function CartProvider({ children }: { children: React.ReactNode }) {
       setReady(true);
       skipSave.current = false;
       if (getAuthToken() && !remoteOk && nextLines.length) {
-        void apiPutCart(nextLines, nextPromo).catch(() => undefined);
+        void apiPutCart(nextLines, nextPromo).catch(reportCartSyncFailure);
       }
     })();
     return () => {
@@ -124,7 +140,7 @@ export function CartProvider({ children }: { children: React.ReactNode }) {
       return;
     }
     const timer = setTimeout(() => {
-      void apiPutCart(lines, promoCode).catch(() => undefined);
+      void apiPutCart(lines, promoCode).catch(reportCartSyncFailure);
     }, 450);
     return () => clearTimeout(timer);
   }, [lines, promoCode, session?.accountId]);

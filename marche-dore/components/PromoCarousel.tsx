@@ -1,6 +1,7 @@
 import { PromoBanner } from '@/components/ui';
 import { useColors } from '@/context/ThemeContext';
 import type { HomePromoBanner } from '@/data/catalog';
+import { pollWhileForeground } from '@/lib/foreground';
 import { router } from 'expo-router';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import {
@@ -20,7 +21,7 @@ export function PromoCarousel({ banners, width }: { banners: HomePromoBanner[]; 
   const indexRef = useRef(0);
   const dragging = useRef(false);
   const [page, setPage] = useState(0);
-  const step = width + GAP;
+  const step = Math.max(1, width + GAP);
 
   const go = useCallback(
     (i: number, animated = true) => {
@@ -35,11 +36,10 @@ export function PromoCarousel({ banners, width }: { banners: HomePromoBanner[]; 
 
   useEffect(() => {
     if (banners.length < 2) return;
-    const id = setInterval(() => {
+    return pollWhileForeground(() => {
       if (dragging.current) return;
       go(indexRef.current + 1);
-    }, INTERVAL_MS);
-    return () => clearInterval(id);
+    }, INTERVAL_MS, false);
   }, [banners.length, go]);
 
   if (!banners.length) return null;
@@ -60,7 +60,7 @@ export function PromoCarousel({ banners, width }: { banners: HomePromoBanner[]; 
         }}
         onMomentumScrollEnd={(e: NativeSyntheticEvent<NativeScrollEvent>) => {
           dragging.current = false;
-          const i = Math.round(e.nativeEvent.contentOffset.x / Math.max(step, 1));
+          const i = Math.round(e.nativeEvent.contentOffset.x / step);
           indexRef.current = Math.min(Math.max(i, 0), banners.length - 1);
           setPage(indexRef.current);
         }}

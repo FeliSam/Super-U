@@ -113,7 +113,7 @@ export default function OrderDetailsScreen() {
     return (
       <Screen>
         <Page style={styles.flex}>
-          <View style={[styles.header, { paddingTop: Math.max(8, insets.top ? 4 : 8) }]}>
+          <View style={[styles.header, { paddingTop: Math.max(10, insets.top + 4) }]}>
             <IconCircle name="arrow-left" onPress={() => goBack()} />
             <Text style={styles.title}>Détails de commande</Text>
             <View style={styles.headerSpacer} />
@@ -185,7 +185,7 @@ export default function OrderDetailsScreen() {
   return (
     <Screen>
       <Page style={styles.flex}>
-        <View style={[styles.header, { paddingTop: Math.max(8, insets.top ? 4 : 8) }]}>
+        <View style={[styles.header, { paddingTop: Math.max(10, insets.top + 4) }]}>
           <IconCircle name="arrow-left" onPress={() => goBack()} />
           <View style={styles.headerCenter}>
             <Text style={styles.title}>Détails de commande</Text>
@@ -201,7 +201,7 @@ export default function OrderDetailsScreen() {
               style={[
                 styles.menuPanel,
                 softShadow({ y: 10, blur: 24, opacity: 0.14 }),
-                { top: Math.max(8, insets.top ? 4 : 8) + 48, right: 16 },
+                { top: Math.max(10, insets.top + 4) + 48, right: 16 },
               ]}>
               {canTrack ? (
                 <Pressable

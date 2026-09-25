@@ -1,4 +1,5 @@
 import { CtaButton, IconCircle, Page, Screen } from '@/components/ui';
+import { useHeaderPadTop } from '@/components/ScreenHeader';
 import { goBack } from '@/lib/navigation';
 import { StarRating } from '@/components/StarRating';
 import { type AppColors, spacing } from '@/constants/theme';
@@ -9,6 +10,7 @@ import { useReviews } from '@/context/ReviewsContext';
 import { getProduct, liveReviewStats } from '@/data/catalog';
 import { buildRatingSummary, catalogReviewsForProduct, type Review } from '@/data/reviews';
 import { hasPurchasedProduct } from '@/lib/purchaseGate';
+import { keyboardScrollProps, useKeyboardAvoidProps } from '@/lib/keyboardAvoid';
 import { MAX_REVIEW_IMAGES, pickReviewImages } from '@/lib/pickReviewImages';
 import { Feather, Ionicons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
@@ -18,13 +20,13 @@ import {
   Image,
   ImageSourcePropType,
   KeyboardAvoidingView,
-  Platform,
   Pressable,
   ScrollView,
   StyleSheet,
   Text,
   TextInput,
   View } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 function ReviewImages({ images }: { images: ImageSourcePropType[] }) {
   const colors = useColors();
@@ -74,8 +76,12 @@ function ReviewCard({ review }: { review: Review }) {
 }
 
 export default function ProductReviewsScreen() {
+  const insets = useSafeAreaInsets();
+
   const colors = useColors();
   const styles = useMemo(() => createStyles(colors), [colors]);
+  const kav = useKeyboardAvoidProps();
+  const headerPadTop = useHeaderPadTop(4);
 
   const { id: idParam, write: writeParam } = useLocalSearchParams<{ id: string; write?: string }>();
   const id = typeof idParam === 'string' ? idParam : Array.isArray(idParam) ? idParam[0] : undefined;
@@ -166,11 +172,9 @@ export default function ProductReviewsScreen() {
   return (
     <Screen>
       <Page style={styles.flex}>
-        <KeyboardAvoidingView
-          style={styles.flex}
-          behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
+        <KeyboardAvoidingView style={styles.flex} {...kav}>
           <LinearGradient colors={['#f8e4c4', colors.cream, colors.bg]} style={styles.hero}>
-            <View style={styles.header}>
+            <View style={[styles.header, { paddingTop: Math.max(10, insets.top + 4) }, { paddingTop: headerPadTop }]}>
               <IconCircle name="chevron-left" onPress={() => goBack()} variant="hero" />
               <View style={styles.headerCenter}>
                 <Text style={styles.title}>Avis clients</Text>
@@ -186,7 +190,7 @@ export default function ProductReviewsScreen() {
             style={styles.flex}
             contentContainerStyle={styles.content}
             showsVerticalScrollIndicator={false}
-            keyboardShouldPersistTaps="handled">
+            {...keyboardScrollProps()}>
             <View style={styles.bodySheet}>
               <View style={styles.summaryCard}>
                 <View style={styles.summaryLeft}>
@@ -352,7 +356,7 @@ function createStyles(colors: AppColors) {
     alignItems: 'center',
     justifyContent: 'space-between',
     paddingHorizontal: spacing.screen,
-    paddingTop: 10,
+    
     paddingBottom: 8 },
   headerCenter: { alignItems: 'center', gap: 2, flex: 1 },
   headerSpacer: { width: 40 },

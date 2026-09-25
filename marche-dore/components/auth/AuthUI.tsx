@@ -1,8 +1,12 @@
+import { iosKeyboardAccessoryProps } from '@/components/KeyboardDismissBar';
+import { BRAND_MARK } from '@/constants/brand';
 import { MotionView, PressScale } from '@/components/motion';
 import { Screen } from '@/components/ui';
 import { bodyFont, displayFont, type AppColors, spacing } from '@/constants/theme';
 import { useColors } from '@/context/ThemeContext';
 import { noZoomInputStyle } from '@/lib/noZoomInput';
+import { keyboardScrollProps, useKeyboardAvoidProps } from '@/lib/keyboardAvoid';
+import { softShadow } from '@/lib/shadow';
 import { Feather } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
 import { useMemo, useState, type ReactNode } from 'react';
@@ -20,31 +24,33 @@ import {
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
-const BRAND_MARK = require('../../assets/images/brand-mark.png');
-
 export function AuthScreen({
   children,
-  scroll = true,
+  scroll = Platform.OS === 'web',
   footer,
 }: {
   children: ReactNode;
+  /** Sur web uniquement. iOS / Android = page intégrée (pas de défilement). */
   scroll?: boolean;
   footer?: ReactNode;
 }) {
   const colors = useColors();
   const styles = useMemo(() => createStyles(colors), [colors]);
   const insets = useSafeAreaInsets();
+  const kav = useKeyboardAvoidProps();
+  const padBottom = Math.max(insets.bottom, 16);
+  const useScroll = scroll && Platform.OS === 'web';
 
-  const body = scroll ? (
+  const body = useScroll ? (
     <ScrollView
-      contentContainerStyle={[styles.scrollContent, { paddingBottom: Math.max(insets.bottom, 20) + 12 }]}
-      keyboardShouldPersistTaps="handled"
+      contentContainerStyle={[styles.scrollContent, { paddingBottom: padBottom + 12 }]}
       showsVerticalScrollIndicator={false}
-      bounces={false}>
+      bounces={false}
+      {...keyboardScrollProps()}>
       {children}
     </ScrollView>
   ) : (
-    <View style={[styles.fill, { paddingBottom: Math.max(insets.bottom, 16) }]}>{children}</View>
+    <View style={[styles.integrated, { paddingBottom: padBottom }]}>{children}</View>
   );
 
   return (
@@ -52,10 +58,7 @@ export function AuthScreen({
       <LinearGradient colors={[colors.cream, colors.bg, colors.bg]} style={styles.fill} start={{ x: 0.2, y: 0 }} end={{ x: 0.8, y: 1 }}>
         <View style={[styles.orb, styles.orbA, { backgroundColor: 'rgba(226,147,29,0.14)' }]} />
         <View style={[styles.orb, styles.orbB, { backgroundColor: 'rgba(200,75,49,0.08)' }]} />
-        <KeyboardAvoidingView
-          style={styles.fill}
-          behavior={Platform.OS === 'ios' ? 'padding' : undefined}
-          keyboardVerticalOffset={Platform.OS === 'ios' ? 8 : 0}>
+        <KeyboardAvoidingView style={styles.fill} {...kav}>
           {body}
           {footer ? <View style={[styles.footerSlot, { paddingBottom: Math.max(insets.bottom, 16) }]}>{footer}</View> : null}
         </KeyboardAvoidingView>
@@ -68,17 +71,20 @@ export function AuthBrand({
   title,
   subtitle,
   compact,
+  skipSafePad,
 }: {
   title?: string;
   subtitle?: string;
   compact?: boolean;
+  skipSafePad?: boolean;
 }) {
   const colors = useColors();
   const styles = useMemo(() => createStyles(colors), [colors]);
   const insets = useSafeAreaInsets();
+  const padTop = skipSafePad ? (compact ? 4 : 16) : insets.top + (compact ? 8 : 28);
 
   return (
-    <MotionView preset="down" index={0} style={[styles.brand, { paddingTop: insets.top + (compact ? 8 : 28) }]}>
+    <MotionView preset="down" index={0} style={[styles.brand, { paddingTop: padTop }]}>
       <View style={styles.markWrap}>
         <Image source={BRAND_MARK} style={compact ? styles.markSm : styles.mark} />
       </View>
@@ -110,6 +116,7 @@ export function AuthField({
       <View style={[styles.inputWrap, error ? styles.inputWrapError : null]}>
         <TextInput
           {...props}
+          {...iosKeyboardAccessoryProps()}
           secureTextEntry={isSecure}
           placeholderTextColor={colors.placeholder}
           style={[styles.input, noZoomInputStyle, props.style]}
@@ -135,11 +142,13 @@ export function AuthPrimaryButton({
   onPress,
   loading,
   disabled,
+  compact,
 }: {
   label: string;
   onPress: () => void;
   loading?: boolean;
   disabled?: boolean;
+  compact?: boolean;
 }) {
   const colors = useColors();
   const styles = useMemo(() => createStyles(colors), [colors]);
@@ -147,25 +156,33 @@ export function AuthPrimaryButton({
 
   return (
     <PressScale
-      style={[styles.primaryBtn, locked ? styles.primaryBtnDisabled : null]}
+      style={[styles.primaryBtn, compact && styles.primaryBtnCompact, locked ? styles.primaryBtnDisabled : null]}
       onPress={onPress}
       disabled={locked}
       scaleTo={0.98}>
       {loading ? (
         <ActivityIndicator color={colors.onAccent} />
       ) : (
-        <Text style={styles.primaryBtnText}>{label}</Text>
+        <Text style={[styles.primaryBtnText, compact && styles.primaryBtnTextCompact]}>{label}</Text>
       )}
     </PressScale>
   );
 }
 
-export function AuthGhostButton({ label, onPress }: { label: string; onPress: () => void }) {
+export function AuthGhostButton({
+  label,
+  onPress,
+  compact,
+}: {
+  label: string;
+  onPress: () => void;
+  compact?: boolean;
+}) {
   const colors = useColors();
   const styles = useMemo(() => createStyles(colors), [colors]);
   return (
-    <PressScale style={styles.ghostBtn} onPress={onPress} scaleTo={0.98}>
-      <Text style={styles.ghostBtnText}>{label}</Text>
+    <PressScale style={[styles.ghostBtn, compact && styles.ghostBtnCompact]} onPress={onPress} scaleTo={0.98}>
+      <Text style={[styles.ghostBtnText, compact && styles.ghostBtnTextCompact]}>{label}</Text>
     </PressScale>
   );
 }
@@ -211,6 +228,12 @@ function createStyles(colors: AppColors) {
       paddingHorizontal: spacing.screen,
       gap: 18,
     },
+    integrated: {
+      flex: 1,
+      paddingHorizontal: spacing.screen,
+      gap: 10,
+      justifyContent: 'flex-start',
+    },
     footerSlot: {
       paddingHorizontal: spacing.screen,
       paddingTop: 8,
@@ -242,11 +265,7 @@ function createStyles(colors: AppColors) {
       padding: 10,
       borderRadius: 22,
       backgroundColor: colors.white,
-      shadowColor: '#1c1613',
-      shadowOffset: { width: 0, height: 8 },
-      shadowOpacity: 0.1,
-      shadowRadius: 16,
-      elevation: 4,
+      ...softShadow({ y: 8, blur: 16, opacity: 0.1, elevation: 4 }),
     },
     mark: { width: 56, height: 56 },
     markSm: { width: 40, height: 40 },
@@ -313,12 +332,14 @@ function createStyles(colors: AppColors) {
       justifyContent: 'center',
       paddingHorizontal: 18,
     },
+    primaryBtnCompact: { minHeight: 48, borderRadius: 14 },
     primaryBtnDisabled: { opacity: 0.55 },
     primaryBtnText: {
       color: colors.onAccent,
       fontSize: 16,
       ...displayFont('700'),
     },
+    primaryBtnTextCompact: { fontSize: 15 },
     ghostBtn: {
       minHeight: 52,
       borderRadius: 16,
@@ -329,11 +350,13 @@ function createStyles(colors: AppColors) {
       justifyContent: 'center',
       paddingHorizontal: 18,
     },
+    ghostBtnCompact: { minHeight: 46, borderRadius: 14 },
     ghostBtnText: {
       color: colors.text,
       fontSize: 15,
       ...bodyFont('600'),
     },
+    ghostBtnTextCompact: { fontSize: 14 },
     linkRow: {
       flexDirection: 'row',
       justifyContent: 'center',

@@ -20,6 +20,20 @@ export const mapStyles = {
   /** Brighter streets — better for address picking. */
   bright: 'https://tiles.openfreemap.org/styles/bright',
   dark: 'https://tiles.openfreemap.org/styles/dark',
+  /**
+   * Web-only: raster OSM FR (pas de clé API, pas de worker vectoriel).
+   * Utilisé pour Adresses quand OpenFreeMap est lent / bloqué.
+   */
+  raster: 'raster:osm-fr',
+} as const;
+
+/**
+ * Raster OSM (native UrlTile, comme CourseGO).
+ * @see https://wiki.openstreetmap.org/wiki/FR:Servers/tile.openstreetmap.fr
+ */
+export const mapRasterTiles = {
+  voyager: 'https://a.tile.openstreetmap.fr/osmfr/{z}/{x}/{y}.png',
+  attribution: '© OpenStreetMap',
 } as const;
 
 /** Cotonou · hub Super U Aéroport + livraison Ganhi. */

@@ -3,8 +3,9 @@ import { useColors } from '@/context/ThemeContext';
 import { displayFont, type AppColors, spacing } from '@/constants/theme';
 import { Feather } from '@expo/vector-icons';
 import { useEffect, useMemo, useState, type ComponentProps } from 'react';
-import { Pressable, StyleSheet, Text, View } from 'react-native';
+import { Modal, Platform, Pressable, StyleSheet, Text, View } from 'react-native';
 import Animated, { Easing, useAnimatedStyle, useSharedValue, withRepeat, withTiming } from 'react-native-reanimated';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 const KEYPAD = [
   ['1', '2', '3'],
@@ -54,6 +55,7 @@ function ControlBtn({
 export function CallOverlay() {
   const colors = useColors();
   const styles = useMemo(() => createStyles(colors), [colors]);
+  const insets = useSafeAreaInsets();
   const {
     call,
     phase,
@@ -71,6 +73,8 @@ export function CallOverlay() {
   } = useCall();
   const pulse = useSharedValue(1);
   const [digits, setDigits] = useState('');
+  const padTop = Math.max(12, (Platform.OS === 'web' ? 0 : insets.top) + 8);
+  const padBottom = Math.max(16, (Platform.OS === 'web' ? 0 : insets.bottom) + 12);
 
   useEffect(() => {
     if (phase === 'outgoing' || phase === 'incoming') {
@@ -112,7 +116,7 @@ export function CallOverlay() {
 
   if (phase === 'active' && controls.minimized) {
     return (
-      <View style={styles.miniWrap} pointerEvents="box-none">
+      <View style={[styles.miniWrap, { top: padTop }]} pointerEvents="box-none">
         <Pressable
           style={styles.miniBar}
           onPress={expand}
@@ -146,7 +150,14 @@ export function CallOverlay() {
   }
 
   return (
-    <View style={styles.root}>
+    <Modal
+      visible
+      transparent
+      animationType="fade"
+      statusBarTranslucent
+      presentationStyle="overFullScreen"
+      onRequestClose={phase === 'active' ? minimize : hangup}>
+      <View style={[styles.root, { paddingTop: padTop, paddingBottom: padBottom }]}>
       <View style={styles.card}>
         <View style={styles.avatarWrap}>
           {phase === 'outgoing' || phase === 'incoming' ? (
@@ -270,20 +281,19 @@ export function CallOverlay() {
           </>
         )}
       </View>
-    </View>
+      </View>
+    </Modal>
   );
 }
 
 function createStyles(colors: AppColors) {
   return StyleSheet.create({
     root: {
-      ...StyleSheet.absoluteFillObject,
-      zIndex: 9999,
-      elevation: 9999,
+      flex: 1,
       backgroundColor: colors.overlay,
       alignItems: 'center',
       justifyContent: 'center',
-      padding: 24,
+      paddingHorizontal: 24,
     },
     card: {
       width: '100%',
@@ -296,6 +306,7 @@ function createStyles(colors: AppColors) {
       alignItems: 'center',
       gap: 8,
     },
+
     avatarWrap: { width: 112, height: 112, alignItems: 'center', justifyContent: 'center', marginBottom: 4 },
     pulse: {
       position: 'absolute',
@@ -373,7 +384,6 @@ function createStyles(colors: AppColors) {
     bottomRow: { flexDirection: 'row', gap: 28, marginTop: 22 },
     miniWrap: {
       position: 'absolute',
-      top: 12,
       left: 12,
       right: 12,
       zIndex: 9999,
@@ -389,6 +399,11 @@ function createStyles(colors: AppColors) {
       paddingHorizontal: 12,
       borderWidth: 1,
       borderColor: colors.border,
+      shadowColor: '#1c1613',
+      shadowOpacity: 0.12,
+      shadowRadius: 12,
+      shadowOffset: { width: 0, height: 4 },
+      elevation: 6,
     },
     miniAvatar: {
       width: 36,

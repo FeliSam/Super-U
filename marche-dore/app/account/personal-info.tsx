@@ -1,16 +1,26 @@
 import { BirthDateField } from '@/components/BirthDateField';
-import { goBack } from '@/lib/navigation';
 import { PressScale } from '@/components/motion';
-import { CtaButton, IconCircle, Screen, Page } from '@/components/ui';
-import { displayFont, type AppColors, spacing } from '@/constants/theme';
+import { ScreenHeader } from '@/components/ScreenHeader';
+import { iosKeyboardAccessoryProps } from '@/components/KeyboardDismissBar';
+import { CtaButton, Screen, Page } from '@/components/ui';
+import { type AppColors, spacing } from '@/constants/theme';
 import { useProfile } from '@/context/ProfileContext';
 import { useColors } from '@/context/ThemeContext';
 import { formatBeninPhoneInput } from '@/lib/beninPhone';
 import { pickProfilePhoto, profilePhotoSource } from '@/lib/profilePhoto';
 import { Feather } from '@expo/vector-icons';
-import { router } from 'expo-router';
+import { keyboardScrollProps, useKeyboardAvoidProps } from '@/lib/keyboardAvoid';
+import { goBack } from '@/lib/navigation';
 import { useEffect, useMemo, useState } from 'react';
-import { Image, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
+import {
+  Image,
+  KeyboardAvoidingView,
+  ScrollView,
+  StyleSheet,
+  Text,
+  TextInput,
+  View,
+} from 'react-native';
 
 function Field({
   label,
@@ -37,6 +47,7 @@ function Field({
         placeholderTextColor={colors.placeholder}
         keyboardType={keyboardType}
         autoCapitalize={autoCapitalize}
+        {...iosKeyboardAccessoryProps()}
       />
     </View>
   );
@@ -45,6 +56,7 @@ function Field({
 export default function PersonalInfoScreen() {
   const colors = useColors();
   const styles = useMemo(() => createStyles(colors), [colors]);
+  const kav = useKeyboardAvoidProps();
   const { profile, setProfile, updateProfile } = useProfile();
   const [form, setForm] = useState(profile);
 
@@ -71,57 +83,58 @@ export default function PersonalInfoScreen() {
   return (
     <Screen>
       <Page style={styles.flex}>
-        <View style={styles.header}>
-          <IconCircle name="chevron-left" onPress={() => goBack()} />
-          <Text style={styles.title}>Informations personnelles</Text>
-          <View style={styles.headerSpacer} />
-        </View>
+        <ScreenHeader title="Informations personnelles" />
 
-        <ScrollView contentContainerStyle={styles.content} showsVerticalScrollIndicator={false} keyboardShouldPersistTaps="handled">
-          <View style={styles.avatarSection}>
-            <Image source={profilePhotoSource(form.photoUri)} style={styles.avatar} />
-            <PressScale
-              onPress={() => void changePhoto()}
-              scaleTo={0.97}
-              accessibilityRole="button"
-              accessibilityLabel="Changer la photo de profil">
-              <View style={styles.changePhoto}>
-                <Feather name="camera" size={14} color={colors.gold} />
-                <Text style={styles.changePhotoText}>Changer la photo</Text>
-              </View>
-            </PressScale>
+        <KeyboardAvoidingView style={styles.flex} {...kav}>
+          <ScrollView
+            contentContainerStyle={styles.content}
+            showsVerticalScrollIndicator={false}
+            {...keyboardScrollProps()}>
+            <View style={styles.avatarSection}>
+              <Image source={profilePhotoSource(form.photoUri)} style={styles.avatar} />
+              <PressScale
+                onPress={() => void changePhoto()}
+                scaleTo={0.97}
+                accessibilityRole="button"
+                accessibilityLabel="Changer la photo de profil">
+                <View style={styles.changePhoto}>
+                  <Feather name="camera" size={14} color={colors.gold} />
+                  <Text style={styles.changePhotoText}>Changer la photo</Text>
+                </View>
+              </PressScale>
+            </View>
+
+            <View style={styles.card}>
+              <Field label="Prénom" value={form.firstName} onChangeText={update('firstName')} autoCapitalize="words" />
+              <Field label="Nom" value={form.lastName} onChangeText={update('lastName')} autoCapitalize="words" />
+              <Field
+                label="E-mail"
+                value={form.email}
+                onChangeText={update('email')}
+                keyboardType="email-address"
+                autoCapitalize="none"
+              />
+              <Field
+                label="Téléphone"
+                value={form.phone}
+                onChangeText={(t) => update('phone')(formatBeninPhoneInput(t))}
+                keyboardType="phone-pad"
+              />
+              <BirthDateField label="Date de naissance" value={form.birthDate} onChange={update('birthDate')} />
+            </View>
+
+            <View style={styles.note}>
+              <Feather name="shield" size={16} color={colors.muted} />
+              <Text style={styles.noteText}>
+                Vos informations sont utilisées pour la livraison et le suivi de vos commandes.
+              </Text>
+            </View>
+          </ScrollView>
+
+          <View style={styles.footer}>
+            <CtaButton label="Enregistrer les modifications" onPress={save} />
           </View>
-
-          <View style={styles.card}>
-            <Field label="Prénom" value={form.firstName} onChangeText={update('firstName')} autoCapitalize="words" />
-            <Field label="Nom" value={form.lastName} onChangeText={update('lastName')} autoCapitalize="words" />
-            <Field
-              label="E-mail"
-              value={form.email}
-              onChangeText={update('email')}
-              keyboardType="email-address"
-              autoCapitalize="none"
-            />
-            <Field
-              label="Téléphone"
-              value={form.phone}
-              onChangeText={(t) => update('phone')(formatBeninPhoneInput(t))}
-              keyboardType="phone-pad"
-            />
-            <BirthDateField label="Date de naissance" value={form.birthDate} onChange={update('birthDate')} />
-          </View>
-
-          <View style={styles.note}>
-            <Feather name="shield" size={16} color={colors.muted} />
-            <Text style={styles.noteText}>
-              Vos informations sont utilisées pour la livraison et le suivi de vos commandes.
-            </Text>
-          </View>
-        </ScrollView>
-
-        <View style={styles.footer}>
-          <CtaButton label="Enregistrer les modifications" onPress={save} />
-        </View>
+        </KeyboardAvoidingView>
       </Page>
     </Screen>
   );
@@ -130,15 +143,6 @@ export default function PersonalInfoScreen() {
 function createStyles(colors: AppColors) {
   return StyleSheet.create({
     flex: { flex: 1 },
-    header: {
-      flexDirection: 'row',
-      alignItems: 'center',
-      justifyContent: 'space-between',
-      paddingHorizontal: spacing.screen,
-      paddingVertical: 12,
-    },
-    headerSpacer: { width: 40 },
-    title: { color: colors.text, fontSize: 17, ...displayFont('700') },
     content: { padding: 20, gap: 16, paddingBottom: 24 },
     avatarSection: { alignItems: 'center', gap: 10 },
     avatar: { width: 88, height: 88, borderRadius: 44 },

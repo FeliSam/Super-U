@@ -1,12 +1,11 @@
 import { useAuth } from '@/context/AuthContext';
 import { useCart } from '@/context/CartContext';
-import { useColors } from '@/context/ThemeContext';
+import { DEV_OPEN_HOME, logDev, logDevError } from '@/lib/devBoot';
+import { peekShopHasSession } from '@/lib/sessionPeek';
 import { router, useSegments } from 'expo-router';
 import { useEffect, useRef } from 'react';
-import { ActivityIndicator, StyleSheet, View } from 'react-native';
 
 export function AuthGate({ children }: { children: React.ReactNode }) {
-  const colors = useColors();
   const { ready, isAuthenticated, needsOnboarding, session } = useAuth();
   const { clear: clearCart } = useCart();
   const segments = useSegments();
@@ -31,47 +30,38 @@ export function AuthGate({ children }: { children: React.ReactNode }) {
   useEffect(() => {
     if (!ready) return;
 
-    if (!isAuthenticated) {
-      if (!inAuthGroup || onOnboarding) {
-        router.replace('/(auth)');
+    try {
+      if (DEV_OPEN_HOME) {
+        if (inAuthGroup) {
+          logDev('AuthGate → /(tabs) (DEV_OPEN_HOME)');
+          router.replace('/(tabs)');
+        }
+        return;
       }
-      return;
+
+      if (!isAuthenticated) {
+        // Session encore en cache / hydratation : ne pas forcer login.
+        if (peekShopHasSession()) return;
+        if (!inAuthGroup || onOnboarding) {
+          router.replace('/(auth)');
+        }
+        return;
+      }
+
+      if (needsOnboarding && !onOnboarding) {
+        router.replace('/(auth)/onboarding');
+        return;
+      }
+
+      if (onOnboarding) return;
+
+      if (inAuthGroup) {
+        router.replace('/(tabs)');
+      }
+    } catch (e) {
+      logDevError('AuthGate.redirect', e, { root, inAuthGroup, isAuthenticated });
     }
+  }, [ready, isAuthenticated, needsOnboarding, inAuthGroup, onOnboarding, root]);
 
-    if (needsOnboarding && !onOnboarding) {
-      router.replace('/(auth)/onboarding');
-      return;
-    }
-
-    // L’onboarding envoie vers adresse puis Super U. Ne pas renvoyer aux tabs avant.
-    if (onOnboarding) return;
-
-    if (inAuthGroup) {
-      router.replace('/(tabs)');
-    }
-  }, [ready, isAuthenticated, needsOnboarding, inAuthGroup, onOnboarding]);
-
-  return (
-    <>
-      {children}
-      {!ready ? (
-        <View style={[styles.fill, { backgroundColor: colors.bg }]}>
-          <ActivityIndicator color={colors.gold} />
-        </View>
-      ) : null}
-    </>
-  );
+  return <>{children}</>;
 }
-
-const styles = StyleSheet.create({
-  fill: {
-    position: 'absolute',
-    top: 0,
-    left: 0,
-    right: 0,
-    bottom: 0,
-    alignItems: 'center',
-    justifyContent: 'center',
-    zIndex: 20,
-  },
-});

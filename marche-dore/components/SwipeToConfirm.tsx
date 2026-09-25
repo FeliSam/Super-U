@@ -1,28 +1,23 @@
-import { type AppColors } from '@/constants/theme';
-import { useColors } from '@/context/ThemeContext';
+import { liquidIce, type AppColors } from '@/constants/theme';
+import { useColors, useTheme } from '@/context/ThemeContext';
 import { softShadow } from '@/lib/shadow';
 import { Feather } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
 import { memo, useCallback, useEffect, useMemo, useRef } from 'react';
-import {
-  Platform,
-  Pressable,
-  StyleSheet,
-  Text,
-  View,
-  type GestureResponderEvent,
-  type LayoutChangeEvent,
-} from 'react-native';
+import { Platform, Pressable, StyleSheet, Text, View, type LayoutChangeEvent } from 'react-native';
+import { Gesture, GestureDetector } from 'react-native-gesture-handler';
 import Animated, {
   interpolate,
+  runOnJS,
   useAnimatedStyle,
   useSharedValue,
   withSpring,
   withTiming,
 } from 'react-native-reanimated';
 
-const THUMB = 54;
-const PAD = 5;
+const THUMB = 48;
+const PAD = 4;
+const TRACK_H = 54;
 const THRESHOLD = 0.62;
 
 type Props = {
@@ -33,11 +28,7 @@ type Props = {
   disabled?: boolean;
 };
 
-function pageXOf(e: GestureResponderEvent) {
-  return e.nativeEvent.pageX;
-}
-
-/** Swipe left → right to confirm payment. Touch/mouse via RN responders (works on phone web). */
+/** Swipe L→R pour confirmer — Pan RNGH pour ne pas faire scroller la page. */
 export const SwipeToConfirm = memo(function SwipeToConfirm({
   title = 'Glisser pour payer',
   subtitle,
@@ -46,28 +37,27 @@ export const SwipeToConfirm = memo(function SwipeToConfirm({
   disabled = false,
 }: Props) {
   const colors = useColors();
-  const styles = useMemo(() => createStyles(colors), [colors]);
+  const { scheme } = useTheme();
+  const ice = useMemo(() => liquidIce(scheme), [scheme]);
+  const styles = useMemo(() => createStyles(colors, ice), [colors, ice]);
   const x = useSharedValue(0);
   const maxX = useSharedValue(1);
+  const lockedSV = useSharedValue(0);
   const maxXRef = useRef(1);
   const lockedRef = useRef(false);
-  const draggingRef = useRef(false);
-  const startPageX = useRef(0);
   const onConfirmRef = useRef(onConfirm);
-  const disabledRef = useRef(disabled);
 
   useEffect(() => {
     onConfirmRef.current = onConfirm;
   }, [onConfirm]);
 
   useEffect(() => {
-    disabledRef.current = disabled;
     if (disabled) {
       lockedRef.current = false;
-      draggingRef.current = false;
+      lockedSV.value = 0;
       x.value = withSpring(0, { damping: 18, stiffness: 220 });
     }
-  }, [disabled, x]);
+  }, [disabled, lockedSV, x]);
 
   const onTrackLayout = (e: LayoutChangeEvent) => {
     const next = Math.max(1, e.nativeEvent.layout.width - THUMB - PAD * 2);
@@ -77,45 +67,58 @@ export const SwipeToConfirm = memo(function SwipeToConfirm({
 
   const resetKnob = useCallback(() => {
     lockedRef.current = false;
-    draggingRef.current = false;
+    lockedSV.value = 0;
     x.value = withSpring(0, { damping: 18, stiffness: 220 });
-  }, [x]);
+  }, [lockedSV, x]);
 
   const fireConfirm = useCallback(() => {
+    if (lockedRef.current || disabled) return;
     lockedRef.current = true;
+    lockedSV.value = 1;
     x.value = withTiming(maxXRef.current, { duration: 120 });
     void Promise.resolve(onConfirmRef.current()).finally(() => {
       setTimeout(resetKnob, 450);
     });
-  }, [resetKnob, x]);
+  }, [disabled, lockedSV, resetKnob, x]);
 
-  const grant = (e: GestureResponderEvent) => {
-    if (disabledRef.current || lockedRef.current) return;
-    draggingRef.current = true;
-    startPageX.current = pageXOf(e);
-    x.value = 0;
-  };
+  const releaseAt = useCallback(
+    (dx: number) => {
+      if (disabled || lockedRef.current) return;
+      const next = Math.min(maxXRef.current, Math.max(0, dx));
+      if (next >= maxXRef.current * THRESHOLD) fireConfirm();
+      else x.value = withSpring(0, { damping: 18, stiffness: 220 });
+    },
+    [disabled, fireConfirm, x],
+  );
 
-  const move = (e: GestureResponderEvent) => {
-    if (!draggingRef.current || disabledRef.current || lockedRef.current) return;
-    const dx = pageXOf(e) - startPageX.current;
-    x.value = Math.min(maxXRef.current, Math.max(0, dx));
-  };
-
-  const release = (e: GestureResponderEvent) => {
-    if (!draggingRef.current || disabledRef.current || lockedRef.current) {
-      draggingRef.current = false;
-      return;
-    }
-    draggingRef.current = false;
-    const dx = pageXOf(e) - startPageX.current;
-    const next = Math.min(maxXRef.current, Math.max(0, dx));
-    if (next >= maxXRef.current * THRESHOLD) {
-      fireConfirm();
-    } else {
-      x.value = withSpring(0, { damping: 18, stiffness: 220 });
-    }
-  };
+  const pan = useMemo(
+    () =>
+      Gesture.Pan()
+        .enabled(!disabled)
+        .activeOffsetX([-8, 8])
+        .failOffsetY([-18, 18])
+        .onBegin(() => {
+          'worklet';
+          if (lockedSV.value) return;
+          x.value = 0;
+        })
+        .onUpdate((e) => {
+          'worklet';
+          if (lockedSV.value) return;
+          x.value = Math.min(maxX.value, Math.max(0, e.translationX));
+        })
+        .onEnd((e) => {
+          'worklet';
+          runOnJS(releaseAt)(e.translationX);
+        })
+        .onFinalize((_e, success) => {
+          'worklet';
+          if (!success && !lockedSV.value) {
+            x.value = withSpring(0, { damping: 18, stiffness: 220 });
+          }
+        }),
+    [disabled, lockedSV, maxX, releaseAt, x],
+  );
 
   const fillStyle = useAnimatedStyle(() => ({
     width: x.value + THUMB + PAD * 2,
@@ -134,69 +137,64 @@ export const SwipeToConfirm = memo(function SwipeToConfirm({
   }));
 
   return (
-    <View>
-      <Animated.View
-        style={[
-          styles.track,
-          disabled && styles.trackDisabled,
-          Platform.OS === 'web'
-            ? ({
-                touchAction: 'none',
-                userSelect: 'none',
-                WebkitUserSelect: 'none',
-                cursor: disabled ? 'default' : 'grab',
-              } as object)
-            : null,
-        ]}
-        onLayout={onTrackLayout}
-        onStartShouldSetResponder={() => !disabled && !lockedRef.current}
-        onMoveShouldSetResponder={() => !disabled && !lockedRef.current}
-        onResponderTerminationRequest={() => false}
-        onResponderGrant={grant}
-        onResponderMove={move}
-        onResponderRelease={release}
-        onResponderTerminate={release}>
-        <LinearGradient
-          colors={['#c84b31', '#a83c26']}
-          start={{ x: 0, y: 0 }}
-          end={{ x: 1, y: 0 }}
-          style={StyleSheet.absoluteFill}
-          pointerEvents="none"
-        />
+    <View
+      style={
+        Platform.OS === 'web'
+          ? ({ touchAction: 'none', overscrollBehavior: 'none' } as object)
+          : undefined
+      }>
+      <GestureDetector gesture={pan}>
+        <Animated.View
+          style={[
+            styles.track,
+            disabled && styles.trackDisabled,
+            Platform.OS === 'web'
+              ? ({
+                  touchAction: 'none',
+                  userSelect: 'none',
+                  WebkitUserSelect: 'none',
+                  cursor: disabled ? 'default' : 'grab',
+                } as object)
+              : null,
+          ]}
+          onLayout={onTrackLayout}
+          onStartShouldSetResponder={() => !disabled}
+          onMoveShouldSetResponder={() => !disabled}
+          onResponderTerminationRequest={() => false}>
+          <Animated.View style={[styles.fill, fillStyle]} pointerEvents="none">
+            <LinearGradient
+              colors={['rgba(226, 147, 29, 0.55)', 'rgba(200, 75, 49, 0.5)']}
+              start={{ x: 0, y: 0 }}
+              end={{ x: 1, y: 0 }}
+              style={StyleSheet.absoluteFill}
+            />
+          </Animated.View>
 
-        <Animated.View style={[styles.fill, fillStyle]} pointerEvents="none">
-          <LinearGradient
-            colors={['#d45a3d', '#b8432c']}
-            start={{ x: 0, y: 0 }}
-            end={{ x: 1, y: 0 }}
-            style={StyleSheet.absoluteFill}
-          />
+          <Animated.View style={[styles.centerCopy, hintStyle]} pointerEvents="none">
+            <Text style={styles.title}>{title}</Text>
+            {subtitle ? <Text style={styles.subtitle}>{subtitle}</Text> : null}
+          </Animated.View>
+
+          <Animated.View style={[styles.doneCopy, doneStyle]} pointerEvents="none">
+            <Feather name="check" size={18} color={colors.green} />
+            <Text style={styles.doneText}>Confirmé</Text>
+          </Animated.View>
+
+          <View style={styles.amountWrap} pointerEvents="none">
+            <Text style={styles.amount}>{amount}</Text>
+          </View>
+
+          <Animated.View style={[styles.thumb, thumbStyle]} pointerEvents="none">
+            <Feather name="chevron-right" size={22} color={colors.gold} />
+            <Feather
+              name="chevron-right"
+              size={22}
+              color={colors.gold}
+              style={styles.thumbChevron2}
+            />
+          </Animated.View>
         </Animated.View>
-
-        <Animated.View style={[styles.centerCopy, hintStyle]} pointerEvents="none">
-          <Text style={styles.title}>{title}</Text>
-          {subtitle ? <Text style={styles.subtitle}>{subtitle}</Text> : null}
-        </Animated.View>
-
-        <Animated.View style={[styles.doneCopy, doneStyle]} pointerEvents="none">
-          <Feather name="check" size={18} color={colors.onAccent} />
-          <Text style={styles.doneText}>Confirmé</Text>
-        </Animated.View>
-
-        <View style={styles.amountWrap} pointerEvents="none">
-          <Text style={styles.amount}>{amount}</Text>
-        </View>
-
-        <Animated.View style={[styles.thumb, thumbStyle]} pointerEvents="none">
-          <Feather name="chevron-right" size={22} color={colors.terracotta} />
-          <Feather
-            name="chevron-right"
-            size={22}
-            color={colors.terracotta}
-            style={styles.thumbChevron2}
-          />
-        </Animated.View>
-      </Animated.View>
+      </GestureDetector>
 
       <Pressable
         style={styles.tapFallback}
@@ -212,13 +210,25 @@ export const SwipeToConfirm = memo(function SwipeToConfirm({
   );
 });
 
-function createStyles(colors: AppColors) {
+function createStyles(colors: AppColors, ice: ReturnType<typeof liquidIce>) {
+  const glassWeb =
+    Platform.OS === 'web'
+      ? {
+          backdropFilter: ice.webFilter,
+          WebkitBackdropFilter: ice.webFilter,
+          boxShadow: ice.webShadow,
+        }
+      : {};
   return StyleSheet.create({
     track: {
-      height: 64,
-      borderRadius: 18,
+      height: TRACK_H,
+      borderRadius: 16,
       overflow: 'hidden',
       justifyContent: 'center',
+      backgroundColor: ice.backgroundColor,
+      borderWidth: 1,
+      borderColor: ice.borderColor,
+      ...glassWeb,
     },
     trackDisabled: { opacity: 0.55 },
     fill: {
@@ -226,17 +236,17 @@ function createStyles(colors: AppColors) {
       left: 0,
       top: 0,
       bottom: 0,
-      borderRadius: 18,
+      borderRadius: 16,
       overflow: 'hidden',
     },
     centerCopy: {
       position: 'absolute',
-      left: THUMB + 18,
-      right: 88,
+      left: THUMB + 14,
+      right: 80,
       justifyContent: 'center',
     },
-    title: { color: colors.onAccent, fontSize: 15, fontWeight: '800' },
-    subtitle: { color: 'rgba(255,255,255,0.82)', fontSize: 11, fontWeight: '600', marginTop: 2 },
+    title: { color: colors.text, fontSize: 14, fontWeight: '800' },
+    subtitle: { color: colors.muted, fontSize: 10, fontWeight: '600', marginTop: 1 },
     doneCopy: {
       position: 'absolute',
       left: 0,
@@ -246,30 +256,33 @@ function createStyles(colors: AppColors) {
       justifyContent: 'center',
       gap: 8,
     },
-    doneText: { color: colors.onAccent, fontSize: 15, fontWeight: '800' },
+    doneText: { color: colors.text, fontSize: 14, fontWeight: '800' },
     amountWrap: {
       position: 'absolute',
-      right: 16,
+      right: 14,
       top: 0,
       bottom: 0,
       justifyContent: 'center',
     },
-    amount: { color: colors.onAccent, fontSize: 16, fontWeight: '800' },
+    amount: { color: colors.text, fontSize: 15, fontWeight: '800' },
     thumb: {
       position: 'absolute',
       left: PAD,
       top: PAD,
       width: THUMB,
-      height: 64 - PAD * 2,
-      borderRadius: 14,
-      backgroundColor: '#ffffff',
+      height: TRACK_H - PAD * 2,
+      borderRadius: 12,
+      backgroundColor: ice.backgroundColor,
+      borderWidth: 1,
+      borderColor: ice.borderColor,
       flexDirection: 'row',
       alignItems: 'center',
       justifyContent: 'center',
+      ...glassWeb,
       ...softShadow({ y: 3, blur: 16, opacity: 0.18, elevation: 4 }),
     },
     thumbChevron2: { marginLeft: -14, opacity: 0.45 },
-    tapFallback: { alignItems: 'center', paddingTop: 10, paddingBottom: 2 },
-    tapFallbackText: { color: colors.muted, fontSize: 13, fontWeight: '700' },
+    tapFallback: { alignItems: 'center', paddingTop: 6, paddingBottom: 0 },
+    tapFallbackText: { color: colors.muted, fontSize: 12, fontWeight: '700' },
   });
 }

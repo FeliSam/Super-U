@@ -1,4 +1,5 @@
 import { AppImage } from '@/components/AppImage';
+import { iosKeyboardAccessoryProps } from '@/components/KeyboardDismissBar';
 import { IconCircle, Page, Screen } from '@/components/ui';
 import { displayFont, type AppColors, spacing } from '@/constants/theme';
 import { useCall } from '@/context/CallContext';
@@ -8,6 +9,8 @@ import { useProfile } from '@/context/ProfileContext';
 import { useAuth } from '@/context/AuthContext';
 import { formatCallMessage } from '@/lib/api/chat';
 import { profilePhotoSource } from '@/lib/profilePhoto';
+import { showToast } from '@/lib/toastBus';
+import { keyboardScrollProps, useKeyboardAvoidProps } from '@/lib/keyboardAvoid';
 import { userPhotoSource } from '@/lib/userPhoto';
 import { Feather } from '@expo/vector-icons';
 import { Href, router, useLocalSearchParams } from 'expo-router';
@@ -36,6 +39,7 @@ export default function ChatThreadScreen() {
   const styles = useMemo(() => createStyles(colors), [colors]);
   const { id } = useLocalSearchParams<{ id?: string }>();
   const insets = useSafeAreaInsets();
+  const kav = useKeyboardAvoidProps();
   const conversationId = resolveConversationId(id);
 
   const {
@@ -52,9 +56,13 @@ export default function ChatThreadScreen() {
   const messages = getMessages(conversationId);
   const { profile } = useProfile();
   const { session } = useAuth();
-  const myPhoto = profile.photoUri?.trim()
-    ? profilePhotoSource(profile.photoUri)
-    : userPhotoSource(session?.accountId);
+  const myPhoto = useMemo(
+    () =>
+      profile.photoUri?.trim()
+        ? profilePhotoSource(profile.photoUri)
+        : userPhotoSource(session?.accountId),
+    [profile.photoUri, session?.accountId],
+  );
   const { startOutgoing, phase } = useCall();
   const [draft, setDraft] = useState('');
   const scrollRef = useRef<ScrollView>(null);
@@ -76,7 +84,11 @@ export default function ChatThreadScreen() {
   }, [messages.length, conversationId]);
 
   const callPeer = () => {
-    if (!conversation || !canCall || phase !== 'idle') return;
+    if (!conversation || !canCall) return;
+    if (phase !== 'idle') {
+      showToast({ title: 'Appel', body: 'Un appel est déjà en cours.', tone: 'info' });
+      return;
+    }
     startOutgoing(conversation.id, conversation.name);
   };
 
@@ -92,11 +104,13 @@ export default function ChatThreadScreen() {
     setDraft('');
   };
 
+  const headerPadTop = Math.max(10, (Platform.OS === 'web' ? 0 : insets.top) + 8);
+
   if (ready && !conversation) {
     return (
       <Screen>
         <Page style={styles.flex}>
-          <View style={styles.header}>
+          <View style={[styles.header, { paddingTop: headerPadTop }]}>
             <IconCircle name="chevron-left" onPress={() => router.navigate('/chat' as Href)} />
             <Text style={styles.missingTitle}>Conversation introuvable</Text>
             <View style={styles.headerSpacer} />
@@ -128,7 +142,7 @@ export default function ChatThreadScreen() {
   return (
     <Screen>
       <Page style={styles.flex}>
-        <View style={styles.header}>
+        <View style={[styles.header, { paddingTop: headerPadTop }]}>
           <IconCircle name="chevron-left" onPress={() => router.navigate('/chat' as Href)} />
           <Pressable
             style={styles.headerCenter}
@@ -136,7 +150,7 @@ export default function ChatThreadScreen() {
               if (conversation.orderId) router.push(`/tracking?id=${conversation.orderId}`);
             }}>
             {conversation.avatar ? (
-              <AppImage source={conversation.avatar} frameStyle={styles.headerAvatar} />
+              <AppImage source={conversation.avatar} frameStyle={styles.headerAvatar} priority="high" />
             ) : (
               <View
                 style={[
@@ -162,31 +176,20 @@ export default function ChatThreadScreen() {
               </View>
             </View>
           </Pressable>
-          {canCall && !conversation.archived ? (
-            <>
-              <IconCircle
-                name={conversation.disabled ? 'bell-off' : 'slash'}
-                onPress={() =>
-                  void setConversationDisabled(conversation.id, !conversation.disabled)
-                }
-              />
-              {conversation.disabled ? null : <IconCircle name="phone" onPress={callPeer} />}
-            </>
+          {canCall && !conversation.archived && !conversation.disabled ? (
+            <IconCircle name="phone" onPress={callPeer} accessibilityLabel="Appeler" />
           ) : (
             <View style={styles.headerSpacer} />
           )}
         </View>
 
-        <KeyboardAvoidingView
-          style={styles.flex}
-          behavior={Platform.OS === 'ios' ? 'padding' : undefined}
-          keyboardVerticalOffset={Platform.OS === 'ios' ? 8 : 0}>
+        <KeyboardAvoidingView style={styles.flex} {...kav}>
           <ScrollView
             ref={scrollRef}
             style={styles.flex}
             contentContainerStyle={styles.thread}
             showsVerticalScrollIndicator={false}
-            keyboardShouldPersistTaps="handled">
+            {...keyboardScrollProps()}>
             <View style={styles.banner}>
               <Feather
                 name={
@@ -219,7 +222,12 @@ export default function ChatThreadScreen() {
                   style={[styles.bubbleWrap, mine ? styles.bubbleWrapMe : styles.bubbleWrapThem]}>
                   {!mine ? (
                     conversation.avatar ? (
-                      <AppImage source={conversation.avatar} frameStyle={styles.bubbleAvatar} />
+                      <AppImage
+                        source={conversation.avatar}
+                        frameStyle={styles.bubbleAvatar}
+                        priority="high"
+                        recyclingKey={`peer-${conversation.id}`}
+                      />
                     ) : (
                       <View
                         style={[
@@ -254,7 +262,14 @@ export default function ChatThreadScreen() {
                     )}
                     <Text style={[styles.bubbleTime, mine && styles.bubbleTimeMe]}>{msg.time}</Text>
                   </View>
-                  {mine ? <AppImage source={myPhoto} frameStyle={styles.bubbleAvatar} /> : null}
+                  {mine ? (
+                    <AppImage
+                      source={myPhoto}
+                      frameStyle={styles.bubbleAvatar}
+                      priority="high"
+                      recyclingKey={`me-${session?.accountId ?? 'self'}`}
+                    />
+                  ) : null}
                 </View>
               );
             })}
@@ -303,6 +318,7 @@ export default function ChatThreadScreen() {
                 style={styles.input}
                 multiline
                 maxLength={500}
+                {...iosKeyboardAccessoryProps()}
                 onSubmitEditing={() => send(draft)}
               />
               <Pressable
@@ -329,7 +345,8 @@ function createStyles(colors: AppColors) {
       alignItems: 'center',
       gap: 10,
       paddingHorizontal: spacing.screenMd,
-      paddingVertical: 10,
+      paddingTop: 10,
+      paddingBottom: 10,
       borderBottomWidth: 1,
       borderBottomColor: colors.border,
       backgroundColor: colors.white,

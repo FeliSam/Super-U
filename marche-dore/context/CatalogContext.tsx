@@ -9,15 +9,38 @@ import React, {
 } from 'react';
 import { AppState, Platform } from 'react-native';
 import { useStores } from '@/context/StoresContext';
+import { listCatalogProducts } from '@/lib/api/catalog';
 import { syncCatalogCache } from '@/lib/catalogSync';
 import { getLocalDb } from '@/lib/db/client';
 import { hydrateCatalogFromDb } from '@/lib/db/hydrateCatalog';
+import { pollWhileForeground } from '@/lib/foreground';
+import { applyStoreStock } from '@/data/stock';
+import {
+  getProduct,
+  getProducts,
+  products as catalogProducts,
+  productsInCategory,
+  promoProducts,
+  searchProducts,
+  type Product,
+  type SearchOptions,
+} from '@/data/catalog';
 
 type CatalogContextValue = {
   version: number;
   syncing: boolean;
   lastSyncAt: string | null;
-  resync: (options?: { full?: boolean }) => Promise<boolean>;
+  ready: boolean;
+  loading: boolean;
+  storeId: string;
+  products: Product[];
+  getProduct: typeof getProduct;
+  getProducts: typeof getProducts;
+  productsInCategory: typeof productsInCategory;
+  searchProducts: (query: string, options?: SearchOptions) => Product[];
+  promoProducts: typeof promoProducts;
+  refresh: () => Promise<boolean>;
+  resync: (options?: { full?: boolean; force?: boolean }) => Promise<boolean>;
 };
 
 const CatalogContext = createContext<CatalogContextValue | null>(null);
@@ -29,7 +52,6 @@ export function CatalogProvider({ children }: { children: React.ReactNode }) {
   const [lastSyncAt, setLastSyncAt] = useState<string | null>(null);
   const generation = useRef(0);
   const retryTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const pollTimer = useRef<ReturnType<typeof setInterval> | null>(null);
   const inflight = useRef<Promise<boolean> | null>(null);
   const lastOkAt = useRef(0);
   const retryMs = useRef(15_000);
@@ -97,6 +119,9 @@ export function CatalogProvider({ children }: { children: React.ReactNode }) {
     };
 
     void (async () => {
+      applyStoreStock(selectedStoreId);
+      if (!active || run !== generation.current) return;
+      publish();
       const db = await getLocalDb();
       if (!active || run !== generation.current) return;
       if (db) {
@@ -104,6 +129,9 @@ export function CatalogProvider({ children }: { children: React.ReactNode }) {
         if (!active || run !== generation.current) return;
         publish();
       }
+      await listCatalogProducts({ storeId: selectedStoreId });
+      if (!active || run !== generation.current) return;
+      publish();
       const ok = await resync();
       if (!ok) scheduleRetry();
     })();
@@ -117,14 +145,9 @@ export function CatalogProvider({ children }: { children: React.ReactNode }) {
 
   useEffect(() => {
     if (!storesReady) return;
-    const tick = () => {
+    return pollWhileForeground(() => {
       void resync({ force: true });
-    };
-    pollTimer.current = setInterval(tick, 90_000);
-    return () => {
-      if (pollTimer.current) clearInterval(pollTimer.current);
-      pollTimer.current = null;
-    };
+    }, 90_000);
   }, [storesReady, resync, selectedStoreId]);
 
   useEffect(() => {
@@ -145,9 +168,26 @@ export function CatalogProvider({ children }: { children: React.ReactNode }) {
     };
   }, [resync, storesReady]);
 
+  const refresh = useCallback(() => resync({ force: true, full: true }), [resync]);
+
   const value = useMemo(
-    () => ({ version, syncing, lastSyncAt, resync }),
-    [version, syncing, lastSyncAt, resync],
+    () => ({
+      version,
+      syncing,
+      lastSyncAt,
+      ready: storesReady,
+      loading: syncing,
+      storeId: selectedStoreId,
+      products: [...catalogProducts],
+      getProduct,
+      getProducts,
+      productsInCategory,
+      searchProducts,
+      promoProducts,
+      refresh,
+      resync,
+    }),
+    [version, syncing, lastSyncAt, storesReady, selectedStoreId, refresh, resync],
   );
 
   return <CatalogContext.Provider value={value}>{children}</CatalogContext.Provider>;

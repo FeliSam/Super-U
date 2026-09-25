@@ -1,134 +1,63 @@
 import { AppImage } from '@/components/AppImage';
-import { FrostedTopBar, FROST_ICON_BG, frostedBarClearance, IconCircle, Page, ProductCard, Screen } from '@/components/ui';
+import { FrostedTopBar, frostedBarClearance, IconCircle, Page, ProductCard, Screen, SmartNavbarChip, smartNavbarClearance } from '@/components/ui';
 import { MotionView, PressScale } from '@/components/motion';
-import { bodyFont, displayFont, floatingAboveTabBar, heroChrome, tabBarClearance, type AppColors, spacing } from '@/constants/theme';
+import { displayFont, floatingAboveTabBar, heroChrome, liquidIce, tabBarClearance, type AppColors, spacing } from '@/constants/theme';
 import { useAddresses } from '@/context/AddressesContext';
 import { useCatalog } from '@/context/CatalogContext';
 import { useColors, useTheme } from '@/context/ThemeContext';
 import { CartLine, lineListTotal, lineProduct, lineTotal, useCart } from '@/context/CartContext';
+import { useFavorites } from '@/context/FavoritesContext';
+import { useOrders } from '@/context/OrdersContext';
 import { useStores } from '@/context/StoresContext';
-import { chipRoute, homeCategories, recommendedIds } from '@/data/catalog';
+import { useUiState } from '@/context/UiStateContext';
+import { chipRoute, homeCategories } from '@/data/catalog';
 import { formatDistanceKm, formatDurationMin } from '@/lib/deliveryRouting';
 import { formatFcfa } from '@/lib/format';
+import { softShadow } from '@/lib/shadow';
+import { buildExplorePlan } from '@/lib/homeEngine';
 import { navigateTab, tabPaths } from '@/lib/navigation';
 import { openSearchScreen } from '@/lib/searchNav';
 import { useDeliveryEstimate } from '@/lib/useDeliveryEstimate';
 import { Feather } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
 import { router } from 'expo-router';
-import { memo, useMemo, useRef, useState } from 'react';
+import { memo, useCallback, useMemo, useRef, useState } from 'react';
 import {
-  Animated,
-  Dimensions,
-  PanResponder,
+  Alert,
+  Platform,
   Pressable,
   ScrollView,
   StyleSheet,
   Text,
-  View } from 'react-native';
+  View,
+} from 'react-native';
+import { RectButton, Swipeable } from 'react-native-gesture-handler';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import Reanimated, {
+  Easing,
+  useAnimatedScrollHandler,
+  useSharedValue,
+  withSpring,
+  withTiming,
+} from 'react-native-reanimated';
 
+const NAV_SPRING = { damping: 20, stiffness: 240, mass: 0.55, overshootClamping: false } as const;
 const DELETE_WIDTH = 88;
-const OPEN_X = -DELETE_WIDTH;
-const OVERSWIPE = 28;
 
-function SwipeCartItem({
+function CartItemRow({
   line,
+  onSetQty,
+  showTrash,
   onRemove,
-  onSetQty }: {
+}: {
   line: CartLine;
-  onRemove: () => void;
   onSetQty: (qty: number) => void;
+  showTrash?: boolean;
+  onRemove?: () => void;
 }) {
   const colors = useColors();
   const styles = useMemo(() => createStyles(colors), [colors]);
   const p = lineProduct(line);
-  const translateX = useRef(new Animated.Value(0)).current;
-  const rowOpacity = useRef(new Animated.Value(1)).current;
-  const offset = useRef(0);
-  const removing = useRef(false);
-
-  const deleteProgress = translateX.interpolate({
-    inputRange: [OPEN_X, OPEN_X / 2, 0],
-    outputRange: [1, 0.55, 0],
-    extrapolate: 'clamp' });
-  const deleteScale = translateX.interpolate({
-    inputRange: [OPEN_X - OVERSWIPE, OPEN_X, OPEN_X / 2, 0],
-    outputRange: [1.18, 1, 0.72, 0.45],
-    extrapolate: 'clamp' });
-  const deleteRotate = translateX.interpolate({
-    inputRange: [OPEN_X, 0],
-    outputRange: ['0deg', '-18deg'],
-    extrapolate: 'clamp' });
-  const railOpacity = translateX.interpolate({
-    inputRange: [OPEN_X, 0],
-    outputRange: [1, 0.35],
-    extrapolate: 'clamp' });
-  const itemScale = translateX.interpolate({
-    inputRange: [OPEN_X, 0],
-    outputRange: [0.985, 1],
-    extrapolate: 'clamp' });
-
-  const snapTo = (toValue: number) => {
-    offset.current = toValue;
-    Animated.spring(translateX, {
-      toValue,
-      useNativeDriver: true,
-      friction: 7,
-      tension: 68 }).start();
-  };
-
-  const animateRemove = () => {
-    if (removing.current) return;
-    removing.current = true;
-    Animated.parallel([
-      Animated.timing(translateX, {
-        toValue: -420,
-        duration: 220,
-        useNativeDriver: true }),
-      Animated.timing(rowOpacity, {
-        toValue: 0,
-        duration: 180,
-        useNativeDriver: true }),
-    ]).start(({ finished }) => {
-      if (finished) onRemove();
-    });
-  };
-
-  const panResponder = useRef(
-    PanResponder.create({
-      onStartShouldSetPanResponder: () => false,
-      onMoveShouldSetPanResponder: (_, g) => Math.abs(g.dx) > 6 && Math.abs(g.dx) > Math.abs(g.dy) * 1.2,
-      onPanResponderTerminationRequest: () => false,
-      onPanResponderGrant: () => {
-        translateX.stopAnimation((v) => {
-          offset.current = v;
-        });
-      },
-      onPanResponderMove: (_, g) => {
-        if (removing.current) return;
-        const raw = offset.current + g.dx;
-        let next = raw;
-        if (raw < OPEN_X) {
-          const overflow = OPEN_X - raw;
-          next = OPEN_X - overflow * 0.35;
-        } else if (raw > 0) {
-          next = raw * 0.2;
-        }
-        translateX.setValue(Math.max(OPEN_X - OVERSWIPE, Math.min(12, next)));
-      },
-      onPanResponderRelease: (_, g) => {
-        if (removing.current) return;
-        const projected = offset.current + g.dx + g.vx * 40;
-        if (projected < OPEN_X - OVERSWIPE * 0.6 || g.vx < -1.1) {
-          animateRemove();
-          return;
-        }
-        const open = projected < OPEN_X / 2 || g.vx < -0.35;
-        snapTo(open ? OPEN_X : 0);
-      } }),
-  ).current;
-
   if (!p) return null;
 
   const total = lineTotal(line);
@@ -136,55 +65,103 @@ function SwipeCartItem({
   const hasDiscount = Boolean(p.oldPrice && listTotal > total);
 
   return (
-    <Animated.View style={[styles.swipeWrap, { opacity: rowOpacity }]}>
-      <Animated.View style={[styles.deleteRail, { opacity: railOpacity }]}>
-        <Pressable style={styles.deleteBtn} onPress={animateRemove}>
-          <Animated.View
-            style={[
-              styles.deleteIconWrap,
-              {
-                opacity: deleteProgress,
-                transform: [{ scale: deleteScale }, { rotate: deleteRotate }] },
-            ]}>
-            <Feather name="trash-2" size={20} color={colors.onAccent} />
-          </Animated.View>
-          <Animated.Text style={[styles.deleteLabel, { opacity: deleteProgress }]}>Retirer</Animated.Text>
-        </Pressable>
-      </Animated.View>
-      <Animated.View
-        style={[styles.item, { transform: [{ translateX }, { scale: itemScale }] }]}
-        {...panResponder.panHandlers}>
-        <Pressable style={styles.itemLink} onPress={() => router.push(`/product/${p.id}`)}>
-          <View style={styles.thumbWrap}>
-            <AppImage source={p.image} frameStyle={styles.thumb} />
-            {p.discount ? (
-              <View style={styles.discountBadge}>
-                <Text style={styles.discountText}>{p.discount}</Text>
-              </View>
-            ) : null}
-          </View>
-          <View style={styles.itemInfo}>
-            <Text style={styles.name} numberOfLines={2}>
-              {p.name}
-            </Text>
-            <Text style={styles.unit}>{line.unitOverride ?? p.unit}</Text>
-            <View style={styles.prices}>
-              <Text style={styles.price}>{formatFcfa(total)}</Text>
-              {hasDiscount ? <Text style={styles.oldPrice}>{formatFcfa(listTotal)}</Text> : null}
+    <View style={styles.item}>
+      <Pressable style={styles.itemLink} onPress={() => router.push(`/product/${p.id}`)}>
+        <View style={styles.thumbWrap}>
+          <AppImage source={p.image} frameStyle={styles.thumb} contentFit="cover" />
+          {p.discount ? (
+            <View style={styles.discountBadge}>
+              <Text style={styles.discountText}>{p.discount}</Text>
             </View>
-          </View>
-        </Pressable>
-        <View style={styles.qty}>
-          <Pressable style={styles.qtyBtn} onPress={() => onSetQty(line.qty - 1)} hitSlop={8}>
-            <Text style={styles.qtySign}>–</Text>
-          </Pressable>
-          <Text style={styles.qtyVal}>{line.qty}</Text>
-          <Pressable style={[styles.qtyBtn, styles.qtyPlus]} onPress={() => onSetQty(line.qty + 1)} hitSlop={8}>
-            <Feather name="plus" size={13} color={colors.onAccent} />
-          </Pressable>
+          ) : null}
         </View>
-      </Animated.View>
-    </Animated.View>
+        <View style={styles.itemInfo}>
+          <Text style={styles.name} numberOfLines={2}>
+            {p.name}
+          </Text>
+          <Text style={styles.unit}>{line.unitOverride ?? p.unit}</Text>
+          <View style={styles.prices}>
+            <Text style={styles.price}>{formatFcfa(total)}</Text>
+            {hasDiscount ? <Text style={styles.oldPrice}>{formatFcfa(listTotal)}</Text> : null}
+          </View>
+        </View>
+      </Pressable>
+      <View style={styles.qty}>
+        <Pressable style={styles.qtyBtn} onPress={() => onSetQty(line.qty - 1)} hitSlop={8}>
+          <Text style={styles.qtySign}>–</Text>
+        </Pressable>
+        <Text style={styles.qtyVal}>{line.qty}</Text>
+        <Pressable style={[styles.qtyBtn, styles.qtyPlus]} onPress={() => onSetQty(line.qty + 1)} hitSlop={8}>
+          <Feather name="plus" size={13} color={colors.onAccent} />
+        </Pressable>
+      </View>
+      {showTrash && onRemove ? (
+        <Pressable
+          style={styles.webTrash}
+          onPress={onRemove}
+          hitSlop={8}
+          accessibilityRole="button"
+          accessibilityLabel={`Retirer ${p.name}`}>
+          <Feather name="trash-2" size={16} color={colors.terracotta} />
+        </Pressable>
+      ) : null}
+    </View>
+  );
+}
+
+/** Swipe-to-delete style iOS Mail via Gesture Handler (natif), pas PanResponder JS. */
+function SwipeCartItem({
+  line,
+  onRemove,
+  onSetQty,
+}: {
+  line: CartLine;
+  onRemove: () => void;
+  onSetQty: (qty: number) => void;
+}) {
+  const colors = useColors();
+  const styles = useMemo(() => createStyles(colors), [colors]);
+  const swipeRef = useRef<Swipeable>(null);
+  const p = lineProduct(line);
+
+  const closeAndRemove = useCallback(() => {
+    swipeRef.current?.close();
+    onRemove();
+  }, [onRemove]);
+
+  const renderRightActions = useCallback(
+    () => (
+      <RectButton
+        style={styles.deleteAction}
+        onPress={closeAndRemove}
+        accessibilityRole="button"
+        accessibilityLabel={p ? `Retirer ${p.name}` : 'Retirer'}>
+        <View style={styles.deleteActionInner}>
+          <Feather name="trash-2" size={20} color={colors.onAccent} />
+          <Text style={styles.deleteActionLabel}>Retirer</Text>
+        </View>
+      </RectButton>
+    ),
+    [closeAndRemove, colors.onAccent, p, styles],
+  );
+
+  if (!p) return null;
+
+  if (Platform.OS === 'web') {
+    return <CartItemRow line={line} onSetQty={onSetQty} showTrash onRemove={onRemove} />;
+  }
+
+  return (
+    <Swipeable
+      ref={swipeRef}
+      friction={2}
+      rightThreshold={40}
+      overshootRight={false}
+      enableTrackpadTwoFingerGesture
+      renderRightActions={renderRightActions}
+      childrenContainerStyle={styles.swipeChild}>
+      <CartItemRow line={line} onSetQty={onSetQty} />
+    </Swipeable>
   );
 }
 
@@ -200,11 +177,17 @@ function SummaryRow({ label, value, green }: { label: string; value: string; gre
 }
 
 function CartScreen() {
-  const { version: catalogVersion, getProducts } = useCatalog();
+  const { version: catalogVersion } = useCatalog();
+  const [visitSalt] = useState(() => Date.now());
   const { scheme } = useTheme();
   const colors = useColors();
   const insets = useSafeAreaInsets();
+  const navMax = smartNavbarClearance(insets.top);
+  const scrollY = useSharedValue(0);
+  const lastScrollY = useSharedValue(0);
+  const navOffset = useSharedValue(0);
   const chrome = useMemo(() => heroChrome(scheme), [scheme]);
+  const ice = useMemo(() => liquidIce(scheme), [scheme]);
   const styles = useMemo(() => createStyles(colors), [colors]);
   const dockBottom = floatingAboveTabBar(insets.bottom, 12);
   const { defaultAddress } = useAddresses();
@@ -214,6 +197,7 @@ function CartScreen() {
     count,
     setQty,
     remove,
+    clear,
     subtotal,
     listSubtotal,
     delivery,
@@ -239,22 +223,99 @@ function CartScreen() {
     return `${count} article${count > 1 ? 's' : ''}`;
   }, [count]);
 
-  const emptySuggestions = useMemo(() => getProducts(recommendedIds).slice(0, 6), [catalogVersion, getProducts]);
+  const confirmClearCart = useCallback(() => {
+    if (count < 1) return;
+    Alert.alert(
+      'Vider le panier',
+      `Retirer ${itemLabel} de votre panier ?`,
+      [
+        { text: 'Annuler', style: 'cancel' },
+        { text: 'Vider', style: 'destructive', onPress: () => clear() },
+      ],
+    );
+  }, [clear, count, itemLabel]);
+
+  const { searchRecents, recentProductIds, interests } = useUiState();
+  const { ids: favoriteIds } = useFavorites();
+  const { orders } = useOrders();
+  const orderedIds = useMemo(
+    () => orders.flatMap((order) => order.lines.map((line) => line.productId)).slice(0, 48),
+    [orders],
+  );
+  const emptyPlan = useMemo(
+    () =>
+      buildExplorePlan({
+        recents: searchRecents,
+        favoriteIds,
+        cartIds: lines.map((line) => line.productId),
+        orderedIds,
+        interests,
+        viewedIds: recentProductIds,
+        hour: new Date().getHours(),
+        sessionSalt: visitSalt,
+      }),
+    [searchRecents, recentProductIds, lines, orderedIds, interests, favoriteIds, catalogVersion, visitSalt],
+  );
+  const emptySuggestions = emptyPlan.forYou.slice(0, 8);
   const emptyCategories = useMemo(() => homeCategories.slice(0, 6), []);
 
   const heroClearance = frostedBarClearance(insets.top);
 
+  const onNavScroll = useAnimatedScrollHandler({
+    onScroll: (event) => {
+      const y = Math.max(0, event.contentOffset.y);
+      const dy = y - lastScrollY.value;
+      lastScrollY.value = y;
+      scrollY.value = y;
+      if (y < 10) {
+        navOffset.value = withTiming(0, { duration: 320, easing: Easing.out(Easing.cubic) });
+        return;
+      }
+      navOffset.value = Math.min(navMax, Math.max(0, navOffset.value + dy));
+    },
+    onEndDrag: (event) => {
+      const y = event.contentOffset.y;
+      const v = event.velocity?.y ?? 0;
+      if (y < 10) {
+        navOffset.value = withSpring(0, NAV_SPRING);
+        return;
+      }
+      navOffset.value = withSpring(v > 0.35 || navOffset.value > navMax * 0.38 ? navMax : 0, NAV_SPRING);
+    },
+    onMomentumEnd: (event) => {
+      const y = event.contentOffset.y;
+      const v = event.velocity?.y ?? 0;
+      if (y < 10) {
+        navOffset.value = withSpring(0, NAV_SPRING);
+        return;
+      }
+      navOffset.value = withSpring(v > 0.15 || navOffset.value > navMax * 0.38 ? navMax : 0, NAV_SPRING);
+    },
+  });
+
   return (
     <Screen>
       <Page style={styles.flex}>
-        <FrostedTopBar
+        <FrostedTopBar hideOffset={navOffset}
           right={
             <>
                 {count > 0 ? (
                   <PressScale
                     style={[
+                      styles.clearPill,
+                      { backgroundColor: ice.backgroundColor, borderColor: ice.borderColor },
+                    ]}
+                    onPress={confirmClearCart}
+                    scaleTo={0.94}
+                    accessibilityLabel="Vider le panier">
+                    <Feather name="trash-2" size={15} color={colors.terracotta} />
+                  </PressScale>
+                ) : null}
+                {count > 0 ? (
+                  <PressScale
+                    style={[
                       styles.countPill,
-                      { backgroundColor: FROST_ICON_BG, borderColor: 'rgba(255,255,255,0.45)' },
+                      { backgroundColor: ice.backgroundColor, borderColor: ice.borderColor },
                     ]}
                     onPress={() => router.push('/checkout')}
                     scaleTo={0.94}
@@ -262,45 +323,49 @@ function CartScreen() {
                     <Text style={[styles.countPillText, { color: colors.gold }]}>{count}</Text>
                   </PressScale>
                 ) : null}
+                <SmartNavbarChip round>
                 <IconCircle
                   name="search"
-                  variant="hero"
-                  bg={FROST_ICON_BG}
-                  color={chrome.ink}
+                  variant="ghost"
+                  size="lg"
                   accessibilityLabel="Rechercher"
                   onPress={openSearchScreen}
                 />
+                </SmartNavbarChip>
+                <SmartNavbarChip round>
                 <IconCircle
                   name="tag"
-                  variant="hero"
-                  bg={FROST_ICON_BG}
-                  color={chrome.ink}
+                  variant="ghost"
+                  size="lg"
                   accessibilityLabel="Promotions"
                   onPress={() => router.push('/promotions')}
                 />
+                </SmartNavbarChip>
                 <PressScale
                   style={[
                     styles.continueBtn,
-                    { backgroundColor: FROST_ICON_BG, borderColor: 'rgba(255,255,255,0.45)' },
+                    { backgroundColor: ice.backgroundColor, borderColor: ice.borderColor },
                   ]}
                   onPress={() => navigateTab(tabPaths.explore)}
                   scaleTo={0.96}
                   accessibilityLabel="Continuer les achats">
-                  <Text style={[styles.continueText, { color: chrome.ink }]}>Continuer</Text>
+                  <Text style={[styles.continueText, { color: colors.text }]}>Continuer</Text>
                   <Feather name="chevron-right" size={14} color={colors.gold} />
                 </PressScale>
             </>
           }>
-          <Text style={[styles.heroTitle, { color: chrome.ink }]} numberOfLines={1}>
+          <Text style={[styles.heroTitle, { color: colors.text }]} numberOfLines={1}>
             Panier
           </Text>
         </FrostedTopBar>
 
         {lines.length === 0 ? (
-          <ScrollView
+          <Reanimated.ScrollView
             style={styles.scrollLayer}
             contentContainerStyle={[styles.emptyScroll, { paddingTop: heroClearance }]}
-            showsVerticalScrollIndicator={false}>
+            showsVerticalScrollIndicator={false}
+            onScroll={onNavScroll}
+            scrollEventThrottle={16}>
             <View style={styles.bodySheet}>
               <MotionView preset="up" delay={40} style={styles.emptyHeroCard}>
                 <View style={styles.emptyArt}>
@@ -380,10 +445,10 @@ function CartScreen() {
                 </ScrollView>
               </View>
 
-              <View style={styles.emptySection}>
-                <View style={styles.emptySectionHead}>
-                  <Text style={styles.emptySectionTitle}>Idées pour démarrer</Text>
-                  <Text style={styles.emptySectionMeta}>Sélection du jour</Text>
+              <View style={[styles.emptySection, styles.emptySectionBleed]}>
+                <View style={[styles.emptySectionHead, styles.emptySectionBleedHead]}>
+                  <Text style={styles.emptySectionTitle}>{emptyPlan.forYouTitle}</Text>
+                  <Text style={styles.emptySectionMeta}>{emptyPlan.forYouMeta}</Text>
                 </View>
                 <ScrollView
                   horizontal
@@ -403,10 +468,10 @@ function CartScreen() {
                 </ScrollView>
               </View>
             </View>
-          </ScrollView>
+          </Reanimated.ScrollView>
         ) : (
           <View style={styles.flex}>
-            <ScrollView
+            <Reanimated.ScrollView
               style={styles.scrollLayer}
               contentContainerStyle={[
                 styles.content,
@@ -416,7 +481,9 @@ function CartScreen() {
                 },
               ]}
               showsVerticalScrollIndicator={false}
-              keyboardShouldPersistTaps="handled">
+              keyboardShouldPersistTaps="handled"
+              onScroll={onNavScroll}
+              scrollEventThrottle={16}>
               <View style={styles.bodySheet}>
                 <Pressable style={styles.deliveryCard} onPress={() => router.push('/account/addresses')}>
                   <View style={styles.deliveryIcon}>
@@ -442,7 +509,17 @@ function CartScreen() {
 
                 <View style={styles.sectionHead}>
                   <Text style={styles.sectionTitle}>Vos articles</Text>
-                  <Text style={styles.sectionMeta}>{itemLabel}</Text>
+                  <View style={styles.sectionHeadRight}>
+                    <Text style={styles.sectionMeta}>{itemLabel}</Text>
+                    <Pressable
+                      style={styles.clearBtn}
+                      onPress={confirmClearCart}
+                      accessibilityRole="button"
+                      accessibilityLabel="Vider le panier">
+                      <Feather name="trash-2" size={13} color={colors.terracotta} />
+                      <Text style={styles.clearBtnText}>Vider</Text>
+                    </Pressable>
+                  </View>
                 </View>
 
                 <View style={styles.itemsCard}>
@@ -458,9 +535,13 @@ function CartScreen() {
                   ))}
                 </View>
 
-                <Text style={styles.swipeHint}>Glissez un article vers la gauche pour le retirer</Text>
+                <Text style={styles.swipeHint}>
+                  {Platform.OS === 'web'
+                    ? 'Utilisez l’icône poubelle pour retirer un article'
+                    : 'Glissez un article vers la gauche pour le retirer'}
+                </Text>
               </View>
-            </ScrollView>
+            </Reanimated.ScrollView>
 
             <View style={[styles.checkoutDock, { bottom: dockBottom }]} pointerEvents="box-none">
               <View style={styles.checkoutBar}>
@@ -531,9 +612,11 @@ function createStyles(colors: AppColors) {
   return StyleSheet.create({
     flex: { flex: 1 },
     heroTitle: {
-      ...bodyFont('800'),
-      fontSize: 28,
-      lineHeight: 34,
+      ...displayFont('800'),
+      fontSize: 16,
+      lineHeight: 20,
+      letterSpacing: -0.3,
+      flexShrink: 1,
     },
   scrollLayer: {
     flex: 1,
@@ -547,6 +630,14 @@ function createStyles(colors: AppColors) {
     justifyContent: 'center',
     paddingHorizontal: 8 },
   countPillText: { fontSize: 13, fontWeight: '800' },
+  clearPill: {
+    width: 34,
+    height: 34,
+    borderRadius: 17,
+    borderWidth: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
   continueBtn: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -561,13 +652,15 @@ function createStyles(colors: AppColors) {
     borderTopLeftRadius: 28,
     borderTopRightRadius: 28,
     paddingHorizontal: spacing.screen,
-    paddingTop: 10,
+    paddingTop: 12,
     gap: 12,
-    minHeight: Dimensions.get('window').height },
+  },
   content: {
-    paddingBottom: tabBarClearance + 132 },
+    paddingBottom: tabBarClearance + 132,
+  },
   emptyScroll: {
-    paddingBottom: tabBarClearance + 24 },
+    paddingBottom: tabBarClearance + 24,
+  },
   checkoutDock: {
     position: 'absolute',
     left: 0,
@@ -581,11 +674,8 @@ function createStyles(colors: AppColors) {
     paddingTop: 12,
     paddingBottom: 12,
     gap: 10,
-    shadowColor: '#1c1613',
-    shadowOffset: { width: 0, height: 8 },
-    shadowOpacity: 0.14,
-    shadowRadius: 18,
-    elevation: 10 },
+    ...softShadow({ y: 8, blur: 18, opacity: 0.14, elevation: 10 }),
+  },
   checkoutSummary: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -706,10 +796,12 @@ function createStyles(colors: AppColors) {
     paddingHorizontal: 6 },
   emptyPerkText: { color: colors.muted, fontSize: 10, fontWeight: '600', textAlign: 'center' },
   emptySection: { gap: 12 },
+  emptySectionBleed: { marginHorizontal: -spacing.screen },
   emptySectionHead: {
     flexDirection: 'row',
     alignItems: 'baseline',
     justifyContent: 'space-between' },
+  emptySectionBleedHead: { paddingHorizontal: spacing.screen },
   emptySectionTitle: { color: colors.text, fontSize: 17, fontWeight: '800' },
   emptySectionLink: { color: colors.gold, fontSize: 13, fontWeight: '700' },
   emptySectionMeta: { color: colors.muted, fontSize: 12, fontWeight: '600' },
@@ -721,7 +813,12 @@ function createStyles(colors: AppColors) {
     borderRadius: 34,
     backgroundColor: colors.white },
   emptyCatLabel: { color: colors.text, fontSize: 12, fontWeight: '600', textAlign: 'center' },
-  emptyProductsRow: { flexDirection: 'row', gap: 3.6, paddingRight: 4, paddingBottom: 4 },
+  emptyProductsRow: {
+    flexDirection: 'row',
+    gap: 3.6,
+    paddingBottom: 4,
+    paddingRight: spacing.screen,
+  },
   deliveryCard: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -770,48 +867,81 @@ function createStyles(colors: AppColors) {
   progressSub: { color: colors.muted, fontSize: 11, fontWeight: '500' },
   sectionHead: {
     flexDirection: 'row',
-    alignItems: 'baseline',
+    alignItems: 'center',
     justifyContent: 'space-between',
-    marginTop: 4 },
+    marginTop: 4,
+    gap: 10,
+  },
+  sectionHeadRight: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+  },
   sectionTitle: { color: colors.text, fontSize: 17, fontWeight: '800' },
   sectionMeta: { color: colors.muted, fontSize: 12, fontWeight: '600' },
+  clearBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 5,
+    backgroundColor: colors.blush,
+    borderRadius: 999,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+  },
+  clearBtnText: {
+    color: colors.terracotta,
+    fontSize: 12,
+    fontWeight: '700',
+  },
   itemsCard: {
     backgroundColor: colors.white,
     borderRadius: 20,
-    overflow: 'hidden' },
-  itemDivider: { height: 1, backgroundColor: colors.border, marginLeft: 96 },
+    overflow: 'hidden',
+  },
+  itemDivider: { height: StyleSheet.hairlineWidth, backgroundColor: colors.border, marginLeft: 96 },
   swipeHint: {
     color: colors.placeholder,
     fontSize: 11,
     textAlign: 'center',
-    marginTop: -2 },
-  swipeWrap: {
+    marginTop: -2,
+  },
+  swipeChild: {
+    backgroundColor: colors.white,
+  },
+  deleteAction: {
+    width: DELETE_WIDTH,
     backgroundColor: colors.terracotta,
-    overflow: 'hidden' },
-  deleteRail: {
-    ...StyleSheet.absoluteFillObject,
-    alignItems: 'flex-end',
     justifyContent: 'center',
-    paddingRight: 18 },
-  deleteBtn: {
-    width: 64,
+    alignItems: 'center',
+  },
+  deleteActionInner: {
+    width: DELETE_WIDTH,
+    flex: 1,
     alignItems: 'center',
     justifyContent: 'center',
-    gap: 5 },
-  deleteIconWrap: {
-    width: 40,
-    height: 40,
-    borderRadius: 20,
-    backgroundColor: 'rgba(255,255,255,0.18)',
+    gap: 4,
+  },
+  deleteActionLabel: {
+    color: colors.onAccent,
+    fontSize: 11,
+    fontWeight: '700',
+  },
+  webTrash: {
+    width: 36,
+    height: 36,
+    borderRadius: 12,
     alignItems: 'center',
-    justifyContent: 'center' },
-  deleteLabel: { color: colors.white, fontSize: 10, fontWeight: '700' },
+    justifyContent: 'center',
+    backgroundColor: colors.blush,
+  },
   item: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 10,
     backgroundColor: colors.white,
-    padding: 12 },
+    padding: 12,
+    minHeight: 96,
+  },
   itemLink: {
     flex: 1,
     flexDirection: 'row',

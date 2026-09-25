@@ -1,6 +1,10 @@
-﻿import '@/lib/navigationStability';
-import { AnimatedSplash } from '@/components/AnimatedSplash';
+import '@/lib/navigationStability';
+import { installLaunchGuards } from '@/lib/launchGuards';
+installLaunchGuards();
+
+import { BootFatalHost } from '@/components/BootFatalHost';
 import { AccountPrefsSync } from '@/components/AccountPrefsSync';
+import { AnimatedSplash } from '@/components/AnimatedSplash';
 import { OrderNotificationBridge } from '@/components/OrderNotificationBridge';
 import { OrderLiveActivityHost } from '@/components/OrderLiveActivityHost';
 import { prepareApp, warmRemainingAssets } from '@/lib/bootstrap';
@@ -8,9 +12,10 @@ import { lockWebInputZoom } from '@/lib/noZoomInput';
 import { hideSystemBars, watchHiddenSystemBars } from '@/lib/systemBars';
 import { CallOverlay } from '@/components/CallOverlay';
 import { ToastHost } from '@/components/ToastHost';
+import { KeyboardDismissBar } from '@/components/KeyboardDismissBar';
 import { AuthGate } from '@/components/AuthGate';
 import { AddressesProvider } from '@/context/AddressesContext';
-import { AuthProvider } from '@/context/AuthContext';
+import { AuthProvider, useAuth } from '@/context/AuthContext';
 import { CallProvider } from '@/context/CallContext';
 import { CartProvider } from '@/context/CartContext';
 import { CatalogProvider } from '@/context/CatalogContext';
@@ -33,15 +38,49 @@ import { LocalDbBoot } from '@/lib/db/boot';
 import { DarkTheme, DefaultTheme, Stack, ThemeProvider as NavigationThemeProvider } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { View } from 'react-native';
+import { Modal, View } from 'react-native';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
-import { peekShopHasSession } from '@/lib/sessionPeek';
+import { hydrateShopSessionPeek, peekShopHasSession } from '@/lib/sessionPeek';
+import { DEV_OPEN_HOME } from '@/lib/devBoot';
+import { loadApiBaseOverride } from '@/lib/api/http';
 
 export { ErrorBoundary } from '@/components/AppErrorBoundary';
 
+void loadApiBaseOverride();
+void hydrateShopSessionPeek();
+
 export const unstable_settings = {
-  initialRouteName: peekShopHasSession() ? '(tabs)' : '(auth)',
+  initialRouteName: DEV_OPEN_HOME || peekShopHasSession() ? '(tabs)' : '(auth)',
 };
+
+/** Une seule fois par lancement JS — évite de rejouer le splash sur login/signup / HMR. */
+const splashBag = globalThis as typeof globalThis & { __marcheDoreSplashDone?: boolean };
+
+function SplashHost() {
+  const { ready } = useAuth();
+  const [visible, setVisible] = useState(() => !splashBag.__marcheDoreSplashDone);
+
+  const onFinish = useCallback(() => {
+    if (splashBag.__marcheDoreSplashDone) return;
+    splashBag.__marcheDoreSplashDone = true;
+    setVisible(false);
+  }, []);
+
+  if (!visible) return null;
+
+  return (
+    <Modal
+      visible
+      animationType="none"
+      transparent={false}
+      statusBarTranslucent
+      presentationStyle="fullScreen"
+      hardwareAccelerated
+      onRequestClose={() => undefined}>
+      <AnimatedSplash onFinish={onFinish} allowExit={ready || DEV_OPEN_HOME} />
+    </Modal>
+  );
+}
 
 function ThemedAppShell({ children }: { children: React.ReactNode }) {
   const { colors, scheme } = useTheme();
@@ -68,7 +107,9 @@ function ThemedAppShell({ children }: { children: React.ReactNode }) {
       animationDuration: 120,
       freezeOnBlur: false,
       detachPreviousScreen: false,
-      statusBarHidden: true }),
+      // Eviter statusBarHidden via react-native-screens (RNSScreenWindowTraits)
+      // tant que le Info.plist natif n'a pas UIViewControllerBasedStatusBarAppearance=YES.
+    }),
     [colors.bg],
   );
 
@@ -94,7 +135,7 @@ function ThemedAppShell({ children }: { children: React.ReactNode }) {
                                   <AccountPrefsSync />
                                   <OrderNotificationBridge />
                                   <OrderLiveActivityHost />
-                                  <StatusBar hidden style={scheme === 'dark' ? 'light' : 'dark'} />
+                                  <StatusBar style={scheme === 'dark' ? 'light' : 'dark'} />
                                   <AuthGate>
                                     <Stack
                                       detachInactiveScreens={false}
@@ -105,6 +146,9 @@ function ThemedAppShell({ children }: { children: React.ReactNode }) {
                                   <AppTourHost />
                                   <CallOverlay />
                                   <ToastHost />
+                                  <KeyboardDismissBar />
+                                  <BootFatalHost />
+                                  <SplashHost />
                                 </ReviewsProvider>
                                 </AppTourProvider>
                                 </PushNotificationsProvider>
@@ -127,41 +171,20 @@ function ThemedAppShell({ children }: { children: React.ReactNode }) {
 }
 
 export default function RootLayout() {
-  const [fontsReady, setFontsReady] = useState(false);
-  const [splashDone, setSplashDone] = useState(false);
-  const [minSplashElapsed, setMinSplashElapsed] = useState(false);
-
-  const onSplashFinish = useCallback(() => {
-    setSplashDone(true);
-    warmRemainingAssets();
-  }, []);
-
   useEffect(() => {
     return watchHiddenSystemBars();
   }, []);
 
   useEffect(() => {
-    let active = true;
-    prepareApp().finally(() => {
-      if (active) setFontsReady(true);
+    void prepareApp().finally(() => {
+      warmRemainingAssets();
+      hideSystemBars();
     });
-    return () => {
-      active = false;
-    };
-  }, []);
-
-  useEffect(() => {
-    const timer = setTimeout(() => setMinSplashElapsed(true), 280);
-    return () => clearTimeout(timer);
   }, []);
 
   useEffect(() => {
     return lockWebInputZoom();
   }, []);
-
-  useEffect(() => {
-    hideSystemBars();
-  }, [fontsReady]);
 
   return (
     <GestureHandlerRootView style={{ flex: 1 }}>
@@ -216,12 +239,6 @@ export default function RootLayout() {
               <Stack.Screen name="account/settings" />
               <Stack.Screen name="account/favorites" options={{ animation: 'fade', animationDuration: 120 }} />
             </ThemedAppShell>
-            {!splashDone ? (
-              <AnimatedSplash
-                allowExit={fontsReady && minSplashElapsed}
-                onFinish={onSplashFinish}
-              />
-            ) : null}
             </View>
           </View>
         </LocalDbBoot>

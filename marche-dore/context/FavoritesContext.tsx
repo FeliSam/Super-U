@@ -1,9 +1,23 @@
 import { getProducts, type Product } from '@/data/catalog';
-import { apiGetAccountState, apiPatchAccountState, loadAccountJson, saveAccountJson } from '@/lib/accountSync';
+import {
+  apiGetAccountState,
+  apiPatchAccountState,
+  loadAccountJson,
+  saveAccountJson,
+  subscribeAccountPull,
+} from '@/lib/accountSync';
 import { getAuthToken } from '@/lib/api/http';
 import { useAuth } from '@/context/AuthContext';
 import { useCatalogVersion } from '@/context/CatalogContext';
-import React, { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
+import React, {
+  createContext,
+  useCallback,
+  useContext,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from 'react';
 
 type FavoritesContextValue = {
   ids: string[];
@@ -21,6 +35,19 @@ type FavoritesContextValue = {
 const FavoritesContext = createContext<FavoritesContextValue | null>(null);
 
 const STORAGE_KEY = 'marche-dore.favorites.v1';
+const idsRef = { current: new Set<string>() };
+const listeners = new Map<string, Set<(liked: boolean) => void>>();
+let toggleFavoriteId = (productId: string) => {
+  void productId;
+};
+
+function emit(id: string, liked: boolean) {
+  listeners.get(id)?.forEach((fn) => fn(liked));
+}
+
+function replaceIds(next: string[]) {
+  idsRef.current = new Set(next);
+}
 
 function sanitizeIds(raw: unknown): string[] {
   if (!Array.isArray(raw)) return [];
@@ -43,21 +70,34 @@ export function FavoritesProvider({ children }: { children: React.ReactNode }) {
   const hydrated = useRef(false);
   const skipSave = useRef(true);
 
+  const applyIds = useCallback((next: string[]) => {
+    const clean = sanitizeIds(next);
+    const prev = idsRef.current;
+    replaceIds(clean);
+    for (const id of prev) {
+      if (!idsRef.current.has(id)) emit(id, false);
+    }
+    for (const id of idsRef.current) {
+      if (!prev.has(id)) emit(id, true);
+    }
+    setIds(clean);
+  }, []);
+
   const load = useCallback(async (uid: string | null) => {
     if (!uid) {
-      setIds([]);
+      applyIds([]);
       return;
     }
     const local = await loadAccountJson<{ ids?: unknown } | unknown>(STORAGE_KEY, uid);
     let list: unknown = [];
     if (Array.isArray(local)) list = local;
     else if (local && typeof local === 'object' && 'ids' in local) list = (local as { ids: unknown }).ids;
+    applyIds(sanitizeIds(list));
     if (getAuthToken()) {
       const state = await apiGetAccountState();
-      if (state?.favorites) list = state.favorites;
+      if (state?.favorites) applyIds(sanitizeIds(state.favorites));
     }
-    setIds(sanitizeIds(list));
-  }, []);
+  }, [applyIds]);
 
   useEffect(() => {
     if (!authReady) return;
@@ -77,28 +117,60 @@ export function FavoritesProvider({ children }: { children: React.ReactNode }) {
   }, [authReady, accountId, load]);
 
   useEffect(() => {
+    if (!authReady || !accountId || !getAuthToken()) return;
+    return subscribeAccountPull(async () => {
+      if (!hydrated.current) return;
+      const state = await apiGetAccountState();
+      if (!state?.favorites) return;
+      const next = sanitizeIds(state.favorites);
+      const prev = idsRef.current;
+      if (next.length === prev.size && next.every((id) => prev.has(id))) return;
+      skipSave.current = true;
+      applyIds(next);
+      skipSave.current = false;
+      void saveAccountJson(STORAGE_KEY, accountId, { ids: next });
+    });
+  }, [authReady, accountId, applyIds]);
+
+  useEffect(() => {
     if (!hydrated.current || skipSave.current || !accountId) return;
     void saveAccountJson(STORAGE_KEY, accountId, { ids });
     apiPatchAccountState({ favorites: ids });
   }, [ids, accountId]);
 
-  const isFavorite = useCallback((productId: string) => ids.includes(productId), [ids]);
+  const isFavorite = useCallback((productId: string) => idsRef.current.has(productId), []);
 
   const add = useCallback((productId: string) => {
-    if (!productId) return;
-    setIds((prev) => (prev.includes(productId) ? prev : [productId, ...prev]));
+    if (!productId || idsRef.current.has(productId)) return;
+    idsRef.current.add(productId);
+    emit(productId, true);
+    setIds(Array.from(idsRef.current));
   }, []);
 
   const remove = useCallback((productId: string) => {
-    setIds((prev) => prev.filter((id) => id !== productId));
+    if (!productId || !idsRef.current.has(productId)) return;
+    idsRef.current.delete(productId);
+    emit(productId, false);
+    setIds(Array.from(idsRef.current));
   }, []);
 
   const toggle = useCallback((productId: string) => {
     if (!productId) return;
-    setIds((prev) => (prev.includes(productId) ? prev.filter((id) => id !== productId) : [productId, ...prev]));
+    if (idsRef.current.has(productId)) {
+      idsRef.current.delete(productId);
+      emit(productId, false);
+    } else {
+      idsRef.current.add(productId);
+      emit(productId, true);
+    }
+    setIds(Array.from(idsRef.current));
   }, []);
+  toggleFavoriteId = toggle;
 
   const clear = useCallback(() => {
+    const prev = Array.from(idsRef.current);
+    idsRef.current.clear();
+    prev.forEach((id) => emit(id, false));
     setIds([]);
   }, []);
 
@@ -131,4 +203,28 @@ export function useFavorites() {
   const ctx = useContext(FavoritesContext);
   if (!ctx) throw new Error('useFavorites must be used within FavoritesProvider');
   return ctx;
+}
+
+/** Like local : n’invalide pas toute la grille. */
+export function useFavoriteId(productId: string) {
+  const [liked, setLiked] = useState(() => idsRef.current.has(productId));
+
+  useEffect(() => {
+    setLiked(idsRef.current.has(productId));
+    let bucket = listeners.get(productId);
+    if (!bucket) {
+      bucket = new Set();
+      listeners.set(productId, bucket);
+    }
+    bucket.add(setLiked);
+    return () => {
+      bucket!.delete(setLiked);
+    };
+  }, [productId]);
+
+  const onToggle = useCallback(() => {
+    toggleFavoriteId(productId);
+  }, [productId]);
+
+  return { liked, toggle: onToggle };
 }

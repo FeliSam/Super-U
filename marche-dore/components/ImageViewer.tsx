@@ -1,5 +1,6 @@
 import { AppImage } from '@/components/AppImage';
 import { ImagePager, type ImagePagerHandle } from '@/components/ImagePager';
+import { MobileModalFrame } from '@/components/MobileModalFrame';
 import { PressScale } from '@/components/motion';
 import { Feather } from '@expo/vector-icons';
 import { memo, useEffect, useMemo, useRef, useState } from 'react';
@@ -76,6 +77,7 @@ export const ImageViewer = memo(function ImageViewer({
       animationType="fade"
       statusBarTranslucent
       onRequestClose={onClose}>
+      <MobileModalFrame align="fill" onDismiss={onClose}>
       <View style={styles.root}>
         <Pressable style={StyleSheet.absoluteFill} onPress={onClose} accessibilityLabel="Fermer" />
 
@@ -134,6 +136,7 @@ export const ImageViewer = memo(function ImageViewer({
           <View style={{ height: Math.max(16, insets.bottom + 12) }} />
         )}
       </View>
+      </MobileModalFrame>
     </Modal>
   );
 });

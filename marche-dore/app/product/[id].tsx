@@ -1,10 +1,10 @@
-import { CartTotalFab, IconCircle, Page, ProductCard, Screen, SmartNavbar } from '@/components/ui';
+import { CartTotalFab, IconCircle, Page, ProductCard, Screen, SmartNavbar, smartNavbarSheetTop } from '@/components/ui';
 import { PressScale } from '@/components/motion';
 import { ImagePager, type ImagePagerHandle } from '@/components/ImagePager';
 import { ImageViewer } from '@/components/ImageViewer';
 import { AppImage } from '@/components/AppImage';
 import { StarRating } from '@/components/StarRating';
-import { displayFont, type AppColors, spacing } from '@/constants/theme';
+import { displayFont, type AppColors, spacing, PRODUCT_FEED_IMAGE_H } from '@/constants/theme';
 import { useColors } from '@/context/ThemeContext';
 import { useCatalog } from '@/context/CatalogContext';
 import { useCart } from '@/context/CartContext';
@@ -12,6 +12,7 @@ import { useFavoriteId } from '@/context/FavoritesContext';
 import { useOrders } from '@/context/OrdersContext';
 import { useReviews } from '@/context/ReviewsContext';
 import { useStores } from '@/context/StoresContext';
+import { useUiState } from '@/context/UiStateContext';
 import {
   discoverProducts,
   liveReviewStats,
@@ -23,16 +24,16 @@ import {
   type Product,
 } from '@/data/catalog';
 import { formatFcfa } from '@/lib/format';
-import { softShadow } from '@/lib/shadow';
+import { hasPurchasedProduct } from '@/lib/purchaseGate';
 import { useExpandableSheet, SHEET_MIN_RATIO } from '@/lib/expandableSheet';
 import { goBack, navigateTab, tabPaths } from '@/lib/navigation';
+import { showToast } from '@/lib/toastBus';
 import { Feather } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
 import * as Linking from 'expo-linking';
 import { Href, router, useLocalSearchParams } from 'expo-router';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
-  Alert,
   InteractionManager,
   NativeScrollEvent,
   NativeSyntheticEvent,
@@ -58,7 +59,7 @@ import Animated, {
 } from 'react-native-reanimated';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
-const GRID_IMAGE_HEIGHT = 168;
+const GRID_IMAGE_HEIGHT = PRODUCT_FEED_IMAGE_H;
 /** Sheet top radius — photo tucks under the rounded edge so there is no gap. */
 const SHEET_IMAGE_OVERLAP = 28;
 
@@ -101,12 +102,15 @@ export default function ProductScreen() {
   } = useExpandableSheet({
     minRatio: SHEET_MIN_RATIO * 0.7,
     lockCollapseToHandle: true,
+    /** Sous la SmartNavbar (safe area iPhone inclus) — évite que la feuille passe derrière les boutons. */
+    topGap: smartNavbarSheetTop(insets.top, 10),
   });
   const { add, setQty: setCartQty, lines, count: cartCount, subtotal: cartSubtotal, listSubtotal: cartListSubtotal } =
     useCart();
   const { liked, toggle } = useFavoriteId(product?.id ?? routeId ?? '');
   const { reviewsForProduct, hasUserReviewedProduct } = useReviews();
   const { orders } = useOrders();
+  const { addRecentProduct } = useUiState();
   const [descOpen, setDescOpen] = useState(true);
   const [nutriOpen, setNutriOpen] = useState(false);
   const [heroIndex, setHeroIndex] = useState(0);
@@ -148,6 +152,10 @@ export default function ProductScreen() {
   }));
   const cartQty = lines.find((l) => l.productId === product?.id)?.qty ?? 0;
   const inCart = cartQty > 0;
+
+  useEffect(() => {
+    if (product?.id) addRecentProduct(product.id);
+  }, [product?.id, addRecentProduct]);
 
   const playCtaSlots = useCallback(() => {
     ctaSlotL.value = withSpring(1, { damping: 16, stiffness: 220 });
@@ -216,29 +224,26 @@ export default function ProductScreen() {
     };
   }, [product?.id, inCart, playCtaSlots]);
   const similar = useMemo(() => similarProducts(product?.id ?? routeId ?? ''), [product?.id, routeId, catalogVersion]);
-  const discoverSeed = useMemo(
-    () => discoverProducts(product?.id ?? routeId ?? '', 8),
-    [product?.id, routeId, catalogVersion],
-  );
-  const extraDiscover = useMemo(() => {
+  /** Catalogue « À découvrir » : tout sauf le produit courant / variantes / similaires. */
+  const discoverPool = useMemo(() => {
     const currentId = product?.id ?? routeId ?? '';
     const exclude = new Set([
       currentId,
       ...variants.map((p) => p.id),
       ...similar.map((p) => p.id),
-      ...discoverSeed.map((p) => p.id),
     ]);
-    const out: Product[] = [];
-    const n = products.length;
-    if (!n) return out;
-    const start = Math.floor(Math.random() * n);
-    for (let i = 0; i < n && out.length < 18; i++) {
-      const p = products[(start + i) % n];
-      if (!exclude.has(p.id)) out.push(p);
+    const seed = discoverProducts(currentId, 12);
+    const seen = new Set(seed.map((p) => p.id));
+    const rest: Product[] = [];
+    for (const p of products) {
+      if (exclude.has(p.id) || seen.has(p.id)) continue;
+      rest.push(p);
     }
-    return out;
-  }, [product?.id, routeId, similar, variants, discoverSeed, catalogVersion]);
-  const [discoverPages, setDiscoverPages] = useState(0);
+    return [...seed.filter((p) => !exclude.has(p.id)), ...rest];
+  }, [product?.id, routeId, similar, variants, products, catalogVersion]);
+
+  const DISCOVER_PAGE = 10;
+  const [discoverCount, setDiscoverCount] = useState(DISCOVER_PAGE);
   const [feedReady, setFeedReady] = useState(false);
   const loadingDiscover = useRef(false);
   const gallery = useMemo(
@@ -254,7 +259,7 @@ export default function ProductScreen() {
 
   useEffect(() => {
     setSelectedId(routeId);
-    setDiscoverPages(0);
+    setDiscoverCount(DISCOVER_PAGE);
     setFeedReady(false);
     setHeroIndex(0);
     setJustAdded(false);
@@ -271,58 +276,115 @@ export default function ProductScreen() {
 
   const discoverItems = useMemo(() => {
     if (!feedReady) return [];
-    const extra = extraDiscover.slice(0, 6 + discoverPages * 6);
-    return [...discoverSeed, ...extra].map((p, i) => ({ product: p, key: `${p.id}-${i}` }));
-  }, [discoverPages, extraDiscover, discoverSeed, feedReady]);
+    return discoverPool.slice(0, discoverCount).map((p, i) => ({ product: p, key: `${p.id}-${i}` }));
+  }, [discoverCount, discoverPool, feedReady]);
+
+  const discoverHasMore = discoverCount < discoverPool.length;
 
   const loadMoreDiscover = useCallback(() => {
-    setDiscoverPages((pages) => Math.min(pages + 1, 2));
-  }, []);
+    setDiscoverCount((n) => {
+      if (n >= discoverPool.length) return n;
+      return Math.min(n + DISCOVER_PAGE, discoverPool.length);
+    });
+  }, [discoverPool.length]);
 
   const onProductScroll = useCallback(
     (event: NativeSyntheticEvent<NativeScrollEvent>) => {
       onSheetScroll(event);
       const { layoutMeasurement, contentOffset, contentSize } = event.nativeEvent;
-      const nearBottom = layoutMeasurement.height + contentOffset.y >= contentSize.height - 320;
-      if (!nearBottom || loadingDiscover.current) return;
+      const nearBottom = layoutMeasurement.height + contentOffset.y >= contentSize.height - 480;
+      if (!nearBottom || loadingDiscover.current || !discoverHasMore) return;
       loadingDiscover.current = true;
       loadMoreDiscover();
       requestAnimationFrame(() => {
         loadingDiscover.current = false;
       });
     },
-    [loadMoreDiscover, onSheetScroll],
+    [discoverHasMore, loadMoreDiscover, onSheetScroll],
   );
 
   const shareProduct = useCallback(async () => {
     if (!product) return;
-    const url = Linking.createURL(`/product/${product.id}`);
+    const path = `/product/${product.id}`;
+    const url =
+      Platform.OS === 'web' && typeof window !== 'undefined'
+        ? `${window.location.origin}${path}`
+        : Linking.createURL(path);
     const priceLine = `${formatFcfa(product.price)}${product.unit ? ` / ${product.unit}` : ''}`;
     const blurb = `Découvre « ${product.name} » sur Marché Doré — ${priceLine}`;
     const message = `${blurb}\n${url}`;
 
+    const aborted = (err: unknown) => {
+      const name = err && typeof err === 'object' && 'name' in err ? String((err as { name?: string }).name) : '';
+      return name === 'AbortError';
+    };
+
+    const copyLink = async () => {
+      try {
+        if (typeof navigator !== 'undefined' && navigator.clipboard?.writeText) {
+          await navigator.clipboard.writeText(message);
+          return true;
+        }
+      } catch {
+        /* iframe / permissions */
+      }
+      if (typeof document === 'undefined') return false;
+      try {
+        const el = document.createElement('textarea');
+        el.value = message;
+        el.setAttribute('readonly', '');
+        el.style.position = 'fixed';
+        el.style.left = '-9999px';
+        document.body.appendChild(el);
+        el.select();
+        const ok = document.execCommand('copy');
+        document.body.removeChild(el);
+        return ok;
+      } catch {
+        return false;
+      }
+    };
+
+    const copiedToast = () =>
+      showToast({
+        title: 'Lien copié',
+        body: 'Collez-le pour partager ce produit.',
+        tone: 'success',
+      });
+
     try {
       if (Platform.OS === 'web') {
+        let nested = false;
+        try {
+          nested = typeof window !== 'undefined' && window.self !== window.top;
+        } catch {
+          nested = true;
+        }
         const nav = typeof navigator !== 'undefined' ? navigator : undefined;
-        if (nav && typeof nav.share === 'function') {
-          await nav.share({ title: product.name, text: blurb, url });
+        if (!nested && nav && typeof nav.share === 'function') {
+          try {
+            await nav.share({ title: product.name, text: blurb, url });
+            return;
+          } catch (err) {
+            if (aborted(err)) return;
+          }
+        }
+        if (await copyLink()) {
+          copiedToast();
           return;
         }
-        if (nav?.clipboard?.writeText) {
-          await nav.clipboard.writeText(message);
-          Alert.alert('Lien copié', 'Le lien du produit a été copié dans le presse-papiers.');
-          return;
-        }
+        showToast({ title: 'Partage', body: url, tone: 'info', durationMs: 8000 });
+        return;
       }
 
       await Share.share(
-        Platform.OS === 'ios'
-          ? { message: blurb, url }
-          : { message, title: product.name },
+        Platform.OS === 'ios' ? { message: blurb, url } : { message, title: product.name },
         { dialogTitle: 'Partager ce produit' },
       );
-    } catch {
-      // User dismissed the sheet or share is unavailable.
+    } catch (err) {
+      if (aborted(err)) return;
+      if (await copyLink()) copiedToast();
+      else showToast({ title: 'Partage indisponible', body: url, tone: 'error' });
     }
   }, [product]);
 
@@ -548,6 +610,7 @@ export default function ProductScreen() {
             onScrollBeginDrag={onSheetScrollBeginDrag}
             onScrollEndDrag={onSheetScrollEndDrag}
             onWheel={onSheetWheel}>
+            <View style={styles.detailsPad}>
             {gallery.length > 0 ? (
               <ScrollView
                 horizontal
@@ -616,8 +679,10 @@ export default function ProductScreen() {
               )}
             </View>
 
-            <Text style={styles.name}>{productFamilyName(product)}</Text>
-            <Text style={styles.unitLine}>{product.unit}</Text>
+            <View style={styles.identity}>
+              <Text style={styles.name}>{productFamilyName(product)}</Text>
+              <Text style={styles.unitLine}>{product.unit}</Text>
+            </View>
 
             {variants.length > 1 ? (
               <View style={styles.formats}>
@@ -654,6 +719,7 @@ export default function ProductScreen() {
               </View>
             ) : null}
 
+            <View style={styles.buyBlock}>
             <Pressable
               style={styles.ratingCard}
               onPress={() => {
@@ -665,11 +731,11 @@ export default function ProductScreen() {
                     : (`/product/reviews/${product.id}` as Href),
                 );
               }}>
-              <StarRating rating={rating} size={15} />
+              <StarRating rating={rating} size={12} />
               <Text style={styles.ratingText}>
                 {rating.toFixed(1)} · {reviews} avis
               </Text>
-              <Feather name="chevron-right" size={16} color={colors.placeholder} />
+              <Feather name="chevron-right" size={14} color={colors.placeholder} />
             </Pressable>
 
             <View style={styles.priceCard}>
@@ -694,15 +760,15 @@ export default function ProductScreen() {
 
             <View style={styles.trustRow}>
               <View style={styles.trustItem}>
-                <Feather name="truck" size={15} color={colors.gold} />
+                <Feather name="truck" size={13} color={colors.gold} />
                 <Text style={styles.trustText}>Livraison rapide</Text>
               </View>
               <View style={styles.trustItem}>
-                <Feather name="shield" size={15} color={colors.green} />
+                <Feather name="shield" size={13} color={colors.green} />
                 <Text style={styles.trustText}>Qualité garantie</Text>
               </View>
               <View style={styles.trustItem}>
-                <Feather name="refresh-cw" size={15} color={colors.terracotta} />
+                <Feather name="refresh-cw" size={13} color={colors.terracotta} />
                 <Text style={styles.trustText}>Frais du jour</Text>
               </View>
             </View>
@@ -724,20 +790,21 @@ export default function ProductScreen() {
                   </Pressable>
                   <Text style={styles.qtyVal}>{cartQty}</Text>
                   <Pressable style={[styles.qtyBtn, styles.qtyPlus]} onPress={() => bumpQty(cartQty + 1)} hitSlop={8}>
-                    <Feather name="plus" size={16} color={colors.onAccent} />
+                    <Feather name="plus" size={14} color={colors.onAccent} />
                   </Pressable>
                 </View>
               ) : product.inStock === false ? (
                 <View style={[styles.addInline, styles.addInlineDisabled]}>
-                  <Feather name="x-circle" size={15} color={colors.onAccent} />
+                  <Feather name="x-circle" size={14} color={colors.onAccent} />
                   <Text style={styles.addInlineText}>Indisponible</Text>
                 </View>
               ) : (
                 <PressScale style={styles.addInline} onPress={() => bumpQty(1)} scaleTo={0.96}>
-                  <Feather name="shopping-bag" size={15} color={colors.onAccent} />
+                  <Feather name="shopping-bag" size={14} color={colors.onAccent} />
                   <Text style={styles.addInlineText}>Ajouter</Text>
                 </PressScale>
               )}
+            </View>
             </View>
 
             <View style={styles.accordion}>
@@ -775,6 +842,7 @@ export default function ProductScreen() {
               ) : null}
             </View>
             ) : null}
+            </View>
 
             {feedReady && similar.length > 0 ? (
               <View style={styles.section}>
@@ -808,7 +876,13 @@ export default function ProductScreen() {
                   />
                 ))}
               </View>
-              <Text style={styles.feedHint}>Faites défiler pour voir plus de produits…</Text>
+              <Text style={styles.feedHint}>
+                {discoverHasMore
+                  ? 'Faites défiler pour voir plus de produits…'
+                  : discoverItems.length
+                    ? 'Vous avez parcouru tout le catalogue'
+                    : ''}
+              </Text>
             </View>
             ) : null}
           </ScrollView>
@@ -831,6 +905,7 @@ export default function ProductScreen() {
         <View style={[styles.footer, { paddingBottom: Math.max(14, insets.bottom + 8) }]}>
           {inCart && !cartFlyHold ? (
             <View style={styles.footerActions}>
+              {cartQty >= 2 ? (
               <View
                 style={styles.footerLinePrices}
                 accessibilityLabel="Prix unitaire initial">
@@ -845,6 +920,7 @@ export default function ProductScreen() {
                   </Text>
                 ) : null}
               </View>
+              ) : null}
               <View style={styles.footerQty}>
                 <Pressable style={styles.footerQtyBtn} onPress={() => bumpQty(cartQty - 1)} hitSlop={8}>
                   <Text style={styles.footerQtySign}>–</Text>
@@ -1055,8 +1131,12 @@ function createStyles(colors: AppColors) {
   sheetScrollContent: {
     flexGrow: 1,
     gap: 14,
-    paddingHorizontal: spacing.screen,
+    paddingHorizontal: Math.round(spacing.screen * 0.2),
     paddingBottom: 20,
+  },
+  detailsPad: {
+    gap: 14,
+    paddingHorizontal: spacing.screen - Math.round(spacing.screen * 0.2),
   },
   thumbScroll: { marginHorizontal: -4 },
   thumbRow: {
@@ -1120,20 +1200,27 @@ function createStyles(colors: AppColors) {
   stockOut: { backgroundColor: colors.blush },
   stockDotOut: { backgroundColor: colors.terracotta },
   stockTextOut: { color: colors.terracotta },
+  identity: { gap: 2 },
   name: {
     color: colors.text,
-    fontSize: 26,
-    lineHeight: 32,
+    fontSize: 22,
+    lineHeight: 26,
     letterSpacing: -0.3,
     ...displayFont('800') },
-  unitLine: { color: colors.muted, fontSize: 14, fontWeight: '500', marginTop: -6 },
+  unitLine: { color: colors.muted, fontSize: 13, fontWeight: '500' },
   formats: {
     backgroundColor: colors.white,
     borderRadius: 18,
     padding: 14,
     gap: 8,
   },
-  formatsTitle: { color: colors.text, fontSize: 15, fontWeight: '700' },
+  formatsTitle: {
+    color: colors.muted,
+    fontSize: 13,
+    fontWeight: '700',
+    textTransform: 'uppercase',
+    letterSpacing: 0.4,
+  },
   formatsHint: { color: colors.muted, fontSize: 12, marginTop: -2 },
   formatChips: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
   formatChip: {
@@ -1157,77 +1244,95 @@ function createStyles(colors: AppColors) {
   formatPriceOn: { color: colors.terracotta },
   formatOut: { color: colors.terracotta, fontSize: 10, fontWeight: '700' },
   ratingCard: {
+    height: 32,
     flexDirection: 'row',
     alignItems: 'center',
     gap: 8,
     backgroundColor: colors.white,
-    borderRadius: 14,
-    paddingHorizontal: 12,
-    paddingVertical: 10 },
-  ratingText: { color: colors.muted, fontWeight: '600', fontSize: 13, flex: 1 },
+    borderRadius: 12,
+    paddingHorizontal: 10,
+  },
+  ratingText: { color: colors.muted, fontWeight: '600', fontSize: 12, flex: 1 },
+  buyBlock: { gap: 8 },
   priceCard: {
-    backgroundColor: colors.white,
-    borderRadius: 18,
-    padding: 14,
-    gap: 6 },
-  priceMain: { flexDirection: 'row', alignItems: 'baseline', gap: 8 },
-  price: { color: colors.terracotta, fontSize: 28, fontWeight: '800' },
-  per: { color: colors.muted, fontSize: 14, fontWeight: '500' },
-  priceMeta: { flexDirection: 'row', alignItems: 'center', gap: 8 },
-  old: { color: colors.placeholder, fontSize: 14, textDecorationLine: 'line-through', fontWeight: '500' },
-  badge: { backgroundColor: colors.blush, borderRadius: 8, paddingHorizontal: 8, paddingVertical: 4 },
-  badgeText: { color: colors.terracotta, fontWeight: '800', fontSize: 12 },
-  savings: { color: colors.green, fontSize: 12, fontWeight: '600', marginTop: 2 },
-  trustRow: { flexDirection: 'row', gap: 8 },
-  trustItem: {
-    flex: 1,
-    alignItems: 'center',
-    gap: 6,
     backgroundColor: colors.white,
     borderRadius: 14,
     paddingVertical: 10,
-    paddingHorizontal: 6 },
+    paddingHorizontal: 12,
+    gap: 4,
+  },
+  priceMain: { flexDirection: 'row', alignItems: 'baseline', gap: 6 },
+  price: { color: colors.terracotta, fontSize: 22, lineHeight: 26, fontWeight: '800' },
+  per: { color: colors.muted, fontSize: 13, fontWeight: '500' },
+  priceMeta: { flexDirection: 'row', alignItems: 'center', gap: 8 },
+  old: { color: colors.placeholder, fontSize: 13, textDecorationLine: 'line-through', fontWeight: '500' },
+  badge: { backgroundColor: colors.blush, borderRadius: 8, paddingHorizontal: 8, paddingVertical: 3 },
+  badgeText: { color: colors.terracotta, fontWeight: '800', fontSize: 11 },
+  savings: { color: colors.green, fontSize: 12, fontWeight: '600' },
+  trustRow: { flexDirection: 'row', gap: 6 },
+  trustItem: {
+    flex: 1,
+    alignItems: 'center',
+    gap: 4,
+    backgroundColor: colors.white,
+    borderRadius: 12,
+    paddingVertical: 8,
+    paddingHorizontal: 4,
+  },
   trustText: { color: colors.muted, fontSize: 10, fontWeight: '600', textAlign: 'center' },
   qtyCard: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
     backgroundColor: colors.white,
-    borderRadius: 18,
-    padding: 14 },
-  qtyLabel: { color: colors.text, fontSize: 15, fontWeight: '700' },
-  qtySub: { color: colors.muted, fontSize: 12, marginTop: 2 },
+    borderRadius: 14,
+    paddingVertical: 8,
+    paddingHorizontal: 10,
+    gap: 8,
+  },
+  qtyLabel: {
+    color: colors.muted,
+    fontSize: 13,
+    fontWeight: '700',
+    textTransform: 'uppercase',
+    letterSpacing: 0.4,
+  },
+  qtySub: { color: colors.muted, fontSize: 12, marginTop: 1 },
   qtyOld: {
     color: colors.placeholder,
     fontSize: 11,
     fontWeight: '600',
     textDecorationLine: 'line-through',
-    marginTop: 2 },
+    marginTop: 1,
+  },
   qty: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 12,
+    gap: 8,
     backgroundColor: colors.bg,
-    borderRadius: 14,
-    padding: 4 },
+    borderRadius: 12,
+    padding: 3,
+  },
   qtyBtn: {
-    width: 36,
-    height: 36,
-    borderRadius: 11,
+    width: 26,
+    height: 26,
+    borderRadius: 8,
     backgroundColor: colors.white,
     alignItems: 'center',
-    justifyContent: 'center' },
+    justifyContent: 'center',
+  },
   qtyPlus: { backgroundColor: colors.gold, borderColor: colors.gold },
-  qtySign: { fontSize: 18, fontWeight: '700', color: colors.text },
-  qtyVal: { fontWeight: '800', fontSize: 16, color: colors.text, minWidth: 18, textAlign: 'center' },
+  qtySign: { fontSize: 16, fontWeight: '700', color: colors.text },
+  qtyVal: { fontWeight: '800', fontSize: 14, color: colors.text, minWidth: 16, textAlign: 'center' },
   addInline: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 8,
+    gap: 6,
+    height: 32,
     backgroundColor: colors.terracotta,
-    borderRadius: 14,
-    paddingHorizontal: 14,
-    paddingVertical: 12 },
+    borderRadius: 10,
+    paddingHorizontal: 12,
+  },
   addInlineText: { color: '#ffffff', fontSize: 14, fontWeight: '800' },
   addInlineDisabled: { backgroundColor: colors.muted },
   accordion: {
@@ -1249,11 +1354,25 @@ function createStyles(colors: AppColors) {
     paddingVertical: 10 },
   nutriLabel: { color: colors.muted, fontSize: 13 },
   nutriVal: { color: colors.text, fontSize: 13, fontWeight: '700' },
-  section: { gap: 12, marginTop: 4 },
-  sectionHead: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'baseline' },
-  sectionTitle: { color: colors.text, fontSize: 18, ...displayFont('700') },
-  sectionMeta: { color: colors.muted, fontSize: 12, fontWeight: '600' },
-  similarRow: { gap: 3.6, paddingRight: 4 },
+  section: { gap: 10, marginTop: 4 },
+  sectionHead: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    minHeight: 26,
+  },
+  sectionTitle: {
+    color: colors.text,
+    fontSize: 12,
+    fontWeight: '700',
+    textTransform: 'uppercase',
+    letterSpacing: 0.45,
+  },
+  sectionMeta: { color: colors.muted, fontSize: 11, fontWeight: '600' },
+  similarRow: {
+    gap: 1,
+    paddingRight: 8,
+  },
   grid: {
     flexDirection: 'row',
     flexWrap: 'wrap',
@@ -1275,17 +1394,11 @@ function createStyles(colors: AppColors) {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 6,
-    backgroundColor: colors.white,
-    borderTopWidth: 1,
-    borderTopColor: colors.border,
+    backgroundColor: 'transparent',
+    borderTopWidth: 0,
     paddingHorizontal: 14,
-    paddingTop: 10,
+    paddingTop: 0,
     paddingBottom: 14,
-    ...softShadow({ y: -6, blur: 20, opacity: 0.14 }),
-    ...Platform.select({
-      web: { boxShadow: '0 -8px 28px rgba(28,22,19,0.12)' },
-      default: {},
-    }),
   },
   footerActions: {
     flex: 1,

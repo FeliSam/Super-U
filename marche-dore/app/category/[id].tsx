@@ -8,8 +8,11 @@ import {
   IconCircle,
   Page,
   Screen,
+  SmartNavbar,
+  SmartNavbarChip,
+  smartNavbarSheetTop,
 } from '@/components/ui';
-import { displayFont, heroChrome, type AppColors, spacing } from '@/constants/theme';
+import { displayFont, heroChrome, type AppColors, spacing, PRODUCT_FEED_IMAGE_H } from '@/constants/theme';
 import { useColors, useTheme } from '@/context/ThemeContext';
 import { useCatalog } from '@/context/CatalogContext';
 import {
@@ -20,7 +23,7 @@ import {
   type Product,
 } from '@/data/catalog';
 import { rankProductsForShopper } from '@/lib/homeEngine';
-import { ProductFlashGrid } from '@/components/ProductFlashGrid';
+import { ProductFlashGrid, PRODUCT_FEED_EDGE } from '@/components/ProductFlashGrid';
 import { openSearchScreen } from '@/lib/searchNav';
 import { useExpandableSheet, SHEET_MIN_RATIO } from '@/lib/expandableSheet';
 import { useAuth } from '@/context/AuthContext';
@@ -29,10 +32,11 @@ import { useFavorites } from '@/context/FavoritesContext';
 import { useOrders } from '@/context/OrdersContext';
 import { useProfile } from '@/context/ProfileContext';
 import { useUiState } from '@/context/UiStateContext';
+import { DEV_SAFE_HOME } from '@/lib/devBoot';
 import { LinearGradient } from 'expo-linear-gradient';
 import { Feather } from '@expo/vector-icons';
 import { router, useLocalSearchParams } from 'expo-router';
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   Modal,
@@ -59,9 +63,10 @@ const SORT_OPTIONS: { key: SortKey; label: string; icon: React.ComponentProps<ty
   { key: 'promo', label: 'Promotions', icon: 'tag' },
 ];
 
-const GRID_IMAGE_H = Math.round(128 * 1.15);
+const GRID_IMAGE_H = PRODUCT_FEED_IMAGE_H;
+const SHEET_EDGE = PRODUCT_FEED_EDGE;
 /** First paint + each onEndReached append. Rank/filter the full list first, then slice. */
-const PAGE_SIZE = 10;
+const PAGE_SIZE = 8;
 
 function hashAccount(id?: string) {
   if (!id) return 0;
@@ -169,13 +174,11 @@ export default function CategoryScreen() {
     minRatio: SHEET_MIN_RATIO * 0.7,
     lockCollapseToHandle: true,
     initiallyExpanded: true,
+    topGap: smartNavbarSheetTop(insets.top, 4),
   });
 
   const heroPopStyle = useAnimatedStyle(() => ({
     opacity: interpolate(expandedSV.value, [0, 0.85], [1, 0]),
-  }));
-  const barTitleStyle = useAnimatedStyle(() => ({
-    opacity: interpolate(expandedSV.value, [0.2, 0.85], [0, 1]),
   }));
 
   const { id, filter } = useLocalSearchParams<{ id: string; filter?: string }>();
@@ -196,7 +199,7 @@ export default function CategoryScreen() {
   const { ids: favoriteIds } = useFavorites();
   const { orders } = useOrders();
   const { profile } = useProfile();
-  const { searchRecents, interests } = useUiState();
+  const { searchRecents, recentProductIds, interests } = useUiState();
   const orderedIds = useMemo(
     () => orders.flatMap((order) => order.lines.map((line) => line.productId)).slice(0, 48),
     [orders],
@@ -208,12 +211,14 @@ export default function CategoryScreen() {
       cartIds: lines.map((line) => line.productId),
       orderedIds,
       interests,
+      viewedIds: recentProductIds,
       firstName: profile.firstName,
       hour: new Date().getHours(),
       sessionSalt: visitSalt + hashAccount(session?.accountId),
     }),
     [
       searchRecents,
+      recentProductIds,
       favoriteIds,
       lines,
       orderedIds,
@@ -243,25 +248,38 @@ export default function CategoryScreen() {
     [baseList, active, sort, shopperSignals],
   );
 
+  const feed = useMemo(() => {
+    const used = new Set(list.map((p) => p.id));
+    const extra = uniqueFamilyProducts(products).filter((p) => !used.has(p.id));
+    return [...list, ...rankProductsForShopper(extra, shopperSignals)];
+  }, [list, products, shopperSignals]);
+
   const [visibleCount, setVisibleCount] = useState(PAGE_SIZE);
   const [appending, setAppending] = useState(false);
+  const loadingMore = useRef(false);
+  const feedLen = useRef(feed.length);
+  feedLen.current = feed.length;
 
   useEffect(() => {
     setVisibleCount(PAGE_SIZE);
     setAppending(false);
+    loadingMore.current = false;
   }, [id, active, sort]);
 
-  const visibleList = useMemo(() => list.slice(0, visibleCount), [list, visibleCount]);
-  const hasMore = visibleCount < list.length;
+  const visibleList = useMemo(() => feed.slice(0, visibleCount), [feed, visibleCount]);
+  const hasMore = visibleCount < feed.length;
 
   const loadMore = useCallback(() => {
-    if (!hasMore || appending) return;
+    if (loadingMore.current) return;
+    if (visibleCount >= feedLen.current) return;
+    loadingMore.current = true;
     setAppending(true);
-    requestAnimationFrame(() => {
-      setVisibleCount((n) => Math.min(n + PAGE_SIZE, list.length));
+    setVisibleCount((n) => Math.min(n + PAGE_SIZE, feedLen.current));
+    setTimeout(() => {
+      loadingMore.current = false;
       setAppending(false);
-    });
-  }, [hasMore, appending, list.length]);
+    }, 120);
+  }, [visibleCount]);
 
   const sortLabel = SORT_OPTIONS.find((o) => o.key === sort)?.label ?? 'Pertinence';
   const title = cat?.title ?? 'Catégorie';
@@ -290,26 +308,6 @@ export default function CategoryScreen() {
                 />
               </Animated.View>
             ) : null}
-            <View style={[styles.heroBar, { paddingTop: Math.max(10, insets.top + 6) }]}>
-              <IconCircle
-                name="chevron-left"
-                variant="hero"
-                accessibilityLabel="Retour"
-                onPress={() => goBack()}
-              />
-              <Animated.Text
-                style={[styles.barTitle, barTitleStyle]}
-                numberOfLines={1}
-                accessibilityRole="header">
-                {title}
-              </Animated.Text>
-              <IconCircle
-                name="search"
-                variant="hero"
-                accessibilityLabel="Rechercher"
-                onPress={openSearchScreen}
-              />
-            </View>
             <View style={[styles.heroCopy, { bottom: sheetMin + 28 }]} pointerEvents="none">
               <Text style={styles.heroEyebrow}>Rayon</Text>
               <Text
@@ -324,6 +322,35 @@ export default function CategoryScreen() {
               </Text>
             </View>
           </View>
+
+          <SmartNavbar
+            split
+            left={
+              <View style={styles.navTitleRow}>
+                <IconCircle
+                  name="chevron-left"
+                  variant="ghost"
+                  size="lg"
+                  accessibilityLabel="Retour"
+                  onPress={() => goBack()}
+                />
+                <Text style={styles.barTitle} numberOfLines={1} accessibilityRole="header">
+                  {title}
+                </Text>
+              </View>
+            }
+            right={
+              <SmartNavbarChip round>
+                <IconCircle
+                  name="search"
+                  variant="ghost"
+                  size="lg"
+                  accessibilityLabel="Rechercher"
+                  onPress={openSearchScreen}
+                />
+              </SmartNavbarChip>
+            }
+          />
 
           <Animated.View
             style={[
@@ -394,17 +421,22 @@ export default function CategoryScreen() {
               products={visibleList}
               extraData={`${active}-${sort}-${visibleList.length}-${appending}`}
               imageHeight={GRID_IMAGE_H}
+              edgeInset={SHEET_EDGE}
+              plain={DEV_SAFE_HOME}
               listRef={sheetScrollRef as never}
               style={styles.sheetScroll}
-              contentContainerStyle={[styles.sheetScrollContent, { paddingBottom: fabBottom + 96 }]}
+              contentContainerStyle={[
+                styles.sheetScrollContent,
+                { paddingBottom: Math.max(88, insets.bottom + 72) },
+              ]}
               scrollEnabled={listScrollEnabled}
               onScroll={onSheetScroll as (event: unknown) => void}
               onScrollBeginDrag={onSheetScrollBeginDrag as (event: unknown) => void}
               onScrollEndDrag={onSheetScrollEndDrag as (event: unknown) => void}
               onEndReached={loadMore}
-              onEndReachedThreshold={0.4}
+              onEndReachedThreshold={0.6}
               footer={
-                appending ? (
+                hasMore || appending ? (
                   <View style={{ paddingVertical: 16, alignItems: 'center' }}>
                     <ActivityIndicator color={colors.gold} />
                   </View>
@@ -495,26 +527,21 @@ function createStyles(colors: AppColors) {
       height: '100%',
       borderRadius: 36,
     },
-    heroBar: {
-      position: 'absolute',
-      top: 0,
-      left: 0,
-      right: 0,
-      zIndex: 2,
+    navTitleRow: {
+      flex: 1,
       flexDirection: 'row',
       alignItems: 'center',
-      justifyContent: 'space-between',
-      gap: 10,
-      paddingHorizontal: spacing.screenMd,
+      gap: 6,
+      minWidth: 0,
+      minHeight: 42,
     },
     barTitle: {
       flex: 1,
       ...displayFont('800'),
       color: colors.text,
-      fontSize: 17,
+      fontSize: 16,
       lineHeight: 22,
       letterSpacing: -0.3,
-      textAlign: 'center',
     },
     heroCopy: {
       position: 'absolute',
@@ -550,7 +577,8 @@ function createStyles(colors: AppColors) {
       backgroundColor: colors.bg,
       borderTopLeftRadius: 28,
       borderTopRightRadius: 28,
-      paddingTop: 8,
+      paddingTop: 16,
+      gap: 0,
       zIndex: 5,
       overflow: 'hidden',
       flexDirection: 'column',
@@ -590,7 +618,9 @@ function createStyles(colors: AppColors) {
     },
     sheetChrome: {
       backgroundColor: colors.bg,
-      paddingBottom: 6,
+      paddingHorizontal: SHEET_EDGE,
+      paddingBottom: 8,
+      gap: 10,
       zIndex: 6,
     },
     sheetScroll: {
@@ -609,7 +639,7 @@ function createStyles(colors: AppColors) {
       ...(Platform.OS === 'web' ? ({ touchAction: 'pan-x' } as object) : {}),
     },
     filters: {
-      paddingHorizontal: spacing.screen,
+      paddingHorizontal: spacing.screen - SHEET_EDGE,
       gap: 8,
       paddingBottom: 0,
       alignItems: 'center',
@@ -635,7 +665,7 @@ function createStyles(colors: AppColors) {
       flexDirection: 'row',
       justifyContent: 'space-between',
       alignItems: 'center',
-      paddingHorizontal: spacing.screen,
+      paddingHorizontal: spacing.screen - SHEET_EDGE,
       gap: 12,
     },
     found: { color: colors.placeholder, fontSize: 13, fontWeight: '600', flexShrink: 1 },
@@ -651,7 +681,7 @@ function createStyles(colors: AppColors) {
     },
     sort: { color: colors.text, fontSize: 12, fontWeight: '700' },
     grid: {
-      paddingHorizontal: spacing.screen,
+      paddingHorizontal: SHEET_EDGE,
       flexDirection: 'row',
       flexWrap: 'wrap',
       gap: 2,
@@ -659,7 +689,7 @@ function createStyles(colors: AppColors) {
     cell: {},
     emptyWrap: {
       flexGrow: 1,
-      paddingHorizontal: spacing.screen,
+      paddingHorizontal: spacing.screen - SHEET_EDGE,
       paddingTop: 16,
       paddingBottom: 48,
       justifyContent: 'center',

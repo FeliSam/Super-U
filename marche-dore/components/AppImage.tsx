@@ -1,7 +1,7 @@
 import { type AppColors } from '@/constants/theme';
 import { imagePlaceholder } from '@/constants/media';
 import { useColors } from '@/context/ThemeContext';
-import { catalogImageFallback } from '@/data/catalog';
+import { avatar, catalogImageFallback } from '@/data/catalog';
 import { Image, type ImageProps } from 'expo-image';
 import { memo, useEffect, useMemo, useState } from 'react';
 import {
@@ -10,6 +10,7 @@ import {
   StyleSheet,
   View,
   type ImageResizeMode,
+  type ImageSourcePropType,
   type StyleProp,
   type ViewStyle,
 } from 'react-native';
@@ -27,9 +28,22 @@ function isBundledUri(uri: string) {
   return false;
 }
 
+function sourceUri(source: unknown): string {
+  if (typeof source === 'string') return source;
+  if (typeof source === 'number') return `mod:${source}`;
+  if (source && typeof source === 'object' && 'uri' in source) {
+    return String((source as { uri?: unknown }).uri ?? '');
+  }
+  return '';
+}
+
+function isPortraitPhotoUri(uri: string) {
+  return /\/ops\/staff\/.+\/photo/i.test(uri) || /\/users\/.+\/photo/i.test(uri);
+}
+
 function isRemoteApiUri(uri: string) {
   if (/\/catalog\/media\//i.test(uri)) return true;
-  if (/\/ops\/staff\/.+\/photo/i.test(uri)) return true;
+  if (isPortraitPhotoUri(uri)) return true;
   if (/^(blob:)/i.test(uri)) return true;
   if (/^https?:/i.test(uri) && !isBundledUri(uri)) return true;
   return false;
@@ -46,82 +60,111 @@ function isBundledSource(source: ImageProps['source']): boolean {
   return !isRemoteApiUri(uri);
 }
 
-/** Catalog image with blurhash + solid frame placeholder. Local sources paint from cache. */
-export const AppImage = memo(function AppImage({
-  style,
-  frameStyle,
-  placeholder = imagePlaceholder,
-  placeholderContentFit = 'cover',
-  transition,
-  cachePolicy = 'memory-disk',
-  contentFit = 'cover',
-  source,
-  onError,
-  priority = 'low',
-  recyclingKey,
-  ...rest
-}: Props) {
-  const colors = useColors();
-  const styles = useMemo(() => createStyles(colors), [colors]);
-  const [failed, setFailed] = useState(false);
-  const fallback = catalogImageFallback(source);
-  useEffect(() => setFailed(false), [source]);
-  const resolvedSource = failed && fallback ? fallback : source;
-  const bundled = isBundledSource(resolvedSource);
-  const resolvedTransition = transition ?? (bundled || Platform.OS === 'web' ? 0 : 80);
+function sourcesEqual(a: unknown, b: unknown) {
+  if (a === b) return true;
+  return sourceUri(a) === sourceUri(b) && sourceUri(a) !== '';
+}
 
-  if (bundled) {
-    const resizeMode: ImageResizeMode =
-      contentFit === 'contain' ? 'contain' : contentFit === 'fill' ? 'stretch' : 'cover';
+/** Catalog image with blurhash + solid frame placeholder. Local sources paint from cache. */
+export const AppImage = memo(
+  function AppImage({
+    style,
+    frameStyle,
+    placeholder = imagePlaceholder,
+    placeholderContentFit = 'cover',
+    transition,
+    cachePolicy = 'memory-disk',
+    contentFit = 'cover',
+    source,
+    onError,
+    priority = 'low',
+    recyclingKey,
+    ...rest
+  }: Props) {
+    const colors = useColors();
+    const styles = useMemo(() => createStyles(colors), [colors]);
+    const uri = sourceUri(source);
+    const [failed, setFailed] = useState(false);
+    const fallback = catalogImageFallback(source) ?? (isPortraitPhotoUri(uri) ? avatar : undefined);
+
+    useEffect(() => {
+      setFailed(false);
+    }, [uri]);
+
+    const resolvedSource = failed && fallback ? fallback : source;
+    const resolvedUri = sourceUri(resolvedSource);
+    const bundled = isBundledSource(resolvedSource);
+    const portraitRemote = isPortraitPhotoUri(resolvedUri);
+    const resolvedTransition = transition ?? (bundled || Platform.OS === 'web' ? 0 : 80);
+    const key = recyclingKey || resolvedUri || uri || 'img';
+
+    if (bundled || portraitRemote) {
+      const resizeMode: ImageResizeMode =
+        contentFit === 'contain' ? 'contain' : contentFit === 'fill' ? 'stretch' : 'cover';
+      return (
+        <View style={[styles.frame, frameStyle]}>
+          <RNImage
+            key={key}
+            source={resolvedSource as ImageSourcePropType}
+            style={[styles.image, style]}
+            resizeMode={resizeMode}
+            accessibilityIgnoresInvertColors
+            onError={() => {
+              if (fallback && !failed) setFailed(true);
+            }}
+            {...(Platform.OS === 'web'
+              ? ({
+                  // Eager: le lazy web ne recharge pas correctement après un remount (chat, tabs).
+                  loading: 'eager',
+                  fetchPriority: priority === 'low' ? 'low' : 'high',
+                  decoding: 'async',
+                } as object)
+              : null)}
+          />
+        </View>
+      );
+    }
+
     return (
       <View style={[styles.frame, frameStyle]}>
-        <RNImage
-          source={resolvedSource as number}
+        <Image
+          {...rest}
+          key={key}
+          source={resolvedSource}
           style={[styles.image, style]}
-          resizeMode={resizeMode}
-          accessibilityIgnoresInvertColors
-          {...(Platform.OS === 'web'
-            ? ({
-                loading: priority === 'low' ? 'lazy' : 'eager',
-                fetchPriority: priority === 'low' ? 'low' : 'high',
-              } as object)
-            : null)}
+          placeholder={placeholder}
+          placeholderContentFit={placeholderContentFit}
+          transition={resolvedTransition}
+          cachePolicy={cachePolicy}
+          contentFit={contentFit}
+          priority={priority}
+          recyclingKey={key}
+          onError={(event) => {
+            if (fallback) setFailed(true);
+            onError?.(event);
+          }}
         />
       </View>
     );
-  }
-
-  return (
-    <View style={[styles.frame, frameStyle]}>
-      <Image
-        {...rest}
-        source={resolvedSource}
-        style={[styles.image, style]}
-        placeholder={placeholder}
-        placeholderContentFit={placeholderContentFit}
-        transition={resolvedTransition}
-        cachePolicy={cachePolicy}
-        contentFit={contentFit}
-        priority={priority}
-        recyclingKey={recyclingKey}
-        onError={(event) => {
-          if (fallback) setFailed(true);
-          onError?.(event);
-        }}
-      />
-    </View>
-  );
-});
+  },
+  (prev, next) =>
+    sourcesEqual(prev.source, next.source) &&
+    prev.frameStyle === next.frameStyle &&
+    prev.style === next.style &&
+    prev.contentFit === next.contentFit &&
+    prev.priority === next.priority &&
+    prev.recyclingKey === next.recyclingKey &&
+    prev.cachePolicy === next.cachePolicy,
+);
 
 function createStyles(colors: AppColors) {
   return StyleSheet.create({
     frame: {
-      width: '100%',
-      height: '100%',
       overflow: 'hidden',
       backgroundColor: colors.border,
     },
     image: {
+      ...StyleSheet.absoluteFillObject,
       width: '100%',
       height: '100%',
     },

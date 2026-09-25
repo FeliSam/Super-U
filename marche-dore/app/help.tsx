@@ -1,6 +1,6 @@
-import { IconCircle, Page, Screen } from '@/components/ui';
-import { goBack } from '@/lib/navigation';
-import { displayFont, type AppColors, spacing } from '@/constants/theme';
+import { ScreenHeader } from '@/components/ScreenHeader';
+import { Page, Screen } from '@/components/ui';
+import { type AppColors, spacing } from '@/constants/theme';
 import { useColors } from '@/context/ThemeContext';
 import { faqItems } from '@/data/help';
 import { Feather } from '@expo/vector-icons';
@@ -20,11 +20,7 @@ export default function HelpCenterScreen() {
   return (
     <Screen>
       <Page style={styles.flex}>
-        <View style={styles.header}>
-          <IconCircle name="chevron-left" onPress={() => goBack()} />
-          <Text style={styles.title}>Centre d’aide</Text>
-          <View style={styles.headerSpacer} />
-        </View>
+        <ScreenHeader title="Centre d’aide" />
 
         <ScrollView contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
           <View style={styles.intro}>
@@ -80,14 +76,6 @@ export default function HelpCenterScreen() {
 function createStyles(colors: AppColors) {
   return StyleSheet.create({
   flex: { flex: 1 },
-  header: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    paddingHorizontal: spacing.screen,
-    paddingVertical: 12 },
-  headerSpacer: { width: 40 },
-  title: { color: colors.text, fontSize: 17, ...displayFont('700') },
   content: { padding: 20, gap: 14, paddingBottom: 40 },
   intro: {
     flexDirection: 'row',

@@ -5,7 +5,7 @@ import { CtaButton, IconCircle, Screen } from '@/components/ui';
 import { appLocation } from '@/constants/location';
 import { formatBeninPhoneInput } from '@/lib/beninPhone';
 import { cotonouMap, mapStyles, type LngLat, type MapMarker } from '@/constants/map';
-import { displayFont, type AppColors, spacing } from '@/constants/theme';
+import { displayFont, mapHud, type AppColors, spacing } from '@/constants/theme';
 import { useAddresses } from '@/context/AddressesContext';
 import { useProfile } from '@/context/ProfileContext';
 import { useColors, useTheme } from '@/context/ThemeContext';
@@ -21,31 +21,28 @@ import { useCallback, useEffect, useMemo, useRef, useState, type ComponentProps 
 import {
   ActivityIndicator,
   Alert,
-  Animated,
-  Dimensions,
-  PanResponder,
+  Keyboard,
   Platform,
   Pressable,
   StyleSheet,
   Text,
   TextInput,
-  View } from 'react-native';
+  useWindowDimensions,
+  View,
+  type ScrollView,
+} from 'react-native';
 import { GestureRoot } from '@/components/GestureRoot';
-import { Gesture, GestureDetector } from 'react-native-gesture-handler';
+import { iosKeyboardAccessoryProps } from '@/components/KeyboardDismissBar';
+import { Gesture, GestureDetector, RectButton, Swipeable } from 'react-native-gesture-handler';
 import Reanimated, {
   useAnimatedStyle,
   useSharedValue,
   withSpring,
-  withTiming } from 'react-native-reanimated';
+  withTiming,
+} from 'react-native-reanimated';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
-const WINDOW_H = Dimensions.get('window').height;
-const SHEET_MIN = Math.round(WINDOW_H * 0.42);
-const SHEET_MAX = Math.round(WINDOW_H * 0.82);
-const SHEET_MID = Math.round((SHEET_MIN + SHEET_MAX) / 2);
-const SWIPE_LEFT = -152;
-const SWIPE_RIGHT = 88;
-const SWIPE_OVER = 28;
+const ACTION_W = 76;
 type PlaceKind = 'home' | 'work' | 'other';
 
 const PLACE_KINDS: {
@@ -70,6 +67,45 @@ function addressKind(label: string): MapMarker['kind'] {
   return 'pin';
 }
 
+function AddressCardBody({
+  address,
+  selected,
+  onSelect,
+}: {
+  address: DeliveryAddress;
+  selected: boolean;
+  onSelect: () => void;
+}) {
+  const colors = useColors();
+  const styles = useMemo(() => createStyles(colors), [colors]);
+  return (
+    <Pressable
+      style={[styles.card, selected && styles.cardSelected]}
+      onPress={onSelect}
+      accessibilityRole="button"
+      accessibilityState={{ selected }}>
+      <View style={styles.cardTop}>
+        <View style={styles.labelRow}>
+          <View style={styles.pin}>
+            <Feather name="map-pin" size={16} color={colors.gold} />
+          </View>
+          <Text style={styles.label}>{address.label}</Text>
+          {address.default ? (
+            <View style={styles.defaultBadge}>
+              <Text style={styles.defaultText}>Par défaut</Text>
+            </View>
+          ) : null}
+        </View>
+        <View style={[styles.radio, selected && styles.radioOn]} />
+      </View>
+      <Text style={styles.line}>{address.line}</Text>
+      <Text style={styles.meta}>{address.city}</Text>
+      <Text style={styles.meta}>{address.phone}</Text>
+    </Pressable>
+  );
+}
+
+/** Swipe native (Gesture Handler) — même pattern que le panier. */
 function SwipeAddressCard({
   address,
   selected,
@@ -77,7 +113,8 @@ function SwipeAddressCard({
   onSelect,
   onSetDefault,
   onEdit,
-  onDelete }: {
+  onDelete,
+}: {
   address: DeliveryAddress;
   selected: boolean;
   canDelete: boolean;
@@ -88,122 +125,88 @@ function SwipeAddressCard({
 }) {
   const colors = useColors();
   const styles = useMemo(() => createStyles(colors), [colors]);
-  const translateX = useRef(new Animated.Value(0)).current;
-  const offset = useRef(0);
+  const swipeRef = useRef<Swipeable>(null);
 
-  const snapTo = (toValue: number) => {
-    offset.current = toValue;
-    Animated.spring(translateX, {
-      toValue,
-      useNativeDriver: true,
-      friction: 7,
-      tension: 68 }).start();
-  };
+  const runAndClose = useCallback(
+    (action: () => void) => {
+      swipeRef.current?.close();
+      requestAnimationFrame(action);
+    },
+    [],
+  );
 
-  const close = () => snapTo(0);
+  const renderRightActions = useCallback(
+    () => (
+      <View style={styles.rightActions}>
+        <RectButton
+          style={[styles.swipeAction, styles.swipeEdit]}
+          onPress={() => runAndClose(onEdit)}
+          accessibilityLabel="Modifier l’adresse">
+          <Feather name="edit-3" size={18} color={colors.onAccent} />
+          <Text style={styles.swipeActionText}>Éditer</Text>
+        </RectButton>
+        {canDelete ? (
+          <RectButton
+            style={[styles.swipeAction, styles.swipeDelete]}
+            onPress={() => runAndClose(onDelete)}
+            accessibilityLabel="Supprimer l’adresse">
+            <Feather name="trash-2" size={18} color={colors.onAccent} />
+            <Text style={styles.swipeActionText}>Suppr.</Text>
+          </RectButton>
+        ) : null}
+      </View>
+    ),
+    [canDelete, colors.onAccent, onDelete, onEdit, runAndClose, styles],
+  );
 
-  const panResponder = useRef(
-    PanResponder.create({
-      onStartShouldSetPanResponder: () => false,
-      onMoveShouldSetPanResponder: (_, g) =>
-        Math.abs(g.dx) > 8 && Math.abs(g.dx) > Math.abs(g.dy) * 1.25,
-      onPanResponderTerminationRequest: () => false,
-      onPanResponderGrant: () => {
-        translateX.stopAnimation((v) => {
-          offset.current = v;
-        });
-      },
-      onPanResponderMove: (_, g) => {
-        const raw = offset.current + g.dx;
-        let next = raw;
-        if (raw < SWIPE_LEFT) next = SWIPE_LEFT - (SWIPE_LEFT - raw) * 0.35;
-        else if (raw > SWIPE_RIGHT) next = SWIPE_RIGHT + (raw - SWIPE_RIGHT) * 0.35;
-        translateX.setValue(
-          Math.max(SWIPE_LEFT - SWIPE_OVER, Math.min(SWIPE_RIGHT + SWIPE_OVER, next)),
-        );
-      },
-      onPanResponderRelease: (_, g) => {
-        const projected = offset.current + g.dx + g.vx * 36;
-        if (projected <= SWIPE_LEFT / 2 || g.vx < -0.4) {
-          snapTo(SWIPE_LEFT);
-          return;
-        }
-        if (projected >= SWIPE_RIGHT / 2 || g.vx > 0.4) {
-          snapTo(SWIPE_RIGHT);
-          return;
-        }
-        snapTo(0);
-      } }),
-  ).current;
+  const renderLeftActions = useCallback(
+    () => (
+      <RectButton
+        style={[styles.swipeAction, styles.swipeDefault, { width: ACTION_W }]}
+        onPress={() => runAndClose(onSetDefault)}
+        accessibilityLabel="Définir par défaut">
+        <Feather name="star" size={18} color={colors.onAccent} />
+        <Text style={styles.swipeActionText}>Défaut</Text>
+      </RectButton>
+    ),
+    [colors.onAccent, onSetDefault, runAndClose, styles],
+  );
 
-  const runAndClose = (action: () => void) => {
-    close();
-    requestAnimationFrame(action);
-  };
-
-  return (
-    <View style={styles.swipeWrap}>
-      <View style={styles.swipeRails} pointerEvents="box-none">
-        <View style={styles.rightRail}>
-          <Pressable
-            style={[styles.swipeAction, styles.swipeDefault]}
-            onPress={() => runAndClose(onSetDefault)}
-            accessibilityLabel="Définir par défaut">
-            <Feather name="star" size={18} color={colors.onAccent} />
+  if (Platform.OS === 'web') {
+    return (
+      <View style={styles.swipeWrap}>
+        <AddressCardBody address={address} selected={selected} onSelect={onSelect} />
+        <View style={styles.webActions}>
+          <Pressable style={[styles.webChip, styles.swipeDefault]} onPress={onSetDefault}>
             <Text style={styles.swipeActionText}>Défaut</Text>
           </Pressable>
-        </View>
-        <View style={styles.leftRail}>
-          <Pressable
-            style={[styles.swipeAction, styles.swipeEdit]}
-            onPress={() => runAndClose(onEdit)}
-            accessibilityLabel="Modifier l’adresse">
-            <Feather name="edit-3" size={18} color={colors.onAccent} />
+          <Pressable style={[styles.webChip, styles.swipeEdit]} onPress={onEdit}>
             <Text style={styles.swipeActionText}>Éditer</Text>
           </Pressable>
           {canDelete ? (
-            <Pressable
-              style={[styles.swipeAction, styles.swipeDelete]}
-              onPress={() => runAndClose(onDelete)}
-              accessibilityLabel="Supprimer l’adresse">
-              <Feather name="trash-2" size={18} color={colors.onAccent} />
+            <Pressable style={[styles.webChip, styles.swipeDelete]} onPress={onDelete}>
               <Text style={styles.swipeActionText}>Suppr.</Text>
             </Pressable>
           ) : null}
         </View>
       </View>
+    );
+  }
 
-      <Animated.View
-        style={[styles.swipeFront, { transform: [{ translateX }] }]}
-        {...panResponder.panHandlers}>
-        <Pressable
-          style={[styles.card, selected && styles.cardSelected]}
-          onPress={() => {
-            if (offset.current !== 0) {
-              close();
-              return;
-            }
-            onSelect();
-          }}>
-          <View style={styles.cardTop}>
-            <View style={styles.labelRow}>
-              <View style={styles.pin}>
-                <Feather name="map-pin" size={16} color={colors.gold} />
-              </View>
-              <Text style={styles.label}>{address.label}</Text>
-              {address.default ? (
-                <View style={styles.defaultBadge}>
-                  <Text style={styles.defaultText}>Par défaut</Text>
-                </View>
-              ) : null}
-            </View>
-            <View style={[styles.radio, selected && styles.radioOn]} />
-          </View>
-          <Text style={styles.line}>{address.line}</Text>
-          <Text style={styles.meta}>{address.city}</Text>
-          <Text style={styles.meta}>{address.phone}</Text>
-        </Pressable>
-      </Animated.View>
+  return (
+    <View style={styles.swipeWrap}>
+      <Swipeable
+        ref={swipeRef}
+        friction={2}
+        leftThreshold={40}
+        rightThreshold={40}
+        overshootLeft={false}
+        overshootRight={false}
+        renderLeftActions={renderLeftActions}
+        renderRightActions={renderRightActions}
+        childrenContainerStyle={styles.swipeChild}>
+        <AddressCardBody address={address} selected={selected} onSelect={onSelect} />
+      </Swipeable>
     </View>
   );
 }
@@ -236,11 +239,23 @@ export default function AddressesScreen() {
   const colors = useColors();
   const styles = useMemo(() => createStyles(colors), [colors]);
   const insets = useSafeAreaInsets();
+  const { height: windowHeight } = useWindowDimensions();
   const { addresses, selectedId, setSelectedId, setDefault, addAddress, updateAddress, removeAddress } =
     useAddresses();
   const { profile } = useProfile();
   const { setup } = useLocalSearchParams<{ setup?: string }>();
   const setupMode = setup === '1';
+
+  /** Peek serré : en-tête + 1 carte + footer + home indicator (évite le vide blanc à min). */
+  const sheetMin = useMemo(() => {
+    const safe = Math.max(insets.bottom, Platform.OS === 'ios' ? 20 : 8);
+    const peek = 268 + safe;
+    return Math.min(Math.round(windowHeight * 0.4), Math.max(peek, Math.round(windowHeight * 0.3)));
+  }, [windowHeight, insets.bottom]);
+  const sheetMax = useMemo(() => Math.round(windowHeight * 0.82), [windowHeight]);
+  const sheetMid = useMemo(() => Math.round((sheetMin + sheetMax) / 2), [sheetMin, sheetMax]);
+  const formScrollRef = useRef<ScrollView>(null);
+  const [kbInset, setKbInset] = useState(0);
 
   const selectedAddress = useMemo(
     () => addresses.find((a) => a.id === selectedId) ?? addresses[0],
@@ -271,9 +286,57 @@ export default function AddressesScreen() {
     superUStoresToMapMarkers(SUPER_U_STORES, SUPER_U_BRAND.red),
   );
 
-  const sheetH = useSharedValue(SHEET_MIN);
-  const dragStartH = useSharedValue(SHEET_MIN);
+  const sheetH = useSharedValue(sheetMin);
+  const dragStartH = useSharedValue(sheetMin);
+  const minH = useSharedValue(sheetMin);
+  const maxH = useSharedValue(sheetMax);
+  const midH = useSharedValue(sheetMid);
   const editing = mode === 'edit';
+
+  useEffect(() => {
+    if (!editing) {
+      setKbInset(0);
+      return;
+    }
+    const showEvt = Platform.OS === 'ios' ? 'keyboardWillShow' : 'keyboardDidShow';
+    const hideEvt = Platform.OS === 'ios' ? 'keyboardWillHide' : 'keyboardDidHide';
+    const onShow = (e: { endCoordinates: { height: number } }) => {
+      const h = Math.max(0, e.endCoordinates.height);
+      // iOS : remonter le sheet au-dessus du clavier. Android (resize) : rester collé bas.
+      setKbInset(Platform.OS === 'ios' ? h : 0);
+      const room = Math.max(
+        sheetMin,
+        Math.min(sheetMax, windowHeight - (Platform.OS === 'ios' ? h : 0) - Math.max(insets.top, 12) - 8),
+      );
+      sheetH.value = withTiming(room, SHEET_OPEN);
+    };
+    const onHide = () => {
+      setKbInset(0);
+      if (mode === 'edit') sheetH.value = withTiming(sheetMax, SHEET_OPEN);
+    };
+    const show = Keyboard.addListener(showEvt, onShow);
+    const hide = Keyboard.addListener(hideEvt, onHide);
+    return () => {
+      show.remove();
+      hide.remove();
+    };
+  }, [editing, mode, sheetH, sheetMax, sheetMin, windowHeight, insets.top]);
+
+  const revealFormField = useCallback(() => {
+    sheetH.value = withTiming(
+      Math.max(sheetMin, Math.min(sheetMax, windowHeight - kbInset - Math.max(insets.top, 12) - 8)),
+      SHEET_OPEN,
+    );
+  }, [sheetH, sheetMax, sheetMin, windowHeight, kbInset, insets.top]);
+
+  useEffect(() => {
+    minH.value = sheetMin;
+    maxH.value = sheetMax;
+    midH.value = sheetMid;
+    const h = sheetH.value;
+    if (h < sheetMin) sheetH.value = sheetMin;
+    else if (h > sheetMax) sheetH.value = sheetMax;
+  }, [sheetMin, sheetMax, sheetMid, minH, maxH, midH, sheetH]);
 
   useEffect(() => {
     void warmLibreMap(
@@ -339,7 +402,7 @@ export default function AddressesScreen() {
     setLabel(PLACE_LABELS.home);
     setLine('');
     setPhone(formatBeninPhoneInput(profile.phone || ''));
-    sheetH.value = withTiming(SHEET_MAX, SHEET_OPEN);
+    sheetH.value = withTiming(sheetMax, SHEET_OPEN);
     setMode('edit');
   };
 
@@ -365,7 +428,7 @@ export default function AddressesScreen() {
     setLabel(address.label);
     setLine(address.line);
     setPhone(formatBeninPhoneInput(address.phone));
-    sheetH.value = withTiming(SHEET_MAX, SHEET_OPEN);
+    sheetH.value = withTiming(sheetMax, SHEET_OPEN);
     setMode('edit');
   };
 
@@ -373,7 +436,7 @@ export default function AddressesScreen() {
     if (setupMode && !addresses.length) return;
     setMode('list');
     setEditingId(null);
-    sheetH.value = withTiming(SHEET_MIN, SHEET_OPEN);
+    sheetH.value = withTiming(sheetMin, SHEET_OPEN);
     if (selectedAddress?.coordinate) {
       setMapCenter([...selectedAddress.coordinate]);
       setMapZoom(13.8);
@@ -423,17 +486,17 @@ export default function AddressesScreen() {
         })
         .onUpdate((e) => {
           const next = dragStartH.value - e.translationY;
-          sheetH.value = Math.min(SHEET_MAX, Math.max(SHEET_MIN, next));
+          sheetH.value = Math.min(maxH.value, Math.max(minH.value, next));
         })
         .onEnd((e) => {
           const projected = sheetH.value - e.velocityY * 0.12;
           const target =
-            projected > SHEET_MID || (sheetH.value > SHEET_MID && e.velocityY < -400)
-              ? SHEET_MAX
-              : SHEET_MIN;
+            projected > midH.value || (sheetH.value > midH.value && e.velocityY < -400)
+              ? maxH.value
+              : minH.value;
           sheetH.value = withSpring(target, { ...SHEET_SPRING, velocity: -e.velocityY });
         }),
-    [dragStartH, sheetH],
+    [dragStartH, sheetH, minH, maxH, midH],
   );
 
   const sheetAnim = useAnimatedStyle(() => ({ height: sheetH.value }));
@@ -466,7 +529,7 @@ export default function AddressesScreen() {
     setMapZoom(14.2);
     setMode('list');
     setEditingId(null);
-    sheetH.value = withTiming(SHEET_MAX, SHEET_OPEN);
+    sheetH.value = withTiming(sheetMin, SHEET_OPEN);
   };
 
   const saveDefault = () => {
@@ -510,31 +573,34 @@ export default function AddressesScreen() {
     colors.terracotta,
   ]);
 
-  const mapStyleUrl = scheme === 'dark' ? mapStyles.dark : mapStyles.light;
+  const mapStyleUrl =
+    Platform.OS === 'web'
+      ? mapStyles.raster
+      : scheme === 'dark'
+        ? mapStyles.dark
+        : mapStyles.light;
 
   return (
     <Screen>
       <GestureRoot style={styles.root}>
         <View style={styles.mapLayer}>
+          {/* Web: MapLibre · iOS: Apple Maps (comme CourseGO) · Android: OSM */}
           <LibreMap
-            style={StyleSheet.absoluteFill}
+            style={StyleSheet.absoluteFillObject}
             mapStyle={mapStyleUrl}
             center={mapCenter}
             zoom={mapZoom}
             markers={mapMarkers}
             interactive
+            followCamera
             showNavigation
             navigationOffset={{
               top: editing
                 ? Math.max(10, insets.top + 6) + 58
                 : Math.max(10, insets.top + 6) + 54 + 52,
-              right: 12 }}
-            onReady={() => {
-              setMapError(false);
+              right: 12,
             }}
-            onError={() => {
-              setMapError(true);
-            }}
+            onReady={() => setMapError(false)}
             onPressMap={editing ? (coord) => void applyCoordinate(coord, true) : undefined}
             onPressMarker={(id) => {
               if (editing) return;
@@ -543,7 +609,7 @@ export default function AddressesScreen() {
             }}
           />
           {mapError ? (
-            <View style={styles.mapLoading}>
+            <View style={styles.mapLoading} pointerEvents="none">
               <Feather name="wifi-off" size={22} color={colors.muted} />
               <Text style={styles.mapLoadingText}>Carte indisponible pour le moment</Text>
               <Text style={styles.mapErrorHint}>Vérifiez votre connexion, puis réessayez.</Text>
@@ -553,6 +619,8 @@ export default function AddressesScreen() {
 
         <View style={[styles.topBar, { paddingTop: Math.max(10, insets.top + 6) }]}>
           <IconCircle
+            variant="onPhoto"
+            color={mapHud.ink}
             name={editing ? 'x' : 'chevron-left'}
             onPress={
               editing
@@ -597,7 +665,7 @@ export default function AddressesScreen() {
               )}
             </Pressable>
           ) : (
-            <IconCircle name="plus" onPress={openAdd} />
+            <IconCircle variant="onPhoto" color={mapHud.ink} name="plus" onPress={openAdd} />
           )}
         </View>
 
@@ -621,7 +689,11 @@ export default function AddressesScreen() {
             styles.sheet,
             sheetAnim,
             softShadow({ y: -8, blur: 24, opacity: 0.12 }),
-            { paddingBottom: Math.max(14, insets.bottom + 8), backgroundColor: colors.bg },
+            {
+              bottom: kbInset,
+              paddingBottom: Math.max(10, insets.bottom),
+              backgroundColor: colors.bg,
+            },
           ]}>
           <GestureDetector gesture={sheetPan}>
             <View style={styles.sheetHandle}>
@@ -644,7 +716,9 @@ export default function AddressesScreen() {
                 </Text>
 
                 <Reanimated.ScrollView
+                  ref={formScrollRef}
                   keyboardShouldPersistTaps="handled"
+                  keyboardDismissMode={Platform.OS === 'ios' ? 'interactive' : 'on-drag'}
                   nestedScrollEnabled
                   showsVerticalScrollIndicator={false}
                   style={styles.sheetScroll}
@@ -705,16 +779,20 @@ export default function AddressesScreen() {
                   <TextInput
                     value={label}
                     onChangeText={setLabel}
+                    onFocus={revealFormField}
                     placeholder="Domicile, Bureau…"
                     placeholderTextColor={colors.placeholder}
+                    {...iosKeyboardAccessoryProps()}
                     style={[styles.input, { backgroundColor: colors.white, color: colors.text }]}
                   />
                   <Text style={[styles.fieldLabel, { color: colors.muted }]}>Adresse</Text>
                   <TextInput
                     value={line}
                     onChangeText={setLine}
+                    onFocus={revealFormField}
                     placeholder="Rue, quartier…"
                     placeholderTextColor={colors.placeholder}
+                    {...iosKeyboardAccessoryProps()}
                     style={[styles.input, { backgroundColor: colors.white, color: colors.text }]}
                   />
                   {geoLoading ? (
@@ -726,9 +804,11 @@ export default function AddressesScreen() {
                   <TextInput
                     value={phone}
                     onChangeText={(t) => setPhone(formatBeninPhoneInput(t))}
+                    onFocus={revealFormField}
                     placeholder="+229 01 00 00 00 00"
                     placeholderTextColor={colors.placeholder}
                     keyboardType="phone-pad"
+                    {...iosKeyboardAccessoryProps()}
                     style={[styles.input, { backgroundColor: colors.white, color: colors.text }]}
                   />
                 </Reanimated.ScrollView>
@@ -760,6 +840,13 @@ export default function AddressesScreen() {
                   contentContainerStyle={styles.sheetContent}
                   bounces
                   nestedScrollEnabled>
+                  {orderedAddresses.length === 0 ? (
+                    <View style={styles.emptyHint}>
+                      <Feather name="map-pin" size={22} color={colors.gold} />
+                      <Text style={styles.emptyTitle}>Aucune adresse pour l’instant</Text>
+                      <Text style={styles.emptySub}>Ajoutez le lieu où le livreur doit se rendre.</Text>
+                    </View>
+                  ) : null}
                   {orderedAddresses.map((address) => (
                     <SwipeAddressCard
                       key={address.id}
@@ -808,9 +895,21 @@ export default function AddressesScreen() {
 }
 
 function createStyles(colors: AppColors) {
+  const hudGlass =
+    Platform.OS === 'web'
+      ? {
+          backdropFilter: mapHud.webFilter,
+          WebkitBackdropFilter: mapHud.webFilter,
+          boxShadow: mapHud.webShadow,
+        }
+      : {};
   return StyleSheet.create({
-    root: { flex: 1, backgroundColor: colors.bg },
-    mapLayer: { ...StyleSheet.absoluteFillObject },
+    root: { flex: 1, backgroundColor: colors.bg, position: 'relative' },
+    mapLayer: {
+      ...StyleSheet.absoluteFillObject,
+      zIndex: 0,
+      backgroundColor: '#dfe6e9',
+    },
     mapLoading: {
       ...StyleSheet.absoluteFillObject,
       alignItems: 'center',
@@ -831,16 +930,16 @@ function createStyles(colors: AppColors) {
       zIndex: 5 },
     titlePill: {
       flex: 1,
-      backgroundColor: colors.white,
+      backgroundColor: mapHud.surface,
       borderRadius: 14,
       paddingHorizontal: 14,
       paddingVertical: 8,
-      opacity: 0.96,
-      ...Platform.select({
-        web: { boxShadow: '0 4px 16px rgba(0,0,0,0.08)' },
-        default: {} }) },
-    titlePillMain: { color: colors.text, fontSize: 14, fontWeight: '800' },
-    titlePillSub: { color: colors.muted, fontSize: 11, marginTop: 1, fontWeight: '600' },
+      borderWidth: 1,
+      borderColor: mapHud.border,
+      ...hudGlass,
+    },
+    titlePillMain: { color: mapHud.ink, fontSize: 14, fontWeight: '800' },
+    titlePillSub: { color: mapHud.muted, fontSize: 11, marginTop: 1, fontWeight: '600' },
     locateFab: {
       width: 40,
       height: 40,
@@ -861,24 +960,24 @@ function createStyles(colors: AppColors) {
       left: 14,
       right: 14,
       flexDirection: 'row',
-      backgroundColor: colors.white,
-      opacity: 0.96,
+      backgroundColor: mapHud.surface,
       borderRadius: 14,
       padding: 4,
       gap: 4,
       zIndex: 5,
-      ...Platform.select({
-        web: { boxShadow: '0 4px 16px rgba(0,0,0,0.08)' },
-        default: {} }) },
+      borderWidth: 1,
+      borderColor: mapHud.border,
+      ...hudGlass,
+    },
     segment: {
       flex: 1,
       alignItems: 'center',
       justifyContent: 'center',
       paddingVertical: 10,
       borderRadius: 11 },
-    segmentOn: { backgroundColor: colors.cream },
-    segmentText: { color: colors.muted, fontSize: 13, fontWeight: '700' },
-    segmentTextOn: { color: colors.text },
+    segmentOn: { backgroundColor: '#f4e6c8' },
+    segmentText: { color: mapHud.muted, fontSize: 13, fontWeight: '700' },
+    segmentTextOn: { color: mapHud.ink },
     sheet: {
       position: 'absolute',
       left: 0,
@@ -887,74 +986,89 @@ function createStyles(colors: AppColors) {
       borderTopLeftRadius: 22,
       borderTopRightRadius: 22,
       overflow: 'hidden',
-      zIndex: 6 },
-    sheetHandle: { alignItems: 'center', paddingTop: 10, paddingBottom: 12 },
+      zIndex: 6,
+      justifyContent: 'flex-start',
+    },
+    sheetHandle: { alignItems: 'center', paddingTop: 8, paddingBottom: 8 },
     sheetHandleBar: { width: 40, height: 4, borderRadius: 999 },
     sheetEyebrow: {
-      fontSize: 11,
+      fontSize: 12,
       fontWeight: '700',
-      letterSpacing: 0.6,
+      letterSpacing: 0.4,
       textTransform: 'uppercase',
-      paddingHorizontal: spacing.screen,
+      paddingHorizontal: 14,
       marginBottom: 4 },
     sheetTitle: {
       ...displayFont('700'),
       color: colors.text,
       fontSize: 20,
-      paddingHorizontal: spacing.screen },
+      paddingHorizontal: 14 },
     sheetSub: {
       color: colors.muted,
       fontSize: 13,
       lineHeight: 18,
-      paddingHorizontal: spacing.screen,
+      paddingHorizontal: 14,
       marginTop: 4,
-      marginBottom: 10,
+      marginBottom: 8,
       fontWeight: '500' },
-    sheetScroll: { flex: 1 },
-    sheetContent: { paddingHorizontal: spacing.screenMd, gap: 10, paddingBottom: 12 },
+    sheetScroll: { flexGrow: 1, flexShrink: 1, minHeight: 0 },
+    sheetContent: { paddingHorizontal: 14, gap: 8, paddingBottom: 8, flexGrow: 0 },
+    emptyHint: {
+      alignItems: 'center',
+      gap: 8,
+      paddingVertical: 18,
+      paddingHorizontal: 12,
+    },
+    emptyTitle: { color: colors.text, fontSize: 15, fontWeight: '800' },
+    emptySub: { color: colors.muted, fontSize: 13, textAlign: 'center', fontWeight: '500' },
     swipeWrap: {
       borderRadius: 18,
       overflow: 'hidden',
-      backgroundColor: colors.bg },
-    swipeRails: {
-      ...StyleSheet.absoluteFillObject,
+      backgroundColor: colors.bg,
+    },
+    swipeChild: {
+      backgroundColor: colors.bg,
+    },
+    rightActions: {
       flexDirection: 'row',
-      justifyContent: 'space-between' },
-    rightRail: {
-      width: SWIPE_RIGHT,
-      alignSelf: 'stretch',
-      justifyContent: 'center',
-      paddingLeft: 2 },
-    leftRail: {
-      flexDirection: 'row',
-      alignSelf: 'stretch',
-      width: Math.abs(SWIPE_LEFT),
-      justifyContent: 'flex-end',
-      gap: 2,
-      paddingRight: 2 },
+      width: ACTION_W * 2,
+    },
     swipeAction: {
-      flex: 1,
-      borderRadius: 16,
+      width: ACTION_W,
       alignItems: 'center',
       justifyContent: 'center',
       gap: 4,
-      minWidth: 72 },
+      alignSelf: 'stretch',
+    },
     swipeDefault: { backgroundColor: colors.gold },
     swipeEdit: { backgroundColor: colors.terracotta },
     swipeDelete: { backgroundColor: '#8b2e22' },
     swipeActionText: { color: colors.onAccent, fontSize: 11, fontWeight: '800' },
-    swipeFront: { width: '100%' },
+    webActions: {
+      flexDirection: 'row',
+      gap: 6,
+      paddingHorizontal: 10,
+      paddingBottom: 10,
+      backgroundColor: colors.white,
+    },
+    webChip: {
+      borderRadius: 999,
+      paddingHorizontal: 12,
+      paddingVertical: 6,
+    },
     card: {
       backgroundColor: colors.white,
       borderRadius: 18,
       padding: 14,
-      gap: 2 },
+      gap: 2,
+    },
     cardSelected: { backgroundColor: colors.selectSoft },
     cardTop: {
       flexDirection: 'row',
       alignItems: 'center',
       justifyContent: 'space-between',
-      marginBottom: 4 },
+      marginBottom: 4,
+    },
     labelRow: { flexDirection: 'row', alignItems: 'center', gap: 8, flex: 1 },
     pin: {
       width: 32,
@@ -1013,7 +1127,14 @@ function createStyles(colors: AppColors) {
       paddingHorizontal: 14,
       paddingVertical: 12 },
     locateRowText: { fontSize: 14, fontWeight: '700' },
-    fieldLabel: { fontSize: 12, fontWeight: '700', marginTop: 4 },
+    fieldLabel: {
+      fontSize: 13,
+      fontWeight: '700',
+      textTransform: 'uppercase',
+      letterSpacing: 0.4,
+      paddingHorizontal: 14,
+      marginTop: 6,
+    },
     input: {
       borderRadius: 14,
       paddingHorizontal: 14,

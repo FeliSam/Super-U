@@ -1,7 +1,13 @@
 import { appStorage } from '@/lib/db/kv';
 import { setShopSessionPeek } from '@/lib/sessionPeek';
 import { showToast } from '@/lib/toastBus';
-import { getApiBaseUrl, loopbackApiHint, ensureReachableApiBase } from '@/lib/api/apiBase';
+import {
+  getApiBaseUrl,
+  loopbackApiHint,
+  ensureReachableApiBase,
+  isPublicApiUrl,
+  isLoopbackApiUrl,
+} from '@/lib/api/apiBase';
 
 export {
   getApiBaseUrl,
@@ -83,9 +89,35 @@ async function withTimeout(input: RequestInfo, init: RequestInit, ms: number) {
 
 function unreachableMessage() {
   const api = getApiBaseUrl();
+  if (isPublicApiUrl(api)) {
+    return `API injoignable (${api}). Réessayez dans un instant.`;
+  }
   const tip = loopbackApiHint(api);
   if (tip) return `API injoignable (${api}). ${tip}`;
-  return `API injoignable (${api}). Vérifiez npm run dev:api et le Wi‑Fi (même réseau).`;
+  if (isLoopbackApiUrl(api)) {
+    return `API injoignable (${api}). Vérifiez npm run dev:api (port 8787) et le Wi‑Fi (même réseau).`;
+  }
+  return `API injoignable (${api}). Vérifiez votre connexion réseau.`;
+}
+
+function slowApiMessage() {
+  const api = getApiBaseUrl();
+  if (isPublicApiUrl(api) || !isLoopbackApiUrl(api)) {
+    return `API trop lente (${api}). Réessayez dans un instant.`;
+  }
+  return `API trop lente (${api}). Vérifiez npm run dev:api (port 8787).`;
+}
+
+function invalidResponseMessage(code: number) {
+  const api = getApiBaseUrl();
+  if (isPublicApiUrl(api) || !isLoopbackApiUrl(api)) {
+    return code
+      ? `Réponse invalide (HTTP ${code}) depuis ${api}.`
+      : unreachableMessage();
+  }
+  return code
+    ? `Réponse invalide (HTTP ${code}). Vérifiez l’API SuperU (port 8787).`
+    : unreachableMessage();
 }
 
 export async function apiAvailable(): Promise<boolean> {
@@ -121,6 +153,9 @@ function shouldToastApiError(path: string, method: string | undefined, status: n
   if (status === 401 || status === 409) return false;
   const m = (method ?? 'GET').toUpperCase();
   const p = path.split('?')[0] ?? path;
+  // Cart sync + place-order surfaces errors in CartContext / checkout — avoid double toasts.
+  if (m === 'PUT' && p === '/me/cart') return false;
+  if (m === 'POST' && p === '/me/orders') return false;
   if (m === 'GET' || m === 'HEAD') {
     if (/\/catalog|\/stores|\/me\/orders|\/comms\/|\/health/.test(p)) return false;
   }
@@ -155,7 +190,7 @@ export async function apiFetch<T>(path: string, init: RequestInit = {}): Promise
   } catch (e) {
     const err = new ApiError(
       e instanceof Error && /abort|timeout/i.test(e.message)
-        ? `API trop lente (${getApiBaseUrl()}). Vérifiez npm run dev:api (port 8787).`
+        ? slowApiMessage()
         : unreachableMessage(),
       0,
       null,
@@ -169,13 +204,7 @@ export async function apiFetch<T>(path: string, init: RequestInit = {}): Promise
     data = (text ? JSON.parse(text) : {}) as T & { error?: string };
   } catch {
     const code = res.status || 0;
-    const err = new ApiError(
-      code
-        ? `Réponse invalide (HTTP ${code}). Vérifiez l’API SuperU (port 8787).`
-        : unreachableMessage(),
-      code,
-      text,
-    );
+    const err = new ApiError(invalidResponseMessage(code), code, text);
     toastMutationError(init.method, err, path);
     throw err;
   }
@@ -189,4 +218,36 @@ export async function apiFetch<T>(path: string, init: RequestInit = {}): Promise
     throw err;
   }
   return data;
+}
+
+/** Map API / network errors to a clear French user message (no misleading port 8787 on prod). */
+export function userFacingApiMessage(error: unknown, productNameForId?: (id: string) => string | undefined): string {
+  if (error instanceof ApiError) {
+    const raw = String(error.message || '');
+    const lower = raw.toLowerCase();
+    if (error.status === 401 || lower === 'unauthorized' || /unauthorized|non.?autoris|session/i.test(raw)) {
+      return 'Session expirée ou non connecté. Reconnectez-vous pour continuer.';
+    }
+    if (error.status === 409 || /stock insuffisant/i.test(raw)) {
+      const m = raw.match(/Stock insuffisant pour\s+([^\s(]+)/i);
+      if (m?.[1] && productNameForId) {
+        const name = productNameForId(m[1]);
+        if (name) {
+          return raw.replace(m[1], name);
+        }
+      }
+      return raw || 'Stock insuffisant pour un article du panier.';
+    }
+    if (error.status === 0) {
+      return raw || unreachableMessage();
+    }
+    if (raw && raw !== `HTTP ${error.status}`) {
+      return friendlyError(raw);
+    }
+    return friendlyError(`Erreur serveur (HTTP ${error.status}).`);
+  }
+  if (error instanceof Error && error.message.trim()) {
+    return friendlyError(error.message);
+  }
+  return 'La requête a échoué. Réessayez.';
 }

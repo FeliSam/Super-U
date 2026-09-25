@@ -6,10 +6,10 @@ import { StyleSheet } from 'react-native';
 
 const colors = fallbackColors;
 
-const keepTabMounted = {
-  lazy: false,
-  freezeOnBlur: false,
-} as const;
+const homeTab = { lazy: false, freezeOnBlur: false } as const;
+/** Explorer / panier : ne pas geler — FlatList + freezeOnBlur = écran blanc au retour d’onglet. */
+const liveTab = { lazy: false, freezeOnBlur: false } as const;
+const spareTab = { lazy: true, freezeOnBlur: true } as const;
 
 function isChatConversation(pathname: string) {
   return pathname.startsWith('/chat/') && pathname !== '/chat/';
@@ -27,19 +27,20 @@ export default function TabLayout() {
       tabBar={(props) => <MarcheTabBar {...props} hidden={hideTabBar} />}
       screenOptions={{
         headerShown: false,
-        lazy: false,
-        freezeOnBlur: false,
-        animation: 'none',
+        lazy: true,
+        freezeOnBlur: true,
+        animation: 'fade',
+        animationDuration: 180,
         tabBarHideOnKeyboard: true,
         tabBarStyle: { display: 'none' },
         sceneContainerStyle: [styles.scene, { backgroundColor: theme.bg }],
       }}>
-      <Tabs.Screen name="index" options={{ title: 'Accueil', ...keepTabMounted }} />
-      <Tabs.Screen name="explore" options={{ title: 'Explorer', ...keepTabMounted }} />
-      <Tabs.Screen name="cart" options={{ title: 'Panier', ...keepTabMounted }} />
-      <Tabs.Screen name="chat" options={{ title: 'Chat', ...keepTabMounted }} />
-      <Tabs.Screen name="profile" options={{ title: 'Profil', ...keepTabMounted }} />
-      <Tabs.Screen name="search" options={{ href: null, title: 'Rechercher', ...keepTabMounted }} />
+      <Tabs.Screen name="index" options={{ title: 'Accueil', ...homeTab }} />
+      <Tabs.Screen name="explore" options={{ title: 'Explorer', ...liveTab }} />
+      <Tabs.Screen name="cart" options={{ title: 'Panier', ...liveTab }} />
+      <Tabs.Screen name="chat" options={{ title: 'Chat', ...spareTab }} />
+      <Tabs.Screen name="profile" options={{ title: 'Profil', ...spareTab }} />
+      <Tabs.Screen name="search" options={{ href: null, title: 'Rechercher', ...spareTab }} />
     </Tabs>
   );
 }
@@ -48,5 +49,8 @@ const styles = StyleSheet.create({
   scene: {
     flex: 1,
     backgroundColor: colors.bg,
+    overflow: 'hidden',
+    minWidth: 0,
+    minHeight: 0,
   },
 });

@@ -1,27 +1,29 @@
-import { AuthPrimaryButton, AuthScreen } from '@/components/auth/AuthUI';
+import { AuthPrimaryButton } from '@/components/auth/AuthUI';
 import { AppImage } from '@/components/AppImage';
 import { MotionView, PressScale } from '@/components/motion';
-import { bodyFont, displayFont, type AppColors, spacing } from '@/constants/theme';
+import { Screen } from '@/components/ui';
+import { bodyFont, displayFont, liquidIce, type AppColors } from '@/constants/theme';
 import { useAuth } from '@/context/AuthContext';
 import { useUiState } from '@/context/UiStateContext';
-import { useColors } from '@/context/ThemeContext';
+import { useColors, useTheme } from '@/context/ThemeContext';
 import { Feather } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
 import { Href, router } from 'expo-router';
+import { primaryChipId, TASTE_OPTIONS } from '@/lib/taste';
 import { useMemo, useState, type ComponentProps } from 'react';
-import { StyleSheet, Text, View, type ImageRequireSource } from 'react-native';
-import Animated, { FadeIn, FadeOut } from 'react-native-reanimated';
+import { Platform, StyleSheet, Text, View, type ImageRequireSource } from 'react-native';
+import Animated, { FadeIn } from 'react-native-reanimated';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 type FeatherName = ComponentProps<typeof Feather>['name'];
+type StoryKey = 'welcome' | 'delivery' | 'rewards';
 
 type Step = {
-  key: string;
+  key: StoryKey;
   eyebrow: string;
   title: string;
   body: string;
   icon: FeatherName;
-  accent: 'gold' | 'green' | 'terracotta';
   image: ImageRequireSource;
   imageLabel: string;
 };
@@ -31,9 +33,8 @@ const STEPS: Step[] = [
     key: 'welcome',
     eyebrow: 'Bienvenue',
     title: 'Votre marché,\nà portée de doigt',
-    body: 'Commandez fruits, légumes, cuisine maison et glaces — livrés frais à Cotonou.',
+    body: 'Fruits, légumes, cuisine maison et glaces — livrés frais à Cotonou.',
     icon: 'shopping-bag',
-    accent: 'gold',
     image: require('../../assets/images/catalog/mango-hero.png'),
     imageLabel: 'Fraîcheur du jour',
   },
@@ -41,70 +42,50 @@ const STEPS: Step[] = [
     key: 'delivery',
     eyebrow: 'Livraison',
     title: 'Express ou\ncréneau au choix',
-    body: 'Suivez le livreur en direct et recevez des alertes à chaque étape du trajet.',
+    body: 'Suivez le livreur en direct. Une alerte à chaque étape du trajet.',
     icon: 'map-pin',
-    accent: 'green',
-    image: require('../../assets/images/catalog/cart-mangues.png'),
+    image: require('../../assets/images/catalog/wa-fruits-legumes-070.jpg'),
     imageLabel: 'Prêt à livrer',
   },
   {
     key: 'rewards',
     eyebrow: 'Fidélité',
-    title: 'Gagnez des\npoints à chaque panier',
-    body: 'Plus vous commandez, plus vous débloquez des avantages exclusifs Marché Doré.',
+    title: 'Des points\nà chaque panier',
+    body: 'Plus vous commandez, plus Marché Doré vous réserve des avantages.',
     icon: 'award',
-    accent: 'terracotta',
     image: require('../../assets/images/catalog/cuisine-poulet-roti.png'),
-    imageLabel: 'Récompenses gourmandes',
+    imageLabel: 'Récompenses',
   },
 ];
 
-const INTERESTS = [
-  {
-    id: 'fruits',
-    label: 'Fruits & légumes',
-    image: require('../../assets/images/catalog/cat-fruits.png') as ImageRequireSource,
-  },
-  {
-    id: 'cuisine',
-    label: 'Cuisine prête',
-    image: require('../../assets/images/catalog/cuisine-poulet-roti.png') as ImageRequireSource,
-  },
-  {
-    id: 'glaces',
-    label: 'Glaces',
-    image: require('../../assets/images/catalog/cat-glaces.png') as ImageRequireSource,
-  },
-  {
-    id: 'epicerie',
-    label: 'Épicerie',
-    image: require('../../assets/images/catalog/cat-epicerie.png') as ImageRequireSource,
-  },
-  {
-    id: 'boissons',
-    label: 'Boissons',
-    image: require('../../assets/images/catalog/promo-boissons.png') as ImageRequireSource,
-  },
-  {
-    id: 'bebe',
-    label: 'Bébé',
-    image: require('../../assets/images/catalog/cat-bebe.png') as ImageRequireSource,
-  },
-];
-
-const ALERTS_IMAGE = require('../../assets/images/catalog/promo.png') as ImageRequireSource;
+const ALERTS_IMAGE = require('../../assets/images/catalog/promo-rentree.png') as ImageRequireSource;
 const DELIVERY_FLOATS = [
   require('../../assets/images/catalog/cart-plantains.png') as ImageRequireSource,
   require('../../assets/images/catalog/cart-poulet.png') as ImageRequireSource,
   require('../../assets/images/catalog/plantains.png') as ImageRequireSource,
 ];
 
+const GRADIENTS: Record<string, readonly [string, string, string]> = {
+  welcome: ['rgba(20,17,15,0.22)', 'rgba(20,17,15,0.08)', 'rgba(20,17,15,0.78)'],
+  delivery: ['rgba(18,42,28,0.35)', 'rgba(20,17,15,0.12)', 'rgba(12,28,20,0.82)'],
+  rewards: ['rgba(80,28,18,0.28)', 'rgba(20,17,15,0.1)', 'rgba(40,16,12,0.84)'],
+  interests: ['rgba(20,17,15,0.45)', 'rgba(20,17,15,0.2)', 'rgba(20,17,15,0.72)'],
+  alerts: ['rgba(20,17,15,0.3)', 'rgba(20,17,15,0.12)', 'rgba(20,17,15,0.8)'],
+};
+
 export default function OnboardingScreen() {
   const colors = useColors();
-  const styles = useMemo(() => createStyles(colors), [colors]);
+  const { scheme } = useTheme();
+  const ice = useMemo(() => liquidIce(scheme), [scheme]);
+  const styles = useMemo(() => createStyles(colors, ice), [colors, ice]);
   const insets = useSafeAreaInsets();
   const { session, completeOnboarding } = useAuth();
-  const { setInterests: persistInterests, setAlertsOn: persistAlerts, setHomeActiveChipId } = useUiState();
+  const {
+    setInterests: persistInterests,
+    setAlertsOn: persistAlerts,
+    setHomeActiveChipId,
+    setAppTourDone,
+  } = useUiState();
   const [step, setStep] = useState(0);
   const [interests, setInterests] = useState<string[]>(['fruits', 'cuisine']);
   const [alertsOn, setAlertsOn] = useState(true);
@@ -113,14 +94,27 @@ export default function OnboardingScreen() {
   const total = STEPS.length + 2;
   const isInterests = step === STEPS.length;
   const isAlerts = step === STEPS.length + 1;
-  const progress = (step + 1) / total;
   const current = STEPS[step];
+  const mood = isAlerts ? 'alerts' : isInterests ? 'interests' : current.key;
 
-  const accentColor = (key: Step['accent']) =>
-    key === 'green' ? colors.green : key === 'terracotta' ? colors.terracotta : colors.gold;
+  const heroImage: ImageRequireSource = isAlerts
+    ? ALERTS_IMAGE
+    : isInterests
+      ? TASTE_OPTIONS[0].image
+      : current.image;
 
   const toggleInterest = (id: string) => {
     setInterests((prev) => (prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]));
+  };
+
+  const persistAndEnter = async () => {
+    persistInterests(interests);
+    persistAlerts(alertsOn);
+    const chip = primaryChipId(interests);
+    if (chip) setHomeActiveChipId(chip);
+    setAppTourDone(false);
+    await completeOnboarding();
+    router.replace('/account/addresses?setup=1' as Href);
   };
 
   const next = async () => {
@@ -130,11 +124,7 @@ export default function OnboardingScreen() {
     }
     setFinishing(true);
     try {
-      persistInterests(interests);
-      persistAlerts(alertsOn);
-      if (interests[0]) setHomeActiveChipId(interests[0]);
-      await completeOnboarding();
-      router.replace('/account/addresses?setup=1' as Href);
+      await persistAndEnter();
     } finally {
       setFinishing(false);
     }
@@ -143,205 +133,221 @@ export default function OnboardingScreen() {
   const skip = async () => {
     setFinishing(true);
     try {
-      persistInterests(interests);
-      persistAlerts(alertsOn);
-      if (interests[0]) setHomeActiveChipId(interests[0]);
-      await completeOnboarding();
-      router.replace('/account/addresses?setup=1' as Href);
+      await persistAndEnter();
     } finally {
       setFinishing(false);
     }
   };
 
   const firstName = session?.firstName?.trim() || 'vous';
+  const copy = isInterests
+    ? { eyebrow: 'Préférences', title: 'Ce qui vous\nfait envie', body: 'Cochez vos rayons — ils s’affichent en premier à l’accueil.' }
+    : isAlerts
+      ? { eyebrow: 'Alertes', title: 'Restez dans\nle coup', body: 'Promos flash, livraison et messages du livreur.' }
+      : { eyebrow: current.eyebrow, title: current.title, body: current.body };
+
+  const badge =
+    mood === 'alerts'
+      ? { icon: 'bell' as const, label: 'Promos & suivi', bg: colors.gold }
+      : mood === 'interests'
+        ? { icon: 'heart' as const, label: 'Votre goût', bg: colors.gold }
+        : mood === 'delivery'
+          ? { icon: 'map-pin' as const, label: current.imageLabel, bg: colors.green }
+          : mood === 'rewards'
+            ? { icon: 'award' as const, label: current.imageLabel, bg: colors.terracotta }
+            : { icon: 'shopping-bag' as const, label: current.imageLabel, bg: colors.gold };
 
   return (
-    <AuthScreen scroll={false}>
-      <View style={[styles.root, { paddingTop: insets.top + 10, paddingBottom: Math.max(insets.bottom, 16) }]}>
-        <View style={styles.topBar}>
-          <View style={styles.progressTrack}>
-            <View style={[styles.progressFill, { width: `${Math.round(progress * 100)}%` }]} />
+    <Screen>
+      <View style={styles.root}>
+        <Animated.View key={`bg-${step}`} entering={FadeIn.duration(380)} style={StyleSheet.absoluteFill}>
+          <AppImage source={heroImage} frameStyle={StyleSheet.absoluteFill} contentFit="cover" />
+        </Animated.View>
+        <LinearGradient colors={[...GRADIENTS[mood]]} locations={[0, 0.42, 1]} style={StyleSheet.absoluteFill} />
+
+        <View style={[styles.topBar, { paddingTop: insets.top + 8 }]}>
+          <View style={styles.progress}>
+            {Array.from({ length: total }).map((_, i) => (
+              <View key={i} style={[styles.progressSeg, i <= step && styles.progressSegOn]} />
+            ))}
           </View>
-          <PressScale onPress={() => void skip()} hitSlop={10} disabled={finishing}>
+          <PressScale style={styles.skipPill} onPress={() => void skip()} hitSlop={8} disabled={finishing}>
             <Text style={styles.skip}>Passer</Text>
           </PressScale>
         </View>
 
-        <View style={styles.stage}>
-          {!isInterests && !isAlerts && current ? (
-            <Animated.View
-              key={current.key}
-              entering={FadeIn.duration(280)}
-              exiting={FadeOut.duration(160)}
-              style={styles.story}>
-              <View style={styles.heroFrame}>
-                <AppImage source={current.image} frameStyle={StyleSheet.absoluteFill} contentFit="cover" />
-                <LinearGradient colors={['transparent', 'rgba(28,22,19,0.55)']} style={styles.heroScrim} />
-                <View style={[styles.heroBadge, { backgroundColor: accentColor(current.accent) }]}>
-                  <Feather name={current.icon} size={14} color={colors.onAccent} />
-                  <Text style={styles.heroBadgeText}>{current.imageLabel}</Text>
-                </View>
-                {current.key === 'delivery' ? (
-                  <View style={styles.floatRow} pointerEvents="none">
-                    {DELIVERY_FLOATS.map((src, i) => (
-                      <MotionView
-                        key={i}
-                        index={i}
-                        preset="zoom"
-                        style={[styles.floatCard, i === 1 ? styles.floatCardMid : null]}>
-                        <AppImage source={src} frameStyle={StyleSheet.absoluteFill} contentFit="cover" />
-                      </MotionView>
-                    ))}
-                  </View>
-                ) : null}
-              </View>
-              <Text style={styles.eyebrow}>{current.eyebrow}</Text>
-              <Text style={styles.title}>{current.title}</Text>
-              <Text style={styles.body}>{current.body}</Text>
-              {step === 0 ? (
-                <Text style={styles.hello}>
-                  Enchanté, <Text style={styles.helloName}>{firstName}</Text>.
-                </Text>
-              ) : null}
-            </Animated.View>
-          ) : null}
+        {mood === 'delivery' ? (
+          <View style={[styles.floatRow, { top: insets.top + 52 }]} pointerEvents="none">
+            {DELIVERY_FLOATS.map((src, i) => (
+              <MotionView key={i} index={i} preset="zoom" style={[styles.floatCard, i === 1 ? styles.floatCardMid : null]}>
+                <AppImage source={src} frameStyle={StyleSheet.absoluteFill} contentFit="cover" />
+              </MotionView>
+            ))}
+          </View>
+        ) : null}
+
+        {mood === 'rewards' ? (
+          <View style={styles.loyaltyMark} pointerEvents="none">
+            <Feather name="award" size={28} color={colors.onAccent} />
+            <Text style={styles.loyaltyMarkText}>+ pts</Text>
+          </View>
+        ) : null}
+
+        <View style={[styles.bottom, { paddingBottom: Math.max(insets.bottom, 16) }]}>
+          <View style={[styles.badge, { backgroundColor: badge.bg }]}>
+            <Feather name={badge.icon} size={13} color={colors.onAccent} />
+            <Text style={styles.badgeText}>{badge.label}</Text>
+          </View>
+
+          <Animated.View key={`copy-${step}`} entering={FadeIn.duration(260)} style={styles.copy}>
+            <Text style={styles.eyebrow}>{copy.eyebrow}</Text>
+            <Text style={styles.title}>{copy.title}</Text>
+            <Text style={styles.body}>{copy.body}</Text>
+            {step === 0 ? (
+              <Text style={styles.hello}>
+                Enchanté, <Text style={styles.helloName}>{firstName}</Text>.
+              </Text>
+            ) : null}
+          </Animated.View>
 
           {isInterests ? (
-            <Animated.View key="interests" entering={FadeIn.duration(280)} style={styles.story}>
-              <Text style={styles.eyebrow}>Préférences</Text>
-              <Text style={styles.title}>Qu’est-ce qui{'\n'}vous fait envie ?</Text>
-              <Text style={styles.body}>Choisissez vos rayons favoris — on personnalisera votre accueil.</Text>
-              <View style={styles.interestGrid}>
-                {INTERESTS.map((item, i) => {
-                  const on = interests.includes(item.id);
-                  return (
-                    <MotionView key={item.id} index={i} preset="zoom" style={styles.interestCell}>
-                      <PressScale
-                        onPress={() => toggleInterest(item.id)}
-                        style={[styles.interestCard, on ? styles.interestCardOn : null]}
-                        scaleTo={0.97}>
-                        <AppImage source={item.image} frameStyle={StyleSheet.absoluteFill} contentFit="cover" />
-                        <LinearGradient
-                          colors={['transparent', 'rgba(28,22,19,0.72)']}
-                          style={styles.interestScrim}
-                        />
-                        <View style={styles.interestMeta}>
-                          <Text style={styles.interestLabel} numberOfLines={1}>
-                            {item.label}
-                          </Text>
-                          {on ? (
-                            <View style={styles.check}>
-                              <Feather name="check" size={12} color={colors.onAccent} />
-                            </View>
-                          ) : null}
-                        </View>
-                      </PressScale>
-                    </MotionView>
-                  );
-                })}
-              </View>
-            </Animated.View>
+            <View style={styles.interestGrid}>
+              {TASTE_OPTIONS.map((item) => {
+                const on = interests.includes(item.id);
+                return (
+                  <PressScale
+                    key={item.id}
+                    onPress={() => toggleInterest(item.id)}
+                    style={[styles.interestCard, on ? styles.interestCardOn : null]}
+                    scaleTo={0.97}>
+                    <AppImage source={item.image} frameStyle={StyleSheet.absoluteFill} contentFit="cover" />
+                    <LinearGradient colors={['transparent', 'rgba(12,10,8,0.78)']} style={StyleSheet.absoluteFill} />
+                    <Text style={styles.interestLabel} numberOfLines={2}>
+                      {item.label}
+                    </Text>
+                    {on ? (
+                      <View style={styles.check}>
+                        <Feather name="check" size={13} color={colors.onAccent} />
+                      </View>
+                    ) : null}
+                  </PressScale>
+                );
+              })}
+            </View>
           ) : null}
 
           {isAlerts ? (
-            <Animated.View key="alerts" entering={FadeIn.duration(280)} style={styles.story}>
-              <View style={styles.heroFrame}>
-                <AppImage source={ALERTS_IMAGE} frameStyle={StyleSheet.absoluteFill} contentFit="cover" />
-                <LinearGradient colors={['transparent', 'rgba(28,22,19,0.5)']} style={styles.heroScrim} />
-                <View style={[styles.heroBadge, { backgroundColor: colors.gold }]}>
-                  <Feather name="bell" size={14} color={colors.onAccent} />
-                  <Text style={styles.heroBadgeText}>Promos & suivi</Text>
-                </View>
+            <PressScale
+              style={[styles.toggleCard, alertsOn ? styles.toggleCardOn : null]}
+              onPress={() => setAlertsOn((v) => !v)}
+              scaleTo={0.985}>
+              <View style={[styles.toggleIcon, { backgroundColor: alertsOn ? colors.gold : 'rgba(255,255,255,0.2)' }]}>
+                <Feather name="bell" size={18} color={alertsOn ? colors.onAccent : '#fff'} />
               </View>
-              <Text style={styles.eyebrow}>Alertes</Text>
-              <Text style={styles.title}>Restez dans{'\n'}le coup</Text>
-              <Text style={styles.body}>
-                Promos flash, statut de livraison et messages du livreur — vous gardez le contrôle.
-              </Text>
-              <PressScale
-                style={[styles.toggleCard, alertsOn ? styles.toggleCardOn : null]}
-                onPress={() => setAlertsOn((v) => !v)}
-                scaleTo={0.985}>
-                <View style={[styles.toggleIcon, { backgroundColor: alertsOn ? colors.gold : colors.cream }]}>
-                  <Feather name="bell" size={20} color={alertsOn ? colors.onAccent : colors.gold} />
-                </View>
-                <View style={styles.toggleText}>
-                  <Text style={styles.toggleTitle}>Notifications utiles</Text>
-                  <Text style={styles.toggleSub}>
-                    {alertsOn ? 'Activées pour cette démo' : 'Désactivées pour l’instant'}
-                  </Text>
-                </View>
-                <View style={[styles.switchTrack, alertsOn ? styles.switchTrackOn : null]}>
-                  <View style={[styles.switchThumb, alertsOn ? styles.switchThumbOn : null]} />
-                </View>
-              </PressScale>
-            </Animated.View>
+              <View style={styles.toggleText}>
+                <Text style={styles.toggleTitle}>Notifications utiles</Text>
+                <Text style={styles.toggleSub}>{alertsOn ? 'Activées' : 'Désactivées'}</Text>
+              </View>
+              <View style={[styles.switchTrack, alertsOn ? styles.switchTrackOn : null]}>
+                <View style={[styles.switchThumb, alertsOn ? styles.switchThumbOn : null]} />
+              </View>
+            </PressScale>
           ) : null}
-        </View>
 
-        <View style={styles.footer}>
-          <View style={styles.dots}>
-            {Array.from({ length: total }).map((_, i) => (
-              <View key={i} style={[styles.dot, i === step ? styles.dotOn : null]} />
-            ))}
+          <View style={styles.footer}>
+            <View style={styles.dots}>
+              {Array.from({ length: total }).map((_, i) => (
+                <View key={i} style={[styles.dot, i === step ? styles.dotOn : null]} />
+              ))}
+            </View>
+            <AuthPrimaryButton
+              compact
+              label={isAlerts ? 'Entrer dans Marché Doré' : 'Continuer'}
+              onPress={() => void next()}
+              loading={finishing}
+            />
           </View>
-          <AuthPrimaryButton
-            label={isAlerts ? 'Entrer dans Marché Doré' : 'Continuer'}
-            onPress={() => void next()}
-            loading={finishing}
-          />
         </View>
       </View>
-    </AuthScreen>
+    </Screen>
   );
 }
 
-function createStyles(colors: AppColors) {
+function createStyles(colors: AppColors, ice: ReturnType<typeof liquidIce>) {
   return StyleSheet.create({
-    root: {
-      flex: 1,
-      paddingHorizontal: spacing.screen,
-      justifyContent: 'space-between',
-      gap: 12,
-    },
+    root: { flex: 1, backgroundColor: '#1c1613' },
     topBar: {
+      position: 'absolute',
+      top: 0,
+      left: 16,
+      right: 16,
+      zIndex: 3,
       flexDirection: 'row',
       alignItems: 'center',
-      gap: 14,
+      gap: 10,
     },
-    progressTrack: {
+    progress: { flex: 1, flexDirection: 'row', gap: 5, height: 4 },
+    progressSeg: {
       flex: 1,
       height: 4,
       borderRadius: 999,
-      backgroundColor: colors.border,
-      overflow: 'hidden',
+      backgroundColor: 'rgba(255,255,255,0.28)',
     },
-    progressFill: {
-      height: '100%',
+    progressSegOn: { backgroundColor: '#ffffff' },
+    skipPill: {
       borderRadius: 999,
-      backgroundColor: colors.gold,
+      paddingHorizontal: 12,
+      paddingVertical: 7,
+      backgroundColor: 'rgba(255,255,255,0.88)',
+      borderWidth: 1,
+      borderColor: ice.borderColor,
     },
-    skip: {
-      color: colors.muted,
-      fontSize: 14,
-      ...bodyFont('600'),
-    },
-    stage: { flex: 1, justifyContent: 'center' },
-    story: { gap: 10 },
-    heroFrame: {
-      height: 178,
-      borderRadius: 24,
-      overflow: 'hidden',
-      backgroundColor: colors.cream,
-      marginBottom: 6,
-    },
-    heroScrim: {
-      ...StyleSheet.absoluteFill,
-    },
-    heroBadge: {
+    skip: { color: colors.text, fontSize: 13, ...bodyFont('700') },
+    floatRow: {
       position: 'absolute',
-      left: 12,
-      bottom: 12,
+      right: 16,
+      zIndex: 2,
+      flexDirection: 'row',
+      alignItems: 'flex-end',
+    },
+    floatCard: {
+      width: 52,
+      height: 64,
+      borderRadius: 16,
+      overflow: 'hidden',
+      borderWidth: 2,
+      borderColor: 'rgba(255,255,255,0.92)',
+      marginLeft: -12,
+      backgroundColor: colors.white,
+    },
+    floatCardMid: {
+      width: 60,
+      height: 76,
+      borderRadius: 18,
+      zIndex: 2,
+      marginBottom: 8,
+    },
+    loyaltyMark: {
+      position: 'absolute',
+      right: 20,
+      top: '28%',
+      alignItems: 'center',
+      gap: 4,
+      width: 72,
+      height: 72,
+      borderRadius: 24,
+      backgroundColor: 'rgba(200,75,49,0.88)',
+      justifyContent: 'center',
+    },
+    loyaltyMarkText: { color: '#fff', fontSize: 11, ...displayFont('800') },
+    bottom: {
+      flex: 1,
+      justifyContent: 'flex-end',
+      paddingHorizontal: 20,
+      gap: 12,
+    },
+    badge: {
+      alignSelf: 'flex-start',
       flexDirection: 'row',
       alignItems: 'center',
       gap: 6,
@@ -349,58 +355,30 @@ function createStyles(colors: AppColors) {
       paddingHorizontal: 12,
       paddingVertical: 7,
     },
-    heroBadgeText: {
-      color: colors.onAccent,
-      fontSize: 12,
+    badgeText: { color: colors.onAccent, fontSize: 12, ...bodyFont('700') },
+    copy: { gap: 8 },
+    eyebrow: {
+      color: 'rgba(255,255,255,0.78)',
+      fontSize: 11,
+      letterSpacing: 1.8,
+      textTransform: 'uppercase',
       ...bodyFont('700'),
     },
-    floatRow: {
-      position: 'absolute',
-      right: 10,
-      top: 12,
-      flexDirection: 'row',
-      alignItems: 'flex-end',
-    },
-    floatCard: {
-      width: 44,
-      height: 44,
-      borderRadius: 14,
-      overflow: 'hidden',
-      borderWidth: 2,
-      borderColor: colors.onAccent,
-      marginLeft: -10,
-      backgroundColor: colors.white,
-    },
-    floatCardMid: {
-      width: 52,
-      height: 52,
-      borderRadius: 16,
-      zIndex: 2,
-      marginBottom: 4,
-    },
-    eyebrow: {
-      color: colors.gold,
-      fontSize: 12,
-      letterSpacing: 1.1,
-      textTransform: 'uppercase',
-      ...displayFont('700'),
-    },
     title: {
-      color: colors.text,
-      fontSize: 30,
-      lineHeight: 36,
+      color: '#ffffff',
+      fontSize: 34,
+      lineHeight: 38,
       ...displayFont('800'),
     },
     body: {
-      color: colors.muted,
+      color: 'rgba(255,255,255,0.82)',
       fontSize: 15,
       lineHeight: 22,
       maxWidth: 340,
       ...bodyFont('400'),
     },
     hello: {
-      marginTop: 2,
-      color: colors.text,
+      color: '#ffffff',
       fontSize: 16,
       ...bodyFont('500'),
     },
@@ -408,44 +386,31 @@ function createStyles(colors: AppColors) {
     interestGrid: {
       flexDirection: 'row',
       flexWrap: 'wrap',
-      gap: 10,
-      marginTop: 6,
-    },
-    interestCell: {
-      width: '48%',
-      flexGrow: 1,
-      maxWidth: '48.5%',
+      gap: 8,
     },
     interestCard: {
-      height: 96,
+      width: '48%',
+      flexGrow: 1,
+      height: 108,
       borderRadius: 18,
       overflow: 'hidden',
       borderWidth: 2,
-      borderColor: 'transparent',
-      backgroundColor: colors.cream,
+      borderColor: 'rgba(255,255,255,0.18)',
     },
-    interestCardOn: {
-      borderColor: colors.gold,
-    },
-    interestScrim: {
-      ...StyleSheet.absoluteFill,
-    },
-    interestMeta: {
-      position: 'absolute',
-      left: 10,
-      right: 10,
-      bottom: 10,
-      flexDirection: 'row',
-      alignItems: 'center',
-      gap: 6,
-    },
+    interestCardOn: { borderColor: colors.gold },
     interestLabel: {
-      flex: 1,
-      color: colors.onAccent,
+      position: 'absolute',
+      left: 8,
+      right: 8,
+      bottom: 8,
+      color: '#fff',
       fontSize: 13,
       ...bodyFont('700'),
     },
     check: {
+      position: 'absolute',
+      top: 6,
+      right: 6,
       width: 22,
       height: 22,
       borderRadius: 999,
@@ -454,61 +419,56 @@ function createStyles(colors: AppColors) {
       justifyContent: 'center',
     },
     toggleCard: {
-      marginTop: 4,
       flexDirection: 'row',
       alignItems: 'center',
       gap: 12,
-      backgroundColor: colors.white,
       borderRadius: 18,
-      padding: 14,
+      padding: 12,
       borderWidth: 1,
-      borderColor: colors.border,
+      borderColor: 'rgba(255,255,255,0.35)',
+      backgroundColor: 'rgba(255,255,255,0.16)',
+      ...(Platform.OS === 'web'
+        ? {
+            backdropFilter: 'blur(18px) saturate(160%)',
+            WebkitBackdropFilter: 'blur(18px) saturate(160%)',
+          }
+        : {}),
     },
-    toggleCardOn: {
-      borderColor: colors.gold,
-      backgroundColor: colors.selectSoft,
-    },
+    toggleCardOn: { borderColor: colors.gold },
     toggleIcon: {
-      width: 44,
-      height: 44,
-      borderRadius: 14,
+      width: 40,
+      height: 40,
+      borderRadius: 12,
       alignItems: 'center',
       justifyContent: 'center',
     },
     toggleText: { flex: 1, gap: 2 },
-    toggleTitle: { color: colors.text, fontSize: 15, ...bodyFont('700') },
-    toggleSub: { color: colors.muted, fontSize: 12, ...bodyFont('400') },
+    toggleTitle: { color: '#fff', fontSize: 14, ...bodyFont('700') },
+    toggleSub: { color: 'rgba(255,255,255,0.72)', fontSize: 12, ...bodyFont('400') },
     switchTrack: {
-      width: 44,
-      height: 26,
+      width: 42,
+      height: 24,
       borderRadius: 999,
-      backgroundColor: colors.border,
+      backgroundColor: 'rgba(255,255,255,0.28)',
       padding: 3,
       justifyContent: 'center',
     },
     switchTrackOn: { backgroundColor: colors.gold },
     switchThumb: {
-      width: 20,
-      height: 20,
+      width: 18,
+      height: 18,
       borderRadius: 999,
       backgroundColor: colors.white,
     },
     switchThumbOn: { alignSelf: 'flex-end' },
-    footer: { gap: 14 },
-    dots: {
-      flexDirection: 'row',
-      justifyContent: 'center',
-      gap: 6,
-    },
+    footer: { gap: 10, paddingTop: 4 },
+    dots: { flexDirection: 'row', justifyContent: 'center', gap: 6 },
     dot: {
       width: 7,
       height: 7,
       borderRadius: 999,
-      backgroundColor: colors.border,
+      backgroundColor: 'rgba(255,255,255,0.28)',
     },
-    dotOn: {
-      width: 18,
-      backgroundColor: colors.gold,
-    },
+    dotOn: { width: 18, backgroundColor: '#fff' },
   });
 }

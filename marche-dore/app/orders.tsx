@@ -1,6 +1,7 @@
 import { AppImage } from '@/components/AppImage';
 import { EmptyStateHero } from '@/components/EmptyStateHero';
-import { IconCircle, Screen, Page } from '@/components/ui';
+import { ScreenHeader } from '@/components/ScreenHeader';
+import { Screen, Page } from '@/components/ui';
 import { PlatformVirtualList } from '@/components/ProductFlashGrid';
 import { MotionView, PressScale } from '@/components/motion';
 import { displayFont, screenEdge, type AppColors, spacing } from '@/constants/theme';
@@ -16,7 +17,7 @@ import {
 import { formatFcfa } from '@/lib/format';
 import { opsPhaseLabel } from '@/lib/orderOps';
 import { slotKind, slotKindLabel } from '@/lib/slotKind';
-import { goBack, navigateTab, tabPaths } from '@/lib/navigation';
+import { navigateTab, tabPaths } from '@/lib/navigation';
 import { softShadow } from '@/lib/shadow';
 import { statusTone } from '@/lib/statusTone';
 import { Feather } from '@expo/vector-icons';
@@ -274,20 +275,16 @@ export default function OrdersScreen() {
   return (
     <Screen>
       <Page style={styles.flex}>
-        <View style={[styles.header, { paddingTop: Math.max(8, insets.top ? 4 : 8) }]}>
-          <IconCircle name="arrow-left" onPress={() => goBack()} />
-          <View style={styles.headerCenter}>
-            <Text style={styles.title}>Mes commandes</Text>
-            {orders.length > 0 ? (
-              <Text style={styles.headerSub}>
-                {activeCount > 0
-                  ? `${activeCount} en cours · ${orders.length} au total`
-                  : `${orders.length} commande${orders.length > 1 ? 's' : ''}`}
-              </Text>
-            ) : null}
-          </View>
-          <View style={styles.headerSpacer} />
-        </View>
+        <ScreenHeader
+          title="Mes commandes"
+          subtitle={
+            orders.length > 0
+              ? activeCount > 0
+                ? `${activeCount} en cours · ${orders.length} au total`
+                : `${orders.length} commande${orders.length > 1 ? 's' : ''}`
+              : undefined
+          }
+        />
 
         {orders.length > 0 ? (
           <View style={styles.filters}>
@@ -379,17 +376,6 @@ export default function OrdersScreen() {
 function createStyles(colors: AppColors) {
   return StyleSheet.create({
   flex: { flex: 1 },
-  header: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    paddingHorizontal: spacing.screen,
-    paddingBottom: 8,
-    gap: 10 },
-  headerCenter: { flex: 1, alignItems: 'center' },
-  headerSpacer: { width: 40 },
-  title: { ...displayFont('700'), color: colors.text, fontSize: 18 },
-  headerSub: { color: colors.muted, fontSize: 12, fontWeight: '600', marginTop: 2 },
   filters: {
     flexDirection: 'row',
     alignItems: 'center',

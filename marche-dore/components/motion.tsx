@@ -20,7 +20,7 @@ export function enterFade(delay = 0) {
 }
 
 export function enterUp(delay = 0) {
-  return FadeInUp.duration(360).delay(delay).springify().damping(18);
+  return FadeInUp.duration(360).delay(delay);
 }
 
 export function enterDown(delay = 0) {
@@ -32,7 +32,7 @@ export function enterRight(delay = 0) {
 }
 
 export function enterZoom(delay = 0) {
-  return ZoomIn.duration(300).delay(delay).springify().damping(14);
+  return ZoomIn.duration(300).delay(delay);
 }
 
 export function staggerDelay(index: number, base = 45, cap = 240) {

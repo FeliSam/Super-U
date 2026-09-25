@@ -1,4 +1,4 @@
-import { Platform, type ViewStyle } from 'react-native';
+import { Platform, type TextStyle, type ViewStyle } from 'react-native';
 
 type SoftShadow = {
   color?: string;
@@ -19,9 +19,8 @@ export function softShadow({
   if (Platform.OS === 'web') {
     const rgba = hexToRgba(color, opacity);
     return {
-      // @ts-expect-error RN web accepts boxShadow
       boxShadow: `0 ${y}px ${blur}px ${rgba}`,
-    };
+    } as ViewStyle;
   }
   return {
     shadowColor: color,
@@ -32,7 +31,23 @@ export function softShadow({
   };
 }
 
+export function textSoftShadow(
+  color = 'rgba(0,0,0,0.45)',
+  y = 1,
+  blur = 4,
+): TextStyle {
+  if (Platform.OS === 'web') {
+    return { textShadow: `0 ${y}px ${blur}px ${color}` } as TextStyle;
+  }
+  return {
+    textShadowColor: color,
+    textShadowOffset: { width: 0, height: y },
+    textShadowRadius: blur,
+  };
+}
+
 function hexToRgba(hex: string, alpha: number) {
+  if (hex.startsWith('rgb')) return hex;
   const raw = hex.replace('#', '');
   const full =
     raw.length === 3

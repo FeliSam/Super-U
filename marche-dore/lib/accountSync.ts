@@ -1,5 +1,6 @@
 import { apiFetch, getAuthToken } from '@/lib/api/http';
 import { appStorage } from '@/lib/db/kv';
+import { pollWhileForeground } from '@/lib/foreground';
 
 export type AccountPrefs = {
   theme?: 'light' | 'dark' | 'system';
@@ -11,7 +12,11 @@ export type AccountPrefs = {
   alertsOn?: boolean;
   preferredStoreId?: string;
   searchRecents?: string[];
+  recentProductIds?: string[];
   homeActiveChipId?: string;
+  appTourDone?: boolean;
+  /** Île live commandes (désactivée par défaut). */
+  liveIslandEnabled?: boolean;
 };
 
 export type AccountState = {
@@ -75,4 +80,15 @@ export function apiPatchAccountState(partial: Partial<AccountState>) {
       }).catch(() => undefined);
     }, 400),
   );
+}
+
+/**
+ * Sync multi-appareils : tire le serveur en avant-plan (immédiat au retour + intervalle).
+ * Chaque contexte applique le remote sans republier tant que `skipSave` est actif.
+ */
+export function subscribeAccountPull(tick: () => void | Promise<void>, ms = 6000) {
+  return pollWhileForeground(() => {
+    if (!getAuthToken()) return;
+    void Promise.resolve(tick()).catch(() => undefined);
+  }, ms, true);
 }

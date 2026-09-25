@@ -5,7 +5,13 @@ import {
 } from '@/lib/beninPhone';
 import type { PaymentId } from '@/context/CheckoutPaymentContext';
 import type { PaymentMethod } from '@/data/account';
-import { apiGetAccountState, apiPatchAccountState, loadAccountJson, saveAccountJson } from '@/lib/accountSync';
+import {
+  apiGetAccountState,
+  apiPatchAccountState,
+  loadAccountJson,
+  saveAccountJson,
+  subscribeAccountPull,
+} from '@/lib/accountSync';
 import { getAuthToken } from '@/lib/api/http';
 import { useAuth } from '@/context/AuthContext';
 import React, { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
@@ -127,6 +133,21 @@ export function PaymentsProvider({ children }: { children: React.ReactNode }) {
     return () => {
       active = false;
     };
+  }, [authReady, accountId]);
+
+  useEffect(() => {
+    if (!authReady || !accountId || !getAuthToken()) return;
+    return subscribeAccountPull(async () => {
+      if (!hydrated.current) return;
+      const state = await apiGetAccountState();
+      if (!Array.isArray(state?.payments)) return;
+      const list = state.payments.map(sanitizeMethod).filter((m): m is WalletMethod => Boolean(m));
+      if (!list.length || looksLikeDemoWallet(list)) return;
+      skipSave.current = true;
+      setMethods(list);
+      skipSave.current = false;
+      void saveAccountJson(STORAGE_KEY, accountId, list);
+    });
   }, [authReady, accountId]);
 
   useEffect(() => {

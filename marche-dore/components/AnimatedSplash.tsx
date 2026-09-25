@@ -1,129 +1,121 @@
-import { displayFont, bodyFont } from '@/constants/theme';
+import { BRAND_MARK } from '@/constants/brand';
+import { bodyFont, displayFont } from '@/constants/theme';
 import { hideSplash } from '@/lib/bootstrap';
 import { LinearGradient } from 'expo-linear-gradient';
-import { useEffect } from 'react';
-import { Image, Platform, StyleSheet, Text, View } from 'react-native';
-import Animated, {
-  Easing,
-  Extrapolation,
-  interpolate,
-  runOnJS,
-  useAnimatedStyle,
-  useSharedValue,
-  withDelay,
-  withSequence,
-  withSpring,
-  withTiming,
-} from 'react-native-reanimated';
-
-const BRAND_MARK = require('../assets/images/brand-mark.png');
+import { useEffect, useRef } from 'react';
+import { Animated, Easing, Image, Platform, StyleSheet, Text, View } from 'react-native';
 
 type Props = {
   onFinish: () => void;
-  /** Exit only once fonts/shell are ready — avoids a blank gap under a faded splash. */
+  /** false = garder le splash visible (auth pas encore prêt). */
   allowExit?: boolean;
 };
 
-/**
- * Branded animated splash — matches native splash cream/gold so the handoff is seamless.
- * Wordmark and tagline use the same family (DM Sans); weight does the rest.
- */
+/** Splash animé — Animated natif iOS/Android (pas de Reanimated). */
 export function AnimatedSplash({ onFinish, allowExit = true }: Props) {
-  const markScale = useSharedValue(0.72);
-  const markOpacity = useSharedValue(0);
-  const markRotate = useSharedValue(-8);
-  const titleY = useSharedValue(22);
-  const titleOpacity = useSharedValue(0);
-  const tagOpacity = useSharedValue(0);
-  const tagY = useSharedValue(14);
-  const bar = useSharedValue(0);
-  const orb = useSharedValue(0);
-  const exit = useSharedValue(0);
+  const markOpacity = useRef(new Animated.Value(0)).current;
+  const markScale = useRef(new Animated.Value(0.72)).current;
+  const markRotate = useRef(new Animated.Value(-8)).current;
+  const titleY = useRef(new Animated.Value(22)).current;
+  const titleOpacity = useRef(new Animated.Value(0)).current;
+  const tagOpacity = useRef(new Animated.Value(0)).current;
+  const tagY = useRef(new Animated.Value(14)).current;
+  const bar = useRef(new Animated.Value(0)).current;
+  const orb = useRef(new Animated.Value(0)).current;
+  const exit = useRef(new Animated.Value(0)).current;
+  const finished = useRef(false);
+  const enteredAt = useRef(Date.now());
 
   useEffect(() => {
     void hideSplash();
 
-    orb.value = withTiming(1, { duration: 720, easing: Easing.out(Easing.cubic) });
+    Animated.parallel([
+      Animated.timing(orb, { toValue: 1, duration: 800, easing: Easing.out(Easing.cubic), useNativeDriver: true }),
+      Animated.timing(markOpacity, { toValue: 1, duration: 280, easing: Easing.out(Easing.cubic), useNativeDriver: true }),
+      Animated.spring(markScale, { toValue: 1, damping: 14, stiffness: 200, mass: 0.75, useNativeDriver: true }),
+      Animated.spring(markRotate, { toValue: 0, damping: 16, stiffness: 180, useNativeDriver: true }),
+      Animated.sequence([
+        Animated.delay(100),
+        Animated.parallel([
+          Animated.timing(titleOpacity, { toValue: 1, duration: 300, useNativeDriver: true }),
+          Animated.spring(titleY, { toValue: 0, damping: 18, stiffness: 200, useNativeDriver: true }),
+        ]),
+      ]),
+      Animated.sequence([
+        Animated.delay(200),
+        Animated.parallel([
+          Animated.timing(tagOpacity, { toValue: 1, duration: 280, useNativeDriver: true }),
+          Animated.spring(tagY, { toValue: 0, damping: 18, stiffness: 180, useNativeDriver: true }),
+        ]),
+      ]),
+      Animated.sequence([
+        Animated.delay(220),
+        Animated.timing(bar, { toValue: 1, duration: 650, easing: Easing.inOut(Easing.cubic), useNativeDriver: false }),
+      ]),
+    ]).start();
 
-    markOpacity.value = withTiming(1, { duration: 280, easing: Easing.out(Easing.cubic) });
-    markScale.value = withSpring(1, { damping: 14, stiffness: 180, mass: 0.8 });
-    markRotate.value = withSpring(0, { damping: 16, stiffness: 160 });
-
-    titleOpacity.value = withDelay(80, withTiming(1, { duration: 320 }));
-    titleY.value = withDelay(80, withSpring(0, { damping: 18, stiffness: 180 }));
-
-    tagOpacity.value = withDelay(160, withTiming(1, { duration: 280 }));
-    tagY.value = withDelay(160, withSpring(0, { damping: 18, stiffness: 170 }));
-
-    bar.value = withDelay(
-      180,
-      withTiming(1, { duration: 520, easing: Easing.inOut(Easing.cubic) }),
-    );
-
-    markScale.value = withDelay(
-      420,
-      withSequence(
-        withTiming(1.03, { duration: 220, easing: Easing.inOut(Easing.sin) }),
-        withTiming(1, { duration: 220, easing: Easing.inOut(Easing.sin) }),
-      ),
-    );
+    Animated.sequence([
+      Animated.delay(420),
+      Animated.timing(markScale, { toValue: 1.03, duration: 220, easing: Easing.inOut(Easing.sin), useNativeDriver: true }),
+      Animated.timing(markScale, { toValue: 1, duration: 220, easing: Easing.inOut(Easing.sin), useNativeDriver: true }),
+    ]).start();
   }, [bar, markOpacity, markRotate, markScale, orb, tagOpacity, tagY, titleOpacity, titleY]);
 
   useEffect(() => {
-    if (!allowExit) return;
-    let finished = false;
-    const finish = () => {
-      if (finished) return;
-      finished = true;
-      onFinish();
-    };
-    exit.value = withTiming(1, { duration: 280, easing: Easing.in(Easing.cubic) }, (done) => {
-      if (done) runOnJS(finish)();
-    });
+    if (!allowExit || finished.current) return;
+    const minMs = 1050;
+    const wait = Math.max(0, minMs - (Date.now() - enteredAt.current));
+    const t = setTimeout(() => {
+      if (finished.current) return;
+      finished.current = true;
+      Animated.timing(exit, {
+        toValue: 1,
+        duration: 280,
+        easing: Easing.in(Easing.cubic),
+        useNativeDriver: true,
+      }).start(({ finished: ok }) => {
+        if (ok) onFinish();
+      });
+    }, wait);
+    return () => clearTimeout(t);
   }, [allowExit, exit, onFinish]);
 
-  const rootStyle = useAnimatedStyle(() => ({
-    opacity: interpolate(exit.value, [0, 1], [1, 0], Extrapolation.CLAMP),
+  const rootStyle = {
+    opacity: exit.interpolate({ inputRange: [0, 1], outputRange: [1, 0] }),
     transform: [
       {
-        scale: interpolate(exit.value, [0, 1], [1, 1.06], Extrapolation.CLAMP),
+        scale: exit.interpolate({ inputRange: [0, 1], outputRange: [1, 1.06] }),
       },
     ],
-  }));
+  };
 
-  const orbStyle = useAnimatedStyle(() => ({
-    opacity: interpolate(orb.value, [0, 1], [0.35, 0.7], Extrapolation.CLAMP),
+  const orbStyle = {
+    opacity: orb.interpolate({ inputRange: [0, 1], outputRange: [0.35, 0.7] }),
     transform: [
-      { scale: interpolate(orb.value, [0, 1], [0.85, 1.12], Extrapolation.CLAMP) },
-      { translateX: interpolate(orb.value, [0, 1], [12, 0], Extrapolation.CLAMP) },
+      { scale: orb.interpolate({ inputRange: [0, 1], outputRange: [0.85, 1.12] }) },
+      { translateX: orb.interpolate({ inputRange: [0, 1], outputRange: [12, 0] }) },
     ],
-  }));
+  };
 
-  const markStyle = useAnimatedStyle(() => ({
-    opacity: markOpacity.value,
-    transform: [{ scale: markScale.value }, { rotate: `${markRotate.value}deg` }],
-  }));
-
-  const titleStyle = useAnimatedStyle(() => ({
-    opacity: titleOpacity.value,
-    transform: [{ translateY: titleY.value }],
-  }));
-
-  const tagStyle = useAnimatedStyle(() => ({
-    opacity: tagOpacity.value,
-    transform: [{ translateY: tagY.value }],
-  }));
-
-  const barFillStyle = useAnimatedStyle(() => ({
-    width: interpolate(bar.value, [0, 1], [10, 120], Extrapolation.CLAMP),
-  }));
+  const markStyle = {
+    opacity: markOpacity,
+    transform: [
+      { scale: markScale },
+      {
+        rotate: markRotate.interpolate({
+          inputRange: [-8, 0],
+          outputRange: ['-8deg', '0deg'],
+        }),
+      },
+    ],
+  };
 
   return (
     <Animated.View style={[styles.root, rootStyle]} pointerEvents="auto">
       <LinearGradient
         colors={['#f8e4c4', '#fdfbf7', '#fdf0d5']}
         locations={[0, 0.45, 1]}
-        style={StyleSheet.absoluteFill}
+        style={StyleSheet.absoluteFillObject}
       />
       <Animated.View style={[styles.orb, orbStyle]} />
       <View style={styles.orbSoft} />
@@ -133,16 +125,23 @@ export function AnimatedSplash({ onFinish, allowExit = true }: Props) {
           <Image source={BRAND_MARK} style={styles.mark} resizeMode="contain" />
         </Animated.View>
 
-        <Animated.View style={titleStyle}>
+        <Animated.View style={{ opacity: titleOpacity, transform: [{ translateY: titleY }] }}>
           <Text style={styles.brand}>Marché Doré</Text>
         </Animated.View>
 
-        <Animated.View style={tagStyle}>
+        <Animated.View style={{ opacity: tagOpacity, transform: [{ translateY: tagY }] }}>
           <Text style={styles.tagline}>Produits frais · Livrés chez vous</Text>
         </Animated.View>
 
         <View style={styles.barTrack}>
-          <Animated.View style={[styles.barFill, barFillStyle]} />
+          <Animated.View
+            style={[
+              styles.barFill,
+              {
+                width: bar.interpolate({ inputRange: [0, 1], outputRange: [10, 120] }),
+              },
+            ]}
+          />
         </View>
       </View>
 
@@ -153,8 +152,9 @@ export function AnimatedSplash({ onFinish, allowExit = true }: Props) {
 
 const styles = StyleSheet.create({
   root: {
-    ...StyleSheet.absoluteFillObject,
-    zIndex: 1000,
+    flex: 1,
+    width: '100%',
+    height: '100%',
     alignItems: 'center',
     justifyContent: 'center',
     backgroundColor: '#fdfbf7',
@@ -201,10 +201,7 @@ const styles = StyleSheet.create({
       default: {},
     }),
   },
-  mark: {
-    width: '100%',
-    height: '100%',
-  },
+  mark: { width: '100%', height: '100%' },
   brand: {
     color: '#1c1613',
     fontSize: 34,
@@ -224,22 +221,21 @@ const styles = StyleSheet.create({
     marginTop: 28,
     width: 120,
     height: 3,
-    borderRadius: 2,
+    borderRadius: 999,
     backgroundColor: 'rgba(28,22,19,0.08)',
     overflow: 'hidden',
   },
   barFill: {
     height: '100%',
-    borderRadius: 2,
+    borderRadius: 999,
     backgroundColor: '#e2931d',
   },
   footer: {
     position: 'absolute',
-    bottom: 36,
-    color: '#9e938d',
-    fontSize: 11,
-    letterSpacing: 1.2,
-    textTransform: 'uppercase',
+    bottom: 48,
     ...bodyFont('600'),
+    fontSize: 12,
+    color: '#8a7f78',
+    letterSpacing: 0.4,
   },
 });

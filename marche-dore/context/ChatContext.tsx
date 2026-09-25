@@ -14,6 +14,7 @@ import {
   type InboxThread,
 } from '@/lib/api/comms';
 import { getAuthToken } from '@/lib/api/http';
+import { pollWhileForeground } from '@/lib/foreground';
 import { staffPhotoSource } from '@/lib/staffPhoto';
 import type { ChatMessage, Conversation } from '@/data/messages';
 import { useAuth } from '@/context/AuthContext';
@@ -111,7 +112,7 @@ function conversationFromInbox(row: InboxThread): Conversation {
     icon: 'truck',
     disabled: Boolean(row.disabled_at || row.archived_at),
     archived: Boolean(row.archived_at),
-    avatar: row.peer_staff_id ? staffPhotoSource(row.peer_staff_id) : undefined,
+    avatar: staffPhotoSource(row.peer_staff_id),
   };
 }
 
@@ -182,11 +183,7 @@ export function ChatProvider({ children }: { children: React.ReactNode }) {
       time: welcome?.time ?? 'Maintenant',
     });
     setReady(true);
-    void pullComms();
-    const t = setInterval(() => void pullComms(), 2000);
-    return () => {
-      clearInterval(t);
-    };
+    return pollWhileForeground(() => void pullComms(), 8_000);
   }, [authReady, session?.accountId, pullComms, firstName]);
 
   const conversations = useMemo(() => {

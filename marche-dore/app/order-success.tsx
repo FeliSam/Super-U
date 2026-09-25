@@ -70,7 +70,7 @@ export default function OrderSuccessScreen() {
   return (
     <Screen>
       <Page style={styles.flex}>
-        <View style={[styles.wrap, { paddingTop: insets.top + 48, paddingBottom: insets.bottom + 32 }]}>
+        <View style={[styles.wrap, { paddingTop: Math.max(24, insets.top + 16), paddingBottom: Math.max(24, insets.bottom + 24) }]}>
           <MotionView preset="zoom" delay={40}>
             <Animated.View style={[styles.iconWrap, { transform: [{ scale: checkScale }] }]}>
               <View style={styles.iconRing}>
@@ -127,7 +127,7 @@ function createStyles(colors: AppColors) {
       flex: 1,
       paddingHorizontal: screenEdge(28),
       alignItems: 'center',
-      justifyContent: 'center',
+      justifyContent: 'flex-start',
       gap: 12,
     },
     iconWrap: { marginBottom: 12, alignItems: 'center' },

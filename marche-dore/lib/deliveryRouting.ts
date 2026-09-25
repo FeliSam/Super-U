@@ -90,6 +90,24 @@ export function pointAlongPolyline(coords: LngLat[], t: number): LngLat {
   return [...coords[coords.length - 1]];
 }
 
+/** Mètres encore à parcourir le long de la polyligne depuis `from`. */
+export function remainingAlongPolyline(coords: LngLat[], from: LngLat): number {
+  if (!coords.length) return 0;
+  if (coords.length === 1) return haversineMeters(from, coords[0]);
+  const cum = cumulativeLengths(coords);
+  const total = cum[cum.length - 1] || 0;
+  let bestI = 0;
+  let bestD = Infinity;
+  for (let i = 0; i < coords.length; i++) {
+    const d = haversineMeters(from, coords[i]);
+    if (d < bestD) {
+      bestD = d;
+      bestI = i;
+    }
+  }
+  return Math.max(0, total - cum[bestI] + bestD * 0.15);
+}
+
 /** Centre approximatif pour cadrer le trajet. */
 export function routeBoundsCenter(coords: LngLat[]): LngLat {
   if (!coords.length) return [...cotonouMap.networkCenter];
@@ -113,6 +131,7 @@ export function formatDistanceKm(meters: number): string {
 
 export function formatDurationMin(seconds: number): string {
   if (!Number.isFinite(seconds) || seconds <= 0) return '—';
+  if (seconds < 50) return '< 1 min';
   const m = Math.max(1, Math.round(seconds / 60));
   if (m < 60) return `${m} min`;
   const h = Math.floor(m / 60);

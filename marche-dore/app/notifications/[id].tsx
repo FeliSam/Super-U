@@ -1,8 +1,9 @@
-import { CtaButton, IconCircle, Screen, Page } from '@/components/ui';
+import { ScreenHeader } from '@/components/ScreenHeader';
+import { CtaButton, Screen, Page } from '@/components/ui';
 import { displayFont, type AppColors, spacing } from '@/constants/theme';
 import { useNotifications } from '@/context/NotificationsContext';
 import { useColors } from '@/context/ThemeContext';
-import { goBack, navigateTab } from '@/lib/navigation';
+import { navigateTab } from '@/lib/navigation';
 import { Feather } from '@expo/vector-icons';
 import { Href, router, useLocalSearchParams } from 'expo-router';
 import { useEffect, useMemo } from 'react';
@@ -23,11 +24,7 @@ export default function NotificationDetailScreen() {
     return (
       <Screen>
         <Page style={styles.flex}>
-          <View style={styles.header}>
-            <IconCircle name="chevron-left" onPress={() => goBack()} />
-            <Text style={styles.title}>Notification</Text>
-            <View style={styles.headerSpacer} />
-          </View>
+          <ScreenHeader title="Notification" />
           <View style={styles.empty}>
             <Text style={styles.emptyText}>Notification introuvable.</Text>
           </View>
@@ -59,11 +56,7 @@ export default function NotificationDetailScreen() {
   return (
     <Screen>
       <Page style={styles.flex}>
-        <View style={styles.header}>
-          <IconCircle name="chevron-left" onPress={() => goBack()} />
-          <Text style={styles.title}>Détail</Text>
-          <View style={styles.headerSpacer} />
-        </View>
+        <ScreenHeader title="Détail" />
 
         <ScrollView contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
           <View style={styles.hero}>
@@ -88,14 +81,6 @@ export default function NotificationDetailScreen() {
 function createStyles(colors: AppColors) {
   return StyleSheet.create({
     flex: { flex: 1 },
-    header: {
-      flexDirection: 'row',
-      alignItems: 'center',
-      justifyContent: 'space-between',
-      paddingHorizontal: spacing.screen,
-      paddingVertical: 12 },
-    headerSpacer: { width: 40 },
-    title: { color: colors.text, fontSize: 17, ...displayFont('700') },
     empty: { flex: 1, alignItems: 'center', justifyContent: 'center', padding: 24 },
     emptyText: { color: colors.muted, fontSize: 14 },
     content: { padding: 20, gap: 16, paddingBottom: 32 },

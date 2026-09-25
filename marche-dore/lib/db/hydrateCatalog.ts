@@ -1,6 +1,5 @@
 import type { SQLiteDatabase } from 'expo-sqlite';
 import {
-  categoryFallbackImage,
   exploreCategories,
   homePromoBanners,
   popularIds,
@@ -16,6 +15,7 @@ import {
   type HomePromoBanner,
   type Product,
 } from '@/data/catalog';
+import { categoryLocalArt } from '@/lib/categoryLocalArt';
 import { apiFetch, getApiBaseUrl } from '@/lib/api/http';
 import { productVisualSource } from '@/lib/productVisual';
 
@@ -128,7 +128,7 @@ export function applyCatalogRows(rows: CatalogRows, options?: { replace?: boolea
       exploreCategories.push({
         id: row.id,
         title: typeof data.title === 'string' ? data.title : row.id,
-        image: categoryFallbackImage(row.id),
+        image: categoryLocalArt(row.id),
         flex: typeof data.flex === 'number' ? data.flex : 1,
         height: typeof data.height === 'number' ? data.height : 120,
       });
@@ -137,7 +137,7 @@ export function applyCatalogRows(rows: CatalogRows, options?: { replace?: boolea
     const overlay = { ...data } as Record<string, unknown>;
     delete overlay.image;
     delete overlay.id;
-    Object.assign(existing, overlay, { id: existing.id, image: existing.image });
+    Object.assign(existing, overlay, { id: existing.id, image: categoryLocalArt(existing.id) });
   }
 
   for (const row of rows.chips ?? []) {

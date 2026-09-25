@@ -39,6 +39,12 @@ function filterStores({ city = 'all', format = 'all', q }: SuperUListParams = {}
  * Remplaçable plus tard par `fetch('/api/super-u')` si output serveur activé.
  */
 export async function listSuperUStores(params: SuperUListParams = {}): Promise<SuperUListResponse> {
+  const local: SuperUListResponse = {
+    ok: true,
+    count: filterStores(params).length,
+    cities: ['cotonou', 'calavi'],
+    stores: filterStores(params),
+  };
   if (await apiAvailable()) {
     try {
       const remote = await apiFetch<{ ok: true; stores: SuperUStore[] }>('/stores');
@@ -64,13 +70,7 @@ export async function listSuperUStores(params: SuperUListParams = {}): Promise<S
       /* local list */
     }
   }
-  const stores = filterStores(params);
-  return {
-    ok: true,
-    count: stores.length,
-    cities: ['cotonou', 'calavi'],
-    stores,
-  };
+  return local;
 }
 
 export async function getSuperUStore(id: string): Promise<SuperUDetailResponse> {

@@ -1,8 +1,11 @@
 import { userProfile as seedProfile, type UserProfile } from '@/data/account';
 import { apiCompleteOnboarding, apiLogin, apiMe, apiPatchProfile, apiRegister, type ApiUser } from '@/lib/api/auth';
-import { apiAvailable, getAuthToken, loadAuthToken, persistAuthToken, setAuthToken } from '@/lib/api/http';
+import { apiAvailable, getAuthToken, loadAuthToken, loadApiBaseOverride, persistAuthToken, setAuthToken, ensureReachableApiBase } from '@/lib/api/http';
 import { formatBeninPhone, isValidBeninPhone, nationalBeninDigits } from '@/lib/beninPhone';
 import { appStorage as AsyncStorage } from '@/lib/db/kv';
+import { peekShopHasSession, peekShopSessionRaw, setShopSessionPeek, writeShopSessionRaw } from '@/lib/sessionPeek';
+import { DEV_OPEN_HOME, logDev, logDevError, makeDevDemoSession } from '@/lib/devBoot';
+import { showToast } from '@/lib/toastBus';
 import React, {
   createContext,
   useCallback,
@@ -44,6 +47,8 @@ type AuthContextValue = {
   session: AuthSession | null;
   isAuthenticated: boolean;
   needsOnboarding: boolean;
+  /** Session sans API (comptes locaux / cache). */
+  offline: boolean;
   demoHint: { email: string; password: string };
   signIn: (identifier: string, password: string) => Promise<AuthResult>;
   signUp: (input: {
@@ -164,15 +169,35 @@ function sessionFromApiUser(user: ApiUser): AuthSession {
 }
 
 export function AuthProvider({ children }: { children: React.ReactNode }) {
-  const [ready, setReady] = useState(false);
-  const [session, setSession] = useState<AuthSession | null>(null);
+  const [session, setSession] = useState<AuthSession | null>(() => {
+    if (DEV_OPEN_HOME) {
+      const demo = makeDevDemoSession();
+      writeShopSessionRaw(JSON.stringify(demo));
+      return demo;
+    }
+    const raw = peekShopSessionRaw();
+    if (!raw) return null;
+    try {
+      return sanitizeSession(JSON.parse(raw));
+    } catch {
+      return null;
+    }
+  });
+  const [ready, setReady] = useState(() => DEV_OPEN_HOME || session != null || peekShopHasSession());
   const [accounts, setAccounts] = useState<AuthAccount[]>([DEMO_ACCOUNT]);
+  const [offline, setOffline] = useState(Boolean(DEV_OPEN_HOME));
   const hydrated = useRef(false);
 
   useEffect(() => {
     let active = true;
     (async () => {
       try {
+        await loadApiBaseOverride();
+        try {
+          await ensureReachableApiBase(1200);
+        } catch {
+          /* offline */
+        }
         const [rawAccounts, rawSession] = await Promise.all([
           AsyncStorage.getItem(ACCOUNTS_KEY),
           AsyncStorage.getItem(SESSION_KEY),
@@ -191,25 +216,83 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         }
         setAccounts(nextAccounts);
 
-        const remoteUser = await apiMe();
-        if (!active) return;
-        if (remoteUser) {
-          setSession(sessionFromApiUser(remoteUser));
-        } else if (getAuthToken() && rawSession) {
+        let localSession: AuthSession | null = null;
+        if (rawSession) {
           try {
-            const s = sanitizeSession(JSON.parse(rawSession));
-            if (s) setSession(s);
-            else setSession(null);
+            localSession = sanitizeSession(JSON.parse(rawSession));
           } catch {
-            setSession(null);
+            localSession = null;
           }
-        } else {
-          await persistAuthToken(null);
-          setAuthToken(null);
-          setSession(null);
         }
-      } catch {
+
+        if (localSession) {
+          const next =
+            DEV_OPEN_HOME && !localSession.onboardingDone
+              ? { ...localSession, onboardingDone: true }
+              : localSession;
+          setSession(next);
+          writeShopSessionRaw(JSON.stringify(next));
+          if (getAuthToken()) {
+            try {
+              const remoteUser = await apiMe();
+              if (!active) return;
+              if (remoteUser) {
+                const remote = sessionFromApiUser(remoteUser);
+                setSession(DEV_OPEN_HOME ? { ...remote, onboardingDone: true } : remote);
+                setOffline(false);
+              } else {
+                setOffline(true);
+              }
+            } catch (e) {
+              logDevError('auth.apiMe', e);
+              if (active) setOffline(true);
+            }
+          } else {
+            setOffline(true);
+          }
+        } else if (getAuthToken()) {
+          try {
+            const remoteUser = await apiMe();
+            if (!active) return;
+            if (remoteUser) {
+              const remote = sessionFromApiUser(remoteUser);
+              setSession(DEV_OPEN_HOME ? { ...remote, onboardingDone: true } : remote);
+              setOffline(false);
+            } else if (DEV_OPEN_HOME) {
+              setSession(makeDevDemoSession());
+              setOffline(true);
+            } else {
+              setSession(null);
+              writeShopSessionRaw(null);
+            }
+          } catch (e) {
+            logDevError('auth.apiMe.token', e);
+            if (!active) return;
+            if (DEV_OPEN_HOME) {
+              setSession(makeDevDemoSession());
+              setOffline(true);
+            } else {
+              setSession(null);
+              writeShopSessionRaw(null);
+            }
+          }
+        } else if (DEV_OPEN_HOME) {
+          const demo = makeDevDemoSession();
+          setSession(demo);
+          setOffline(true);
+          writeShopSessionRaw(JSON.stringify(demo));
+          logDev('auth: ouverture directe accueil (session démo)');
+        } else {
+          setSession(null);
+          writeShopSessionRaw(null);
+        }
+      } catch (e) {
+        logDevError('auth.hydrate', e);
         setAccounts([DEMO_ACCOUNT]);
+        if (DEV_OPEN_HOME) {
+          setSession(makeDevDemoSession());
+          setOffline(true);
+        }
       } finally {
         if (active) {
           hydrated.current = true;
@@ -230,9 +313,12 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   useEffect(() => {
     if (!hydrated.current) return;
     if (session) {
-      void AsyncStorage.setItem(SESSION_KEY, JSON.stringify(session)).catch(() => {});
+      const raw = JSON.stringify(session);
+      writeShopSessionRaw(raw);
+      void AsyncStorage.setItem(SESSION_KEY, raw).catch(() => {});
       return;
     }
+    writeShopSessionRaw(null);
     void AsyncStorage.removeItem(SESSION_KEY).catch(() => {});
   }, [session]);
 
@@ -245,21 +331,38 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       }
       if (pwd.length < 6) return { ok: false, error: 'Mot de passe trop court (6 caractères min.).' };
 
-      if (await apiAvailable()) {
-        const remote = await apiLogin(id, pwd);
-        if (remote.ok) {
-          await persistAuthToken(remote.token);
-          setSession(sessionFromApiUser(remote.user));
-          return { ok: true };
+      const signInLocal = (): AuthResult => {
+        const account = accounts.find((a) => accountMatches(a, id));
+        if (!account || account.password !== pwd) {
+          return { ok: false, error: 'Identifiants incorrects. Réessayez ou créez un compte.' };
         }
-        return remote;
+        setSession(sessionFromAccount(account, true));
+        setOffline(true);
+        void persistAuthToken(null);
+        showToast({
+          title: 'Mode local',
+          body: 'API indisponible — connexion hors-ligne.',
+          tone: 'info',
+          durationMs: 5000,
+        });
+        return { ok: true };
+      };
+
+      try {
+        if (await apiAvailable()) {
+          const remote = await apiLogin(id, pwd);
+          if (remote.ok) {
+            await persistAuthToken(remote.token);
+            setSession(sessionFromApiUser(remote.user));
+            setOffline(false);
+            return { ok: true };
+          }
+          return remote;
+        }
+      } catch {
+        /* réseau → local */
       }
-      const account = accounts.find((a) => accountMatches(a, id));
-      if (!account || account.password !== pwd) {
-        return { ok: false, error: 'Identifiants incorrects. Réessayez ou créez un compte.' };
-      }
-      setSession(sessionFromAccount(account, true));
-      return { ok: true };
+      return signInLocal();
     },
     [accounts],
   );
@@ -289,36 +392,48 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         return { ok: false, error: 'Choisissez un mot de passe d’au moins 6 caractères.' };
       }
 
-      if (await apiAvailable()) {
-        const remote = await apiRegister({ firstName, lastName, email, phone: formatBeninPhone(phone), password });
-        if (remote.ok) {
-          await persistAuthToken(remote.token);
-          setSession(sessionFromApiUser(remote.user));
-          return { ok: true };
+      try {
+        if (await apiAvailable()) {
+          const remote = await apiRegister({ firstName, lastName, email, phone: formatBeninPhone(phone), password });
+          if (remote.ok) {
+            await persistAuthToken(remote.token);
+            setSession(sessionFromApiUser(remote.user));
+            setOffline(false);
+            return { ok: true };
+          }
+          return remote;
         }
-        return remote;
+      } catch {
+        /* API down → local */
       }
-        if (accounts.some((a) => a.email === email)) {
-          return { ok: false, error: 'Un compte existe déjà avec cet e-mail.' };
-        }
-        const phoneKey = nationalBeninDigits(phone);
-        if (accounts.some((a) => nationalBeninDigits(a.phone) === phoneKey)) {
-          return { ok: false, error: 'Un compte existe déjà avec ce numéro.' };
-        }
+      if (accounts.some((a) => a.email === email)) {
+        return { ok: false, error: 'Un compte existe déjà avec cet e-mail.' };
+      }
+      const phoneKey = nationalBeninDigits(phone);
+      if (accounts.some((a) => nationalBeninDigits(a.phone) === phoneKey)) {
+        return { ok: false, error: 'Un compte existe déjà avec ce numéro.' };
+      }
 
-        const account: AuthAccount = {
-          id: `u-${Date.now().toString(36)}`,
-          email,
-          phone: formatBeninPhone(phone),
-          password,
-          firstName,
-          lastName,
-          createdAt: new Date().toISOString(),
-        };
+      const account: AuthAccount = {
+        id: `u-${Date.now().toString(36)}`,
+        email,
+        phone: formatBeninPhone(phone),
+        password,
+        firstName,
+        lastName,
+        createdAt: new Date().toISOString(),
+      };
 
-        setAccounts((prev) => [...prev, account]);
-        setSession(sessionFromAccount(account, false));
-        return { ok: true };
+      setAccounts((prev) => [...prev, account]);
+      setSession(sessionFromAccount(account, false));
+      setOffline(true);
+      showToast({
+        title: 'Mode local',
+        body: 'Compte créé hors-ligne (API indisponible).',
+        tone: 'info',
+        durationMs: 5000,
+      });
+      return { ok: true };
     },
     [accounts],
   );
@@ -335,8 +450,18 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const signOut = useCallback(async () => {
     setAuthToken(null);
     setSession(null);
-    void persistAuthToken(null);
-    void AsyncStorage.removeItem(SESSION_KEY).catch(() => {});
+    setOffline(false);
+    writeShopSessionRaw(null);
+    setShopSessionPeek(false);
+    await persistAuthToken(null);
+    try {
+      if (typeof localStorage !== 'undefined') {
+        localStorage.removeItem(SESSION_KEY);
+      }
+    } catch {
+      /* ignore */
+    }
+    await AsyncStorage.removeItem(SESSION_KEY).catch(() => undefined);
   }, []);
 
   const toProfile = useCallback((): UserProfile | null => {
@@ -388,6 +513,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       session,
       isAuthenticated: Boolean(session),
       needsOnboarding: Boolean(session && !session.onboardingDone),
+      offline,
       demoHint: { email: DEMO_ACCOUNT.email, password: DEMO_ACCOUNT.password },
       signIn,
       signUp,
@@ -396,7 +522,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       applyProfile,
       toProfile,
     }),
-    [ready, session, signIn, signUp, completeOnboarding, signOut, applyProfile, toProfile],
+    [ready, session, offline, signIn, signUp, completeOnboarding, signOut, applyProfile, toProfile],
   );
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;

@@ -11,7 +11,7 @@ export type LibreMapProps = {
   /** Optional route line (store → home). */
   route?: LngLat[];
   interactive?: boolean;
-  /** Show +/- zoom control. Default true. */
+  /** Show +/- zoom and locate-me controls. Default true. */
   showNavigation?: boolean;
   /** Offset for MapLibre navigation control (px from top-right). */
   navigationOffset?: { top?: number; right?: number };

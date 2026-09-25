@@ -2,7 +2,7 @@ import { LibreMap, warmLibreMap } from '@/components/LibreMap';
 import { goBack } from '@/lib/navigation';
 import { CtaButton, IconCircle, Screen } from '@/components/ui';
 import { cotonouMap, mapStyles, type LngLat } from '@/constants/map';
-import { displayFont, type AppColors, spacing } from '@/constants/theme';
+import { displayFont, mapHud, type AppColors, spacing } from '@/constants/theme';
 import { useColors, useTheme } from '@/context/ThemeContext';
 import { useAddresses } from '@/context/AddressesContext';
 import { useStores } from '@/context/StoresContext';
@@ -98,6 +98,14 @@ export default function StoresScreen() {
   const [draftId, setDraftId] = useState(selectedStoreId);
   const [setupPrimed, setSetupPrimed] = useState(false);
   const [mapReady, setMapReady] = useState(false);
+
+  // Mirror LibreMap ready fallback so "Chargement de la carte…" cannot stick forever.
+  useEffect(() => {
+    if (mapReady) return;
+    const timer = setTimeout(() => setMapReady(true), 2500);
+    return () => clearTimeout(timer);
+  }, [mapReady]);
+
   const [mapError, setMapError] = useState(false);
   const [mapCenter, setMapCenter] = useState<LngLat>([...selectedStore.coordinate]);
 
@@ -246,6 +254,8 @@ export default function StoresScreen() {
 
         <View style={[styles.topBar, { paddingTop: Math.max(10, insets.top + 6) }]}>
           <IconCircle
+            variant="onPhoto"
+            color={mapHud.ink}
             name="chevron-left"
             onPress={() =>
               setupMode ? router.replace('/account/addresses?setup=1') : goBack()
@@ -262,6 +272,8 @@ export default function StoresScreen() {
             </Text>
           </View>
           <IconCircle
+            variant="onPhoto"
+            color={mapHud.ink}
             name="map-pin"
             onPress={() =>
               router.push(setupMode ? '/account/addresses?setup=1' : '/account/addresses')
@@ -348,6 +360,14 @@ export default function StoresScreen() {
 }
 
 function createStyles(colors: AppColors) {
+  const hudGlass =
+    Platform.OS === 'web'
+      ? {
+          backdropFilter: mapHud.webFilter,
+          WebkitBackdropFilter: mapHud.webFilter,
+          boxShadow: mapHud.webShadow,
+        }
+      : {};
   return StyleSheet.create({
     root: { flex: 1, backgroundColor: colors.bg },
     mapLayer: { ...StyleSheet.absoluteFillObject },
@@ -371,39 +391,39 @@ function createStyles(colors: AppColors) {
       zIndex: 5 },
     titlePill: {
       flex: 1,
-      backgroundColor: colors.white,
+      backgroundColor: mapHud.surface,
       borderRadius: 14,
       paddingHorizontal: 14,
       paddingVertical: 8,
-      opacity: 0.96,
-      ...Platform.select({
-        web: { boxShadow: '0 4px 16px rgba(0,0,0,0.08)' },
-        default: {} }) },
-    titlePillMain: { color: colors.text, fontSize: 14, fontWeight: '800' },
-    titlePillSub: { color: colors.muted, fontSize: 11, marginTop: 1, fontWeight: '600' },
+      borderWidth: 1,
+      borderColor: mapHud.border,
+      ...hudGlass,
+    },
+    titlePillMain: { color: mapHud.ink, fontSize: 14, fontWeight: '800' },
+    titlePillSub: { color: mapHud.muted, fontSize: 11, marginTop: 1, fontWeight: '600' },
     segmentWrap: {
       position: 'absolute',
       left: 14,
       right: 14,
       flexDirection: 'row',
-      backgroundColor: colors.white,
-      opacity: 0.96,
+      backgroundColor: mapHud.surface,
       borderRadius: 14,
       padding: 4,
       gap: 4,
       zIndex: 5,
-      ...Platform.select({
-        web: { boxShadow: '0 4px 16px rgba(0,0,0,0.08)' },
-        default: {} }) },
+      borderWidth: 1,
+      borderColor: mapHud.border,
+      ...hudGlass,
+    },
     segment: {
       flex: 1,
       alignItems: 'center',
       justifyContent: 'center',
       paddingVertical: 10,
       borderRadius: 11 },
-    segmentOn: { backgroundColor: colors.cream },
-    segmentText: { color: colors.muted, fontSize: 13, fontWeight: '700' },
-    segmentTextOn: { color: colors.text },
+    segmentOn: { backgroundColor: '#f4e6c8' },
+    segmentText: { color: mapHud.muted, fontSize: 13, fontWeight: '700' },
+    segmentTextOn: { color: mapHud.ink },
     sheet: {
       position: 'absolute',
       left: 0,
@@ -416,27 +436,27 @@ function createStyles(colors: AppColors) {
     sheetHandle: { alignItems: 'center', paddingTop: 10, paddingBottom: 4 },
     sheetHandleBar: { width: 40, height: 4, borderRadius: 999 },
     sheetEyebrow: {
-      fontSize: 11,
+      fontSize: 13,
       fontWeight: '700',
-      letterSpacing: 0.6,
+      letterSpacing: 0.4,
       textTransform: 'uppercase',
-      paddingHorizontal: spacing.screen,
-      marginBottom: 4 },
+      paddingHorizontal: 14,
+      marginBottom: 6 },
     sheetTitle: {
       ...displayFont('700'),
       color: colors.text,
       fontSize: 20,
-      paddingHorizontal: spacing.screen },
+      paddingHorizontal: 14 },
     sheetSub: {
       color: colors.muted,
       fontSize: 13,
       lineHeight: 18,
-      paddingHorizontal: spacing.screen,
+      paddingHorizontal: 14,
       marginTop: 4,
-      marginBottom: 10,
+      marginBottom: 12,
       fontWeight: '500' },
     sheetScroll: { flex: 1 },
-    sheetContent: { paddingHorizontal: spacing.screenMd, gap: 10, paddingBottom: 12 },
+    sheetContent: { paddingHorizontal: 14, gap: 10, paddingBottom: 12 },
     card: {
       backgroundColor: colors.white,
       borderRadius: 18,

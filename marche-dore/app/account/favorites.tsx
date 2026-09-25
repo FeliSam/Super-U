@@ -1,5 +1,6 @@
 import { AppImage } from '@/components/AppImage';
 import { EmptyStateHero } from '@/components/EmptyStateHero';
+import { useHeaderPadTop } from '@/components/ScreenHeader';
 import { IconCircle, Page, ProductCard, Screen } from '@/components/ui';
 import { type AppColors, spacing } from '@/constants/theme';
 import { useColors } from '@/context/ThemeContext';
@@ -23,7 +24,6 @@ import {
   Text,
   useWindowDimensions,
   View } from 'react-native';
-import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 type FilterId = 'all' | 'promo';
 
@@ -99,7 +99,7 @@ export default function FavoritesScreen() {
 
   const { products, count, remove, clear, refresh } = useFavorites();
   const { add } = useCart();
-  const insets = useSafeAreaInsets();
+  const padTop = useHeaderPadTop();
   const { width } = useWindowDimensions();
   const [filter, setFilter] = useState<FilterId>('all');
   const [view, setView] = useState<'list' | 'grid'>('list');
@@ -171,7 +171,7 @@ export default function FavoritesScreen() {
               colors={[colors.terracotta]}
             />
           }>
-          <LinearGradient colors={[colors.blush, colors.cream, colors.bg]} style={[styles.hero, { paddingTop: insets.top + 8 }]}>
+          <LinearGradient colors={[colors.blush, colors.cream, colors.bg]} style={[styles.hero, { paddingTop: padTop }]}>
             <View style={styles.heroBar}>
               <IconCircle name="chevron-left" onPress={() => goBack()} variant="hero" />
               <Text style={styles.heroTitle}>Mes favoris</Text>

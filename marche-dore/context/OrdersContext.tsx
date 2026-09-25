@@ -7,7 +7,7 @@ import { useProfile } from '@/context/ProfileContext';
 import { findNearestSuperU, fetchDrivingRoute, getSuperUById, type RouteProfile } from '@/lib/deliveryRouting';
 import { apiGetOrderLive, apiGetOrders, apiPatchOrderStatus, apiPlaceOrder } from '@/lib/api/orders';
 import { applyOrderLive, isActiveFulfillment, type DeliveryStatus, type PickStatus } from '@/lib/orderOps';
-import { getAuthToken } from '@/lib/api/http';
+import { ApiError, getAuthToken } from '@/lib/api/http';
 import { loadAccountJson, saveAccountJson } from '@/lib/accountSync';
 import React, { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
 
@@ -573,7 +573,7 @@ export function OrdersProvider({ children }: { children: React.ReactNode }) {
     if (!created) return null;
     if (!getAuthToken()) {
       setOrders((prev) => prev.filter((o) => o.id !== created!.id));
-      return null;
+      throw new ApiError('unauthorized', 401, null);
     }
     try {
       const saved = await apiPlaceOrder(created);
@@ -588,9 +588,9 @@ export function OrdersProvider({ children }: { children: React.ReactNode }) {
       if (code.length === 4) {
         setOrders((prev) => prev.map((o) => (o.id === created!.id ? { ...o, handoffCode: code } : o)));
       }
-    } catch {
+    } catch (error) {
       setOrders((prev) => prev.filter((o) => o.id !== created!.id));
-      return null;
+      throw error;
     }
     return created;
   }, [profile.phone]);

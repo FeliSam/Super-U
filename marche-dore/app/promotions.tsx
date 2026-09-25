@@ -1,6 +1,6 @@
 import { IconCircle, Page, PromoBanner, Screen } from '@/components/ui';
 import { ProductFlashGrid } from '@/components/ProductFlashGrid';
-import { displayFont, type AppColors, spacing } from '@/constants/theme';
+import { displayFont, type AppColors, PRODUCT_FEED_IMAGE_H, spacing } from '@/constants/theme';
 import { useColors } from '@/context/ThemeContext';
 import { useCatalogVersion } from '@/context/CatalogContext';
 import {
@@ -82,7 +82,7 @@ export default function PromotionsScreen() {
         <ProductFlashGrid
           products={products}
           extraData={catalogVersion}
-          imageHeight={96}
+          imageHeight={PRODUCT_FEED_IMAGE_H}
           header={header}
           style={styles.flex}
           contentContainerStyle={styles.content}
@@ -109,8 +109,8 @@ function createStyles(colors: AppColors) {
     paddingVertical: 12 },
   headerSpacer: { width: 40 },
   title: { color: colors.text, fontSize: 17, ...displayFont('700') },
-  content: { padding: 20, gap: 16, paddingBottom: 40 },
-  headerBlock: { gap: 16, paddingBottom: 8 },
+  content: { padding: 6, gap: 5, paddingBottom: 40 },
+  headerBlock: { gap: 5, paddingBottom: 4 },
   heroCard: {
     borderRadius: 22,
     padding: 20,

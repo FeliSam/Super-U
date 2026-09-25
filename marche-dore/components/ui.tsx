@@ -2,7 +2,7 @@ import { AppImage } from '@/components/AppImage';
 import { MotionView, PressScale, enterZoom } from '@/components/motion';
 import { heroChrome, liquidIce, inkOnSurface, type AppColors, bodyFont, displayFont, floatingAboveTabBar, MOBILE_FRAME_MAX, screenEdge, spacing } from '@/constants/theme';
 import { useColors, useTheme } from '@/context/ThemeContext';
-import { Product, liveReviewStats } from '@/data/catalog';
+import { Product, liveReviewStats, rayonTone } from '@/data/catalog';
 import { useCart, useProductQty } from '@/context/CartContext';
 import { useFavoriteId } from '@/context/FavoritesContext';
 import { useReviews } from '@/context/ReviewsContext';
@@ -10,16 +10,20 @@ import { formatFcfa } from '@/lib/format';
 import { productVisualSource } from '@/lib/productVisual';
 import { transferWebKeyboard, pinWebKeyboard } from '@/lib/keepKeyboard';
 import { navigateTab, tabPaths } from '@/lib/navigation';
-import { softShadow } from '@/lib/shadow';
+import { hitBoxNone, hitNone } from '@/lib/hit';
+import { softShadow, textSoftShadow } from '@/lib/shadow';
+import { iosKeyboardAccessoryProps } from '@/components/KeyboardDismissBar';
 import { Feather, Ionicons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
 import { router, useFocusEffect } from 'expo-router';
-import { memo, useCallback, useEffect, useMemo, useRef, type RefObject } from 'react';
+import { memo, useCallback, useEffect, useMemo, useRef, useState, type ComponentType, type ReactNode, type RefObject } from 'react';
 import {
   Animated,
+  Image,
   type ImageSourcePropType,
   Platform,
   Pressable,
+  RefreshControl,
   StyleSheet,
   Text,
   TextInput,
@@ -33,6 +37,20 @@ import Reanimated, {
   type SharedValue,
 } from 'react-native-reanimated';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+
+/** BlurView Expo (natif) — optionnel si le module n’est pas encore installé. */
+let ExpoBlurView: null | ComponentType<{
+  intensity?: number;
+  tint?: 'light' | 'dark' | 'default';
+  style?: object;
+  children?: ReactNode;
+}> = null;
+try {
+  // eslint-disable-next-line @typescript-eslint/no-require-imports
+  ExpoBlurView = require('expo-blur').BlurView;
+} catch {
+  ExpoBlurView = null;
+}
 
 /** Full-bleed screen shell. */
 export function Screen({ children }: { children: React.ReactNode }) {
@@ -68,14 +86,47 @@ export function Page({
   return <View style={[styles.page, style]}>{children}</View>;
 }
 
-const SMART_NAV_INNER = 50;
+const SMART_NAV_INNER = 42;
 
 export function smartNavbarClearance(topInset: number) {
-  return Math.max(8, topInset + 4) + SMART_NAV_INNER + 8;
+  const top = Platform.OS === 'web' ? 0 : topInset;
+  return Math.max(8, top + 4) + SMART_NAV_INNER + 8;
+}
+
+/** Top of an expanded sheet: 4px under the floating SmartNavbar bar. */
+export function smartNavbarSheetTop(topInset: number, gap = 4) {
+  const top = Platform.OS === 'web' ? 0 : topInset;
+  const padTop = Math.max(8, top + 4);
+  const barH = SMART_NAV_INNER + 4;
+  return padTop + barH + gap;
+}
+
+/** Pull-to-refresh or / terracotta, lisible sur fond sombre. */
+export function MarcheRefresh({
+  refreshing,
+  onRefresh,
+}: {
+  refreshing: boolean;
+  onRefresh: () => void;
+}) {
+  const colors = useColors();
+  if (Platform.OS === 'web') return null;
+  return (
+    <RefreshControl
+      refreshing={refreshing}
+      onRefresh={onRefresh}
+      tintColor={colors.gold}
+      colors={[colors.gold, colors.terracotta]}
+      progressBackgroundColor={colors.white}
+      title="Actualiser"
+      titleColor={colors.muted}
+    />
+  );
 }
 
 /**
- * Barre haute flottante (77 % + flou) : le contenu défile dessous.
+ * Barre haute flottante : blanc de base + Animated natif (monte au scroll).
+ * BlurView Expo sur iOS/Android si le module est présent.
  */
 export function SmartNavbar({
   left,
@@ -83,32 +134,32 @@ export function SmartNavbar({
   style,
   hideProgress,
   hideOffset,
+  hideY,
   bare = false,
   split = false,
 }: {
   left?: React.ReactNode;
   right?: React.ReactNode;
   style?: React.ComponentProps<typeof View>['style'];
-  /** @deprecated 0–1 ; préférer hideOffset en px. */
+  /** @deprecated 0–1 ; préférer hideY / hideOffset. */
   hideProgress?: SharedValue<number>;
-  /** Décalage vers le haut en px (0 visible). */
+  /** Décalage Reanimated (px). */
   hideOffset?: SharedValue<number>;
-  /** Sans pastille unique : 3 blocs (adresse / alerte / profil). */
+  /** Décalage Animated RN natif (px) — préféré pour le scroll. */
+  hideY?: Animated.Value;
   split?: boolean;
-  /** Sans pastille : icônes seules. */
   bare?: boolean;
 }) {
   const colors = useColors();
-  const { scheme } = useTheme();
   const insets = useSafeAreaInsets();
   const styles = useMemo(() => createStyles(colors), [colors]);
-  const ice = liquidIce(scheme);
-  const barBg = scheme === 'dark' ? 'rgba(30, 26, 23, 0.77)' : 'rgba(255, 255, 255, 0.77)';
-  const padTop = Math.max(8, insets.top + 4);
+  const padTop = Math.max(8, (Platform.OS === 'web' ? 0 : insets.top) + 4);
   const hideDistance = padTop + SMART_NAV_INNER + 12;
   const splitOrBare = bare || split;
+  const chipBg = colors.white;
+  const chipBorder = colors.border;
 
-  const hideStyle = useAnimatedStyle(() => {
+  const reanimatedHide = useAnimatedStyle(() => {
     const y = hideOffset
       ? hideOffset.value
       : hideProgress
@@ -121,29 +172,78 @@ export function SmartNavbar({
     };
   });
 
+  const barInner = (
+    <>
+      {left ? (
+        <View
+          style={[
+            styles.smartNavbarLeft,
+            split && [styles.smartNavbarChip, { backgroundColor: chipBg, borderColor: chipBorder }],
+          ]}>
+          {left}
+        </View>
+      ) : (
+        <View style={styles.smartNavbarLeft} />
+      )}
+      {right ? <View style={styles.smartNavbarRight}>{right}</View> : null}
+    </>
+  );
+
+  const barStyle = [
+    styles.smartNavbarBar,
+    splitOrBare
+      ? styles.smartNavbarBarBare
+      : { backgroundColor: colors.white, borderColor: colors.border },
+  ];
+
+  const bar =
+    Platform.OS !== 'web' && !splitOrBare && ExpoBlurView ? (
+      <ExpoBlurView intensity={55} tint="light" style={barStyle}>
+        {barInner}
+      </ExpoBlurView>
+    ) : (
+      <View style={barStyle}>{barInner}</View>
+    );
+
+  if (hideY) {
+    return (
+      <Animated.View
+        style={[
+          styles.smartNavbarWrap,
+          { paddingTop: padTop },
+          {
+            transform: [
+              {
+                translateY: hideY.interpolate({
+                  inputRange: [0, hideDistance],
+                  outputRange: [0, -hideDistance],
+                  extrapolate: 'clamp',
+                }),
+              },
+            ],
+            opacity: hideY.interpolate({
+              inputRange: [0, hideDistance],
+              outputRange: [1, 0.9],
+              extrapolate: 'clamp',
+            }),
+          },
+          hitBoxNone,
+          style,
+        ]}>
+        {bar}
+      </Animated.View>
+    );
+  }
+
   return (
     <Reanimated.View
-      style={[styles.smartNavbarWrap, { paddingTop: padTop }, hideStyle, style]}
-      pointerEvents="box-none">
-      <View
-        style={[
-          styles.smartNavbarBar,
-          splitOrBare ? styles.smartNavbarBarBare : { backgroundColor: barBg, borderColor: colors.border },
-        ]}>
-        {left ? (
-          <View style={[styles.smartNavbarLeft, split && [styles.smartNavbarChip, { backgroundColor: ice.backgroundColor, borderColor: ice.borderColor }]]}>
-            {left}
-          </View>
-        ) : (
-          <View style={styles.smartNavbarLeft} />
-        )}
-        {right ? <View style={styles.smartNavbarRight}>{right}</View> : null}
-      </View>
+      style={[styles.smartNavbarWrap, { paddingTop: padTop }, reanimatedHide, hitBoxNone, style]}>
+      {bar}
     </Reanimated.View>
   );
 }
 
-/** Pastille 77 % pour un bloc de SmartNavbar (alerte, profil). */
+/** Pastille SmartNavbar (alerte, profil) — fond blanc de base. */
 export function SmartNavbarChip({
   children,
   round,
@@ -154,14 +254,12 @@ export function SmartNavbarChip({
   style?: React.ComponentProps<typeof View>['style'];
 }) {
   const colors = useColors();
-  const { scheme } = useTheme();
   const styles = useMemo(() => createStyles(colors), [colors]);
-  const ice = liquidIce(scheme);
   return (
     <View
       style={[
         round ? styles.smartNavbarChipRound : styles.smartNavbarChip,
-        { backgroundColor: ice.backgroundColor, borderColor: ice.borderColor },
+        { backgroundColor: colors.white, borderColor: colors.border },
         style,
       ]}>
       {children}
@@ -173,30 +271,28 @@ export const FROST_ICON_BG = 'rgba(255,255,255,0.2)';
 const FROST_BAR_INNER = 44;
 
 export function frostedBarClearance(topInset: number) {
-  return Math.max(8, topInset + 6) + FROST_BAR_INNER;
+  return smartNavbarClearance(topInset);
 }
 
-/** Entête overlay verre (Explorer, Panier, Messages, Recherche). */
+/** Entête overlay glace liquide flottante (Explorer, Panier, Messages, Recherche). */
 export function FrostedTopBar({
   children,
   right,
+  hideOffset,
 }: {
   children: React.ReactNode;
   right?: React.ReactNode;
+  hideOffset?: SharedValue<number>;
 }) {
   const colors = useColors();
-  const { scheme } = useTheme();
-  const insets = useSafeAreaInsets();
   const styles = useMemo(() => createStyles(colors), [colors]);
-  const padTop = Math.max(8, insets.top + 6);
-  const barBg = scheme === 'dark' ? 'rgba(30, 26, 23, 0.2)' : 'rgba(255, 255, 255, 0.2)';
   return (
-    <View style={[styles.frostedWrap, { height: padTop + FROST_BAR_INNER }]} pointerEvents="box-none">
-      <View style={[styles.frostedBar, { paddingTop: padTop, backgroundColor: barBg }]}>
-        <View style={styles.frostedLeft}>{children}</View>
-        {right ? <View style={styles.frostedRight}>{right}</View> : null}
-      </View>
-    </View>
+    <SmartNavbar
+      split
+      hideOffset={hideOffset}
+      left={<View style={styles.frostedLeftRow}>{children}</View>}
+      right={right}
+    />
   );
 }
 
@@ -507,6 +603,7 @@ export function SearchField({
   active,
   showFilter = true,
   autoFocus = false,
+  compact = false,
 }: {
   placeholder?: string;
   value?: string;
@@ -517,6 +614,7 @@ export function SearchField({
   showFilter?: boolean;
   /** Focus the real input after mount / screen focus (search page). */
   autoFocus?: boolean;
+  compact?: boolean;
 }) {
   const colors = useColors();
   const styles = useMemo(() => createStyles(colors), [colors]);
@@ -545,8 +643,8 @@ export function SearchField({
   );
 
   const box = (
-    <View style={[styles.search, active && styles.searchActive]}>
-      <Feather name="search" size={18} color={colors.placeholder} />
+    <View style={[styles.search, compact && styles.searchCompact, active && styles.searchActive]}>
+      <Feather name="search" size={compact ? 17 : 18} color={colors.placeholder} />
       {onChangeText ? (
         <TextInput
           ref={inputRef}
@@ -561,13 +659,14 @@ export function SearchField({
           autoCapitalize="none"
           keyboardType="default"
           inputMode="search"
+          {...iosKeyboardAccessoryProps()}
           // ≥16px avoids iOS Safari auto-zoom on focus (inline styles override +html CSS).
           style={styles.input}
         />
       ) : (
         <Text style={styles.searchPlaceholder}>{placeholder}</Text>
       )}
-      {showFilter && !onChangeText ? <Feather name="sliders" size={18} color={colors.gold} /> : null}
+      {showFilter && !onChangeText ? <Feather name="sliders" size={compact ? 17 : 18} color={colors.gold} /> : null}
       {onChangeText && value ? (
         <Pressable onPress={() => onChangeText('')}>
           <Feather name="x-circle" size={16} color={colors.placeholder} />
@@ -607,8 +706,8 @@ function CategoryTileOverlay() {
   }
   return (
     <LinearGradient
-      colors={['rgba(0,0,0,0)', 'rgba(0,0,0,0.38)', 'rgba(0,0,0,0.78)']}
-      locations={[0.35, 0.7, 1]}
+      colors={['rgba(0,0,0,0)', 'rgba(0,0,0,0.45)', 'rgba(0,0,0,0.82)']}
+      locations={[0.28, 0.62, 1]}
       style={[StyleSheet.absoluteFill, { pointerEvents: 'none' }]}
     />
   );
@@ -619,45 +718,97 @@ export const CategoryTile = memo(function CategoryTile({
   image,
   height,
   flex,
+  width,
   onPress,
   count,
+  dense = false,
+  categoryId,
 }: {
   title: string;
   image: ImageSourcePropType;
   height: number;
-  flex: number;
+  /** Flex relatif (si `width` absente). */
+  flex?: number;
+  /** Largeur explicite en px — préférée pour éviter la compression iOS/web. */
+  width?: number;
   onPress: () => void;
   count?: number;
   index?: number;
+  /** Grille dense (spans /6). */
+  dense?: boolean;
+  categoryId?: string;
 }) {
   const colors = useColors();
   const styles = useMemo(() => createStyles(colors), [colors]);
+  const tileH = Math.max(dense ? 130 : 200, height);
+  const shellStyle =
+    width != null && width > 0
+      ? { width, maxWidth: width, height: tileH, flexGrow: 0, flexShrink: 0 }
+      : { flex: flex ?? 1, minWidth: 0, height: tileH, flexShrink: 0 };
+
+  const [failed, setFailed] = useState(false);
+  useEffect(() => setFailed(false), [image]);
+
+  const tone = categoryId ? rayonTone(categoryId) : 'warm';
+  const fallbackColors = TONE_FALLBACK[tone];
+
   return (
-    <View style={{ flex, height }}>
-      <PressScale style={[styles.tilePress, { flex: 1, height }]} onPress={onPress} scaleTo={0.96}>
-        <View style={styles.tile}>
-          <View style={[styles.tileFrame, { pointerEvents: 'none' }]}>
-            <View style={styles.tileImageZoom}>
-              <AppImage source={image} frameStyle={styles.tileImage} priority="low" />
-            </View>
+    <View style={shellStyle}>
+      <Pressable
+        style={[styles.tilePress, { width: '100%', height: tileH }]}
+        onPress={onPress}
+        accessibilityRole="button"
+        accessibilityLabel={title}>
+        <View style={[styles.tile, dense && styles.tileDense, { height: tileH, width: '100%' }]}>
+          <View style={[styles.tileFrame, dense && styles.tileFrameDense]} pointerEvents="none">
+            {failed ? (
+              <LinearGradient
+                colors={fallbackColors}
+                start={{ x: 0.1, y: 0 }}
+                end={{ x: 0.9, y: 1 }}
+                style={StyleSheet.absoluteFillObject}
+              />
+            ) : (
+              /*
+               * Important iOS / Expo Go : garder le `require()` numérique.
+               * Convertir en `{ uri }` (Asset.localUri / Metro HTTP) casse souvent l’affichage.
+               */
+              <Image
+                source={image}
+                style={styles.tileImage}
+                resizeMode="cover"
+                accessibilityIgnoresInvertColors
+                onError={() => setFailed(true)}
+              />
+            )}
             <CategoryTileOverlay />
           </View>
-          <View style={styles.tileFooter}>
-            <View style={styles.tileTextBlock}>
-              <Text style={styles.tileTitle} numberOfLines={2}>
+          <View style={[styles.tileFooter, dense && styles.tileFooterDense]}>
+            <View style={[styles.tileTextBlock, styles.tileTitleScrim]}>
+              <Text style={[styles.tileTitle, dense && styles.tileTitleDense]} numberOfLines={2}>
                 {title}
               </Text>
-              {count != null ? <Text style={styles.tileCount}>{count} produits</Text> : null}
+              {!dense && count != null ? <Text style={styles.tileCount}>{count} produits</Text> : null}
             </View>
-            <View style={styles.tileArrow}>
-              <Feather name="arrow-right" size={14} color="#ffffff" />
-            </View>
+            {!dense ? (
+              <View style={styles.tileArrow}>
+                <Feather name="arrow-right" size={14} color="#ffffff" />
+              </View>
+            ) : null}
           </View>
         </View>
-      </PressScale>
+      </Pressable>
     </View>
   );
 });
+
+const TONE_FALLBACK: Record<string, [string, string]> = {
+  produce: ['#4a8f55', '#2a5a32'],
+  warm: ['#e2931d', '#9a5f0e'],
+  cool: ['#4a7c8f', '#2a4a5a'],
+  peach: ['#e8a07a', '#b85c3a'],
+  blush: ['#d4786a', '#8a3d35'],
+};
 
 export function CtaButton({ label, onPress }: { label: string; onPress: () => void }) {
   const colors = useColors();
@@ -678,6 +829,7 @@ export function IconCircle({
   badge,
   accessibilityLabel,
   size = 'md',
+  borderColor,
 }: {
   name: React.ComponentProps<typeof Feather>['name'];
   onPress?: () => void;
@@ -688,6 +840,7 @@ export function IconCircle({
   badge?: number;
   accessibilityLabel?: string;
   size?: 'md' | 'sm' | 'lg';
+  borderColor?: string;
 }) {
   const { scheme } = useTheme();
   const colors = useColors();
@@ -698,14 +851,16 @@ export function IconCircle({
   const isOnPhoto = variant === 'onPhoto';
   const isGhost = variant === 'ghost';
   const resolvedBg = bg ?? (isGhost ? ice.backgroundColor : isOnPhoto ? '#ffffff' : isHero ? chrome.iconBg : colors.white);
-  const resolvedColor = color ?? (isGhost || isOnPhoto ? colors.text : inkOnSurface(resolvedBg));
-  const resolvedBorder = isGhost
-    ? ice.borderColor
-    : isOnPhoto
-      ? 'rgba(28,22,19,0.16)'
-      : isHero
-        ? chrome.iconBorder
-        : colors.border;
+  const resolvedColor = color ?? (isGhost ? colors.text : inkOnSurface(resolvedBg));
+  const resolvedBorder =
+    borderColor ??
+    (isGhost
+      ? ice.borderColor
+      : isOnPhoto
+        ? 'rgba(28,22,19,0.32)'
+        : isHero
+          ? chrome.iconBorder
+          : colors.border);
 
   const sm = size === 'sm';
   const lg = size === 'lg';
@@ -759,8 +914,13 @@ export function PromoBanner({
   return (
     <MotionView index={index} preset="right" style={frame}>
       <PressScale style={styles.promo} onPress={onPress} scaleTo={0.985}>
-        <AppImage source={image} style={styles.promoImg} frameStyle={StyleSheet.absoluteFill} />
-        <View style={styles.promoDim} pointerEvents="none" />
+        <AppImage
+          source={image}
+          style={styles.promoImg}
+          frameStyle={StyleSheet.absoluteFill}
+          contentFit="cover"
+        />
+        <View style={[styles.promoDim, hitNone]} />
         <Text style={styles.promoTitle}>{title}</Text>
         <Text style={styles.promoSub}>{subtitle}</Text>
         <View style={styles.profiter}>
@@ -805,7 +965,10 @@ export const CartTotalFab = memo(function CartTotalFab({
     bottom ?? (aboveTabs ? floatingAboveTabBar(insets.bottom) : Math.max(20, insets.bottom + 12));
 
   return (
-    <Reanimated.View entering={enterZoom(80)} style={[styles.totalFab, { bottom: resolvedBottom }, bumpStyle]}>
+    <Reanimated.View
+      entering={Platform.OS === 'web' ? undefined : enterZoom(80)}
+      style={[styles.totalFab, { bottom: resolvedBottom }]}>
+      <Reanimated.View style={bumpStyle}>
       <View ref={measureRef} collapsable={false}>
       <PressScale style={styles.totalFabInner} onPress={() => navigateTab(tabPaths.cart)} scaleTo={0.96}>
         <View style={styles.totalFabIcon}>
@@ -823,6 +986,7 @@ export const CartTotalFab = memo(function CartTotalFab({
         <Feather name="chevron-right" size={14} color="rgba(255,255,255,0.85)" />
       </PressScale>
       </View>
+      </Reanimated.View>
     </Reanimated.View>
   );
 });
@@ -879,22 +1043,20 @@ function createStyles(colors: AppColors) {
       gap: 10,
       minHeight: SMART_NAV_INNER,
       paddingHorizontal: 10,
-      paddingVertical: 6,
+      paddingVertical: 3,
       borderRadius: 28,
       borderWidth: 1,
       overflow: 'hidden',
       ...(Platform.OS === 'web'
         ? {
-            backdropFilter: 'blur(20px)',
-            WebkitBackdropFilter: 'blur(20px)',
-            boxShadow: '0 8px 24px rgba(28, 22, 19, 0.12)',
+            boxShadow: '0 8px 24px rgba(28, 22, 19, 0.1)',
           }
         : {
             shadowColor: '#1c1613',
             shadowOffset: { width: 0, height: 8 },
-            shadowOpacity: 0.12,
+            shadowOpacity: 0.1,
             shadowRadius: 16,
-            elevation: 12,
+            elevation: 10,
           }),
     },
     smartNavbarBarBare: {
@@ -905,7 +1067,7 @@ function createStyles(colors: AppColors) {
       paddingHorizontal: 4,
       paddingVertical: 0,
       ...(Platform.OS === 'web'
-        ? { backdropFilter: 'none', WebkitBackdropFilter: 'none', boxShadow: 'none' }
+        ? { boxShadow: 'none' }
         : { shadowOpacity: 0, elevation: 0 }),
     },
     smartNavbarLeft: {
@@ -923,22 +1085,20 @@ function createStyles(colors: AppColors) {
       alignItems: 'center',
       minHeight: SMART_NAV_INNER,
       paddingHorizontal: 12,
-      paddingVertical: 4,
+      paddingVertical: 2,
       borderRadius: 28,
       borderWidth: 1,
       overflow: 'hidden',
       ...(Platform.OS === 'web'
         ? {
-            backdropFilter: 'blur(22px) saturate(170%)',
-            WebkitBackdropFilter: 'blur(22px) saturate(170%)',
-            boxShadow: 'inset 0 1px 0 rgba(255,255,255,0.8), 0 8px 22px rgba(80, 150, 175, 0.14)',
+            boxShadow: '0 6px 16px rgba(28, 22, 19, 0.08)',
           }
         : {
-            shadowColor: '#4a90a4',
-            shadowOffset: { width: 0, height: 6 },
-            shadowOpacity: 0.12,
-            shadowRadius: 12,
-            elevation: 8,
+            shadowColor: '#1c1613',
+            shadowOffset: { width: 0, height: 4 },
+            shadowOpacity: 0.08,
+            shadowRadius: 10,
+            elevation: 6,
           }),
     },
     smartNavbarChipRound: {
@@ -951,16 +1111,14 @@ function createStyles(colors: AppColors) {
       overflow: 'hidden',
       ...(Platform.OS === 'web'
         ? {
-            backdropFilter: 'blur(22px) saturate(170%)',
-            WebkitBackdropFilter: 'blur(22px) saturate(170%)',
-            boxShadow: 'inset 0 1px 0 rgba(255,255,255,0.8), 0 8px 22px rgba(80, 150, 175, 0.14)',
+            boxShadow: '0 6px 16px rgba(28, 22, 19, 0.08)',
           }
         : {
             shadowColor: '#1c1613',
-            shadowOffset: { width: 0, height: 6 },
-            shadowOpacity: 0.1,
-            shadowRadius: 12,
-            elevation: 8,
+            shadowOffset: { width: 0, height: 4 },
+            shadowOpacity: 0.08,
+            shadowRadius: 10,
+            elevation: 6,
           }),
     },
     frostedWrap: {
@@ -988,6 +1146,14 @@ function createStyles(colors: AppColors) {
         : {}),
     },
     frostedLeft: { flex: 1, minWidth: 0, flexDirection: 'row', alignItems: 'center', gap: 8 },
+    frostedLeftRow: {
+      flex: 1,
+      minWidth: 0,
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 6,
+      minHeight: SMART_NAV_INNER,
+    },
     frostedRight: { flexDirection: 'row', alignItems: 'center', gap: 8, flexShrink: 0 },
     tabHeroNavbar: {
       marginBottom: 16,
@@ -1218,9 +1384,7 @@ function createStyles(colors: AppColors) {
       fontSize: 34,
       lineHeight: 38,
       ...displayFont('800'),
-      textShadowColor: 'rgba(0,0,0,0.25)',
-      textShadowOffset: { width: 0, height: 1 },
-      textShadowRadius: 4,
+      ...textSoftShadow('rgba(0,0,0,0.25)', 1, 4),
     },
     qtyOverlayTextCompact: {
       fontSize: 28,
@@ -1290,6 +1454,12 @@ function createStyles(colors: AppColors) {
       alignItems: 'center',
       gap: 12,
     },
+    searchCompact: {
+      height: 48,
+      borderRadius: 14,
+      paddingHorizontal: 14,
+      gap: 10,
+    },
     searchActive: { borderColor: colors.gold, borderWidth: 1.5 },
     searchPlaceholder: { flex: 1, color: colors.placeholder, fontSize: 15 },
     input: {
@@ -1322,25 +1492,33 @@ function createStyles(colors: AppColors) {
         default: {},
       }),
     },
+    tileDense: {
+      borderRadius: 14,
+    },
     tileFrame: {
       ...StyleSheet.absoluteFillObject,
       overflow: 'hidden',
-      borderRadius: 20,
+      borderRadius: 18,
+      backgroundColor: colors.border,
+    },
+    tileFrameDense: {
+      borderRadius: 14,
     },
     tileImageZoom: {
-      position: 'absolute',
-      width: '118%',
-      height: '118%',
-      top: '-9%',
-      left: '-9%',
+      ...StyleSheet.absoluteFillObject,
     },
     tileImage: {
+      position: 'absolute',
+      top: 0,
+      left: 0,
+      right: 0,
+      bottom: 0,
       width: '100%',
       height: '100%',
-      ...(Platform.OS === 'web' ? { objectFit: 'cover' as const } : {}),
     },
     tileGradientWeb: {
-      backgroundImage: 'linear-gradient(to bottom, rgba(0,0,0,0) 38%, rgba(0,0,0,0.42) 72%, rgba(0,0,0,0.78) 100%)',
+      backgroundImage:
+        'linear-gradient(to bottom, rgba(0,0,0,0) 28%, rgba(0,0,0,0.48) 62%, rgba(0,0,0,0.86) 100%)',
     } as object,
     tileFooter: {
       flexDirection: 'row',
@@ -1352,23 +1530,37 @@ function createStyles(colors: AppColors) {
       zIndex: 1,
       width: '100%',
     },
+    tileFooterDense: {
+      padding: 6,
+      paddingRight: 6,
+      gap: 2,
+    },
     tileTextBlock: { flex: 1, gap: 2 },
+    tileTitleScrim: {
+      backgroundColor: 'rgba(20, 14, 10, 0.55)',
+      borderRadius: 8,
+      paddingHorizontal: 7,
+      paddingVertical: 4,
+      alignSelf: 'flex-start',
+      maxWidth: '100%',
+    },
     tileTitle: {
       color: '#ffffff',
       fontSize: 14,
       lineHeight: 18,
       ...displayFont('700'),
-      textShadowColor: 'rgba(0,0,0,0.55)',
-      textShadowOffset: { width: 0, height: 1 },
-      textShadowRadius: 4,
+      ...textSoftShadow('rgba(0,0,0,0.85)', 1, 5),
+    },
+    tileTitleDense: {
+      fontSize: 10,
+      lineHeight: 12,
+      letterSpacing: -0.2,
     },
     tileCount: {
-      color: 'rgba(255,255,255,0.9)',
+      color: 'rgba(255,255,255,0.95)',
       fontSize: 11,
       fontWeight: '600',
-      textShadowColor: 'rgba(0,0,0,0.45)',
-      textShadowOffset: { width: 0, height: 1 },
-      textShadowRadius: 3,
+      ...textSoftShadow('rgba(0,0,0,0.7)', 1, 3),
     },
     tileArrow: {
       width: 26,
@@ -1421,7 +1613,7 @@ function createStyles(colors: AppColors) {
         : {}),
     },
     iconCircleOnPhoto: Platform.select({
-      web: { boxShadow: '0 4px 14px rgba(28,22,19,0.22)' },
+      web: { boxShadow: '0 6px 18px rgba(28,22,19,0.32), inset 0 1px 0 rgba(255,255,255,0.95)' },
       default: {
         shadowColor: '#1c1613',
         shadowOpacity: 0.22,
@@ -1511,22 +1703,32 @@ function createStyles(colors: AppColors) {
     promo: {
       width: '100%',
       maxWidth: '100%',
-      height: 150,
-      borderRadius: 24,
+      height: 156,
+      borderRadius: 18,
       overflow: 'hidden',
       justifyContent: 'flex-end',
-      padding: 18,
+      paddingHorizontal: 16,
+      paddingVertical: 14,
+      backgroundColor: colors.border,
+      borderWidth: 1,
+      borderColor: colors.border,
     },
-    promoImg: StyleSheet.absoluteFillObject,
-    promoDim: { ...StyleSheet.absoluteFillObject, backgroundColor: colors.overlay },
+    promoImg: {
+      ...StyleSheet.absoluteFillObject,
+      ...(Platform.OS === 'web' ? { objectFit: 'cover' as const } : {}),
+    },
+    promoDim: {
+      ...StyleSheet.absoluteFillObject,
+      backgroundColor: 'rgba(28,22,19,0.38)',
+    },
     // Always light text: banner sits on a dimmed photo (theme white/cream flip in dark mode).
-    promoTitle: { color: '#ffffff', fontSize: 20, ...displayFont('800') },
-    promoSub: { color: 'rgba(253,240,213,0.92)', fontSize: 14, marginTop: 4 },
+    promoTitle: { color: '#ffffff', fontSize: 22, lineHeight: 26, ...displayFont('800') },
+    promoSub: { color: 'rgba(253,251,247,0.92)', fontSize: 13, marginTop: 4, fontWeight: '500' },
     profiter: {
       alignSelf: 'flex-start',
       backgroundColor: colors.gold,
       borderRadius: 12,
-      paddingHorizontal: 16,
+      paddingHorizontal: 14,
       paddingVertical: 8,
       marginTop: 12,
     },

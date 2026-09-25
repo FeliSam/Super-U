@@ -1,5 +1,11 @@
 import { Review } from '@/data/reviews';
-import { apiGetAccountState, apiPatchAccountState, loadAccountJson, saveAccountJson } from '@/lib/accountSync';
+import {
+  apiGetAccountState,
+  apiPatchAccountState,
+  loadAccountJson,
+  saveAccountJson,
+  subscribeAccountPull,
+} from '@/lib/accountSync';
 import { apiRateCourier } from '@/lib/api/orders';
 import { getAuthToken } from '@/lib/api/http';
 import { useAuth } from '@/context/AuthContext';
@@ -93,6 +99,24 @@ export function ReviewsProvider({ children }: { children: React.ReactNode }) {
     return () => {
       active = false;
     };
+  }, [authReady, accountId]);
+
+  useEffect(() => {
+    if (!authReady || !accountId || !getAuthToken()) return;
+    return subscribeAccountPull(async () => {
+      if (!hydrated.current) return;
+      const state = await apiGetAccountState();
+      if (!state?.reviews) return;
+      const user = Array.isArray(state.reviews.userReviews) ? (state.reviews.userReviews as Review[]) : null;
+      const courier = Array.isArray(state.reviews.courierReviews)
+        ? (state.reviews.courierReviews as CourierReview[])
+        : null;
+      if (!user && !courier) return;
+      skipSave.current = true;
+      if (user) setUserReviews(user);
+      if (courier) setCourierReviews(courier);
+      skipSave.current = false;
+    });
   }, [authReady, accountId]);
 
   useEffect(() => {

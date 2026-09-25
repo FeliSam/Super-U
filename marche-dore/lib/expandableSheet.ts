@@ -18,8 +18,16 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 const WINDOW_H = Dimensions.get('window').height;
 
-/** Opens just under the floating icon bar (Profil / rayons / produit). */
+/** Opens just under the floating SmartNavbar (Profil / rayons / produit). */
 export const SHEET_TOP_GAP = 56;
+/** Hauteur pastille navbar (alignée sur SMART_NAV_INNER dans ui.tsx). */
+const NAV_CHIP = 42;
+
+function defaultTopGap(topInset: number) {
+  const padTop = Math.max(8, topInset + 4);
+  return padTop + NAV_CHIP + 10;
+}
+
 export const SHEET_MIN_RATIO = 0.58;
 export const SHEET_MIN = Math.round(WINDOW_H * SHEET_MIN_RATIO);
 export const SHEET_MAX = Math.round(WINDOW_H - SHEET_TOP_GAP);
@@ -75,6 +83,8 @@ export type ExpandableSheetOptions = {
   animateEnter?: boolean;
   /** Collapse only from the grabber — content scroll never steals the sheet. */
   lockCollapseToHandle?: boolean;
+  /** Distance from the top of the screen to the fully open sheet. */
+  topGap?: number;
 };
 
 /**
@@ -99,7 +109,7 @@ export function useExpandableSheet(
   const { height } = useWindowDimensions();
 
   const sheetMin = Math.round(height * minRatio);
-  const sheetTopGap = Math.max(insets.top + 8, SHEET_TOP_GAP);
+  const sheetTopGap = Math.round(options.topGap ?? defaultTopGap(insets.top));
   const sheetMax = Math.round(height - sheetTopGap);
   const collapsedOffset = Math.max(0, sheetMax - sheetMin);
 

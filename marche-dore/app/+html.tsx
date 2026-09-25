@@ -43,6 +43,10 @@ const responsiveBackground = `
 @import url('https://fonts.googleapis.com/css2?family=DM+Sans:ital,opsz,wght@0,9..40,400;0,9..40,500;0,9..40,600;0,9..40,700;1,9..40,400&display=swap');
 html, body, #root {
   height: 100%;
+  max-width: 100%;
+}
+html {
+  overflow: hidden;
 }
 body {
   background-color: #fdfbf7;
@@ -53,10 +57,14 @@ body {
   text-rendering: optimizeLegibility;
   touch-action: pan-x pan-y;
 }
+*, *::before, *::after {
+  box-sizing: border-box;
+}
 #root {
   display: flex;
   flex-direction: column;
   overflow: hidden;
+  min-width: 0;
 }
 /* iOS Safari zooms focused fields when computed font-size < 16px.
    RN Web inline styles win without !important — keep both CSS and RN styles ≥16. */

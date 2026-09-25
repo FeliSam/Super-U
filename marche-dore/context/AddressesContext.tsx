@@ -1,8 +1,14 @@
 import { appLocation } from '@/constants/location';
-import { cotonouMap, mapStyles, type LngLat } from '@/constants/map';
+import { cotonouMap, type LngLat } from '@/constants/map';
 import { useAuth } from '@/context/AuthContext';
 import { deliveryAddresses, type DeliveryAddress } from '@/data/account';
-import { apiGetAccountState, apiPatchAccountState, loadAccountJson, saveAccountJson } from '@/lib/accountSync';
+import {
+  apiGetAccountState,
+  apiPatchAccountState,
+  loadAccountJson,
+  saveAccountJson,
+  subscribeAccountPull,
+} from '@/lib/accountSync';
 import { getAuthToken } from '@/lib/api/http';
 import { listSuperUStores } from '@/lib/api/superU';
 import React, { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
@@ -87,11 +93,7 @@ export function AddressesProvider({ children }: { children: React.ReactNode }) {
   const skipSave = useRef(true);
 
   useEffect(() => {
-    void listSuperUStores();
-    // Import différé : ne pas charger react-native-maps au boot du root layout.
-    void import('@/components/LibreMap')
-      .then((m) => m.warmLibreMap?.(mapStyles.light, cotonouMap.home, 14.2))
-      .catch(() => undefined);
+    void listSuperUStores().catch(() => undefined);
   }, []);
 
   useEffect(() => {
@@ -112,7 +114,8 @@ export function AddressesProvider({ children }: { children: React.ReactNode }) {
         ? local.addresses.map(sanitizeAddress).filter((a): a is DeliveryAddress => Boolean(a))
         : [];
       let selected = typeof local?.selectedId === 'string' ? local.selectedId : '';
-      if (!list.length && getAuthToken()) {
+      // Serveur = source de vérité dès qu’on a un token (sync multi-appareils).
+      if (getAuthToken()) {
         const state = await apiGetAccountState();
         const remote = state?.addresses;
         if (remote && Array.isArray(remote.list) && remote.list.length) {
@@ -135,6 +138,28 @@ export function AddressesProvider({ children }: { children: React.ReactNode }) {
     return () => {
       active = false;
     };
+  }, [authReady, accountId]);
+
+  useEffect(() => {
+    if (!authReady || !accountId || !getAuthToken()) return;
+    return subscribeAccountPull(async () => {
+      if (!hydrated.current) return;
+      const state = await apiGetAccountState();
+      const remote = state?.addresses;
+      if (!remote || !Array.isArray(remote.list)) return;
+      const list = remote.list.map(sanitizeAddress).filter((a): a is DeliveryAddress => Boolean(a));
+      if (!list.length) return;
+      const selected =
+        typeof remote.selectedId === 'string' ? remote.selectedId : '';
+      skipSave.current = true;
+      setAddresses(withCoords(list));
+      setSelectedId(pickSelected(list, selected));
+      skipSave.current = false;
+      void saveAccountJson(STORAGE_KEY, accountId, {
+        addresses: list,
+        selectedId: pickSelected(list, selected),
+      });
+    });
   }, [authReady, accountId]);
 
   useEffect(() => {

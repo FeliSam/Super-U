@@ -1,6 +1,6 @@
 import { AppImage } from '@/components/AppImage';
-import { FrostedTopBar, FROST_ICON_BG, frostedBarClearance, IconCircle, Page, Screen } from '@/components/ui';
-import { bodyFont, displayFont, heroChrome, tabBarClearance, type AppColors, spacing } from '@/constants/theme';
+import { FrostedTopBar, frostedBarClearance, IconCircle, Page, Screen, SmartNavbarChip, smartNavbarClearance } from '@/components/ui';
+import { displayFont, heroChrome, tabBarClearance, type AppColors, spacing } from '@/constants/theme';
 import { useChat } from '@/context/ChatContext';
 import { useProfile } from '@/context/ProfileContext';
 import {
@@ -12,19 +12,24 @@ import {
 } from '@/context/OrdersContext';
 import { useColors, useTheme } from '@/context/ThemeContext';
 import { type Conversation } from '@/data/messages';
-import { profilePhotoSource } from '@/lib/profilePhoto';
 import { formatFcfa } from '@/lib/format';
 import { opsPhaseLabel } from '@/lib/orderOps';
-import { useExpandableSheet } from '@/lib/expandableSheet';
+import { profilePhotoSource } from '@/lib/profilePhoto';
 import { Feather } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
 import { Href, router } from 'expo-router';
 import { useMemo, memo, useState, type ComponentProps } from 'react';
-import { Platform, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
-import { GestureRoot } from '@/components/GestureRoot';
-import { GestureDetector } from 'react-native-gesture-handler';
-import Animated from 'react-native-reanimated';
+import { Platform, Pressable, StyleSheet, Text, View } from 'react-native';
+import Animated, {
+  Easing,
+  useAnimatedScrollHandler,
+  useSharedValue,
+  withSpring,
+  withTiming,
+} from 'react-native-reanimated';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+
+const NAV_SPRING = { damping: 20, stiffness: 240, mass: 0.55, overshootClamping: false } as const;
 
 type InboxTab = 'messages' | 'orders';
 
@@ -155,22 +160,44 @@ function ChatInboxScreen() {
   const chrome = useMemo(() => heroChrome(scheme), [scheme]);
   const styles = useMemo(() => createStyles(colors), [colors]);
   const insets = useSafeAreaInsets();
+  const [sheetMinHeight, setSheetMinHeight] = useState(0);
   const { conversations } = useChat();
   const { profile } = useProfile();
   const { orders } = useOrders();
   const [tab, setTab] = useState<InboxTab>('messages');
+  const navMax = smartNavbarClearance(insets.top);
+  const lastScrollY = useSharedValue(0);
+  const navOffset = useSharedValue(0);
 
-  const {
-    sheetMax,
-    sheetAnimStyle,
-    sheetScrollGesture,
-    sheetScrollRef,
-    listScrollEnabled,
-    onSheetScroll,
-    onSheetScrollBeginDrag,
-    onSheetScrollEndDrag,
-    onSheetWheel,
-  } = useExpandableSheet({ initiallyExpanded: true, lockExpanded: true });
+  const onScroll = useAnimatedScrollHandler({
+    onScroll: (event) => {
+      const y = event.contentOffset.y;
+      const dy = y - lastScrollY.value;
+      lastScrollY.value = y;
+      if (y < 12) {
+        navOffset.value = withTiming(0, { duration: 320, easing: Easing.out(Easing.cubic) });
+        return;
+      }
+      navOffset.value = Math.min(navMax, Math.max(0, navOffset.value + dy));
+    },
+    onBeginDrag: () => {},
+    onEndDrag: (event) => {
+      const v = event.velocity?.y ?? 0;
+      if (event.contentOffset.y < 12) {
+        navOffset.value = withSpring(0, NAV_SPRING);
+        return;
+      }
+      navOffset.value = withSpring(v > 0.35 || navOffset.value > navMax * 0.38 ? navMax : 0, NAV_SPRING);
+    },
+    onMomentumEnd: (event) => {
+      const v = event.velocity?.y ?? 0;
+      if (event.contentOffset.y < 12) {
+        navOffset.value = withSpring(0, NAV_SPRING);
+        return;
+      }
+      navOffset.value = withSpring(v > 0.15 || navOffset.value > navMax * 0.38 ? navMax : 0, NAV_SPRING);
+    },
+  });
 
   const support = useMemo(() => conversations.find((c) => c.kind === 'support'), [conversations]);
   const messageThreads = useMemo(
@@ -188,9 +215,8 @@ function ChatInboxScreen() {
 
   return (
     <Screen>
-      <Page style={styles.flex} edgeToEdge>
-        <GestureRoot style={styles.flex}>
-          <View style={styles.hero} pointerEvents="box-none">
+      <Page style={styles.flex}>
+          <View style={styles.hero} pointerEvents="none">
             <LinearGradient colors={chrome.gradient} style={StyleSheet.absoluteFill} />
             <View
               style={[styles.heroGlowA, { backgroundColor: scheme === 'dark' ? 'rgba(232,166,58,0.22)' : 'rgba(226,147,29,0.28)' }]}
@@ -208,31 +234,23 @@ function ChatInboxScreen() {
             <View style={[styles.heroSpark, { backgroundColor: colors.gold }]} pointerEvents="none" />
           </View>
 
-          <Animated.View
-            style={[
-              styles.sheet,
-              { height: sheetMax - 10 },
-              sheetAnimStyle,
-              { paddingBottom: Math.max(8, insets.bottom) },
-            ]}>
-            <GestureDetector gesture={sheetScrollGesture}>
-            <ScrollView
-              ref={sheetScrollRef}
-              style={styles.sheetScroll}
-              contentContainerStyle={[
-                styles.sheetScrollContent,
-                { paddingBottom: tabBarClearance, paddingTop: frostedBarClearance(insets.top) },
-              ]}
-              showsVerticalScrollIndicator={false}
-              bounces
-              overScrollMode="auto"
-              keyboardShouldPersistTaps="handled"
-              scrollEnabled={listScrollEnabled}
-              scrollEventThrottle={1}
-              onScroll={onSheetScroll}
-              onScrollBeginDrag={onSheetScrollBeginDrag}
-              onScrollEndDrag={onSheetScrollEndDrag}
-              onWheel={onSheetWheel}>
+          <Animated.ScrollView
+            style={styles.flex}
+            onLayout={(e) => {
+              const h = e.nativeEvent.layout.height - frostedBarClearance(insets.top);
+              setSheetMinHeight((prev) => (Math.abs(prev - h) < 1 ? prev : Math.max(0, h)));
+            }}
+            contentContainerStyle={[
+              styles.scrollContent,
+              { paddingTop: frostedBarClearance(insets.top) },
+            ]}
+            showsVerticalScrollIndicator={false}
+            bounces
+            overScrollMode="auto"
+            keyboardShouldPersistTaps="handled"
+            scrollEventThrottle={16}
+            onScroll={onScroll}>
+            <View style={[styles.bodySheet, { minHeight: sheetMinHeight, paddingBottom: tabBarClearance + 8 }]}>
               <View style={styles.menu}>
                 <Pressable
                   style={[styles.menuTab, tab === 'messages' && styles.menuTabOn]}
@@ -282,7 +300,7 @@ function ChatInboxScreen() {
                       style={styles.supportCard}
                       onPress={() => router.push(`/chat/${support.id}` as Href)}>
                       <View style={styles.supportIcon}>
-                        <Feather name="headphones" size={22} color="#ffffff" />
+                        <Feather name="headphones" size={18} color="#ffffff" />
                       </View>
                       <View style={styles.supportText}>
                         <Text style={styles.supportTitle}>Assistance Marché Doré</Text>
@@ -368,16 +386,16 @@ function ChatInboxScreen() {
                   </View>
                 </>
               )}
-            </ScrollView>
-            </GestureDetector>
-          </Animated.View>
+            </View>
+          </Animated.ScrollView>
           <FrostedTopBar
+            hideOffset={navOffset}
             right={
+              <SmartNavbarChip round>
               <IconCircle
                 name={tab === 'messages' ? 'edit-3' : 'package'}
-                variant="hero"
-                bg={FROST_ICON_BG}
-                color={chrome.ink}
+                variant="ghost"
+                size="lg"
                 accessibilityLabel={
                   tab === 'messages' ? 'Contacter l’assistance' : 'Voir mes commandes'
                 }
@@ -386,12 +404,12 @@ function ChatInboxScreen() {
                   else router.push('/orders' as Href);
                 }}
               />
+              </SmartNavbarChip>
             }>
-            <Text style={[styles.heroTitle, { color: chrome.ink }]} numberOfLines={1}>
+            <Text style={[styles.heroTitle, { color: colors.text }]} numberOfLines={1}>
               {tab === 'messages' ? 'Messages' : 'Suivi'}
             </Text>
           </FrostedTopBar>
-        </GestureRoot>
       </Page>
     </Screen>
   );
@@ -459,65 +477,49 @@ function createStyles(colors: AppColors) {
       opacity: 0.55,
     },
     heroTitle: {
-      ...bodyFont('800'),
-      fontSize: 28,
-      lineHeight: 34,
+      ...displayFont('800'),
+      fontSize: 16,
+      lineHeight: 20,
+      letterSpacing: -0.3,
+      flexShrink: 1,
     },
-    sheet: {
-      position: 'absolute',
-      left: 0,
-      right: 0,
-      bottom: 0,
+    scrollContent: {
+      flexGrow: 1,
+    },
+    bodySheet: {
+      flexGrow: 1,
       backgroundColor: colors.bg,
       borderTopLeftRadius: 28,
       borderTopRightRadius: 28,
-      paddingTop: 10,
-      zIndex: 5,
-      overflow: 'hidden',
-      flexDirection: 'column',
+      padding: spacing.screen,
+      gap: 10,
       ...Platform.select({
         ios: {
           shadowColor: '#1c1613',
-          shadowOffset: { width: 0, height: -4 },
+          shadowOffset: { width: 0, height: -8 },
+          shadowRadius: 18,
           shadowOpacity: 0.14,
-          shadowRadius: 16,
         },
         android: { elevation: 8 },
-        web: {
-          willChange: 'transform',
-          backfaceVisibility: 'hidden',
-        } as object,
         default: {},
       }),
     },
-    sheetScroll: {
-      flex: 1,
-      minHeight: 0,
-      ...(Platform.OS === 'web'
-        ? ({ touchAction: 'pan-y', overscrollBehavior: 'contain' } as object)
-        : {}),
-    },
-    sheetScrollContent: {
-      flexGrow: 1,
-      paddingHorizontal: spacing.screen,
-      gap: 14,
-    },
     menu: {
       flexDirection: 'row',
-      gap: 8,
+      gap: 6,
       backgroundColor: colors.white,
-      borderRadius: 16,
-      padding: 5,
+      borderRadius: 14,
+      padding: 4,
     },
     menuTab: {
       flex: 1,
       flexDirection: 'row',
       alignItems: 'center',
       justifyContent: 'center',
-      gap: 6,
-      paddingVertical: 11,
-      paddingHorizontal: 8,
-      borderRadius: 12,
+      gap: 5,
+      paddingVertical: 8,
+      paddingHorizontal: 6,
+      borderRadius: 10,
     },
     menuTabOn: {
       backgroundColor: colors.terracotta,
@@ -553,15 +555,16 @@ function createStyles(colors: AppColors) {
     supportCard: {
       flexDirection: 'row',
       alignItems: 'center',
-      gap: 12,
+      gap: 10,
       backgroundColor: colors.white,
-      borderRadius: 18,
-      padding: 14,
+      borderRadius: 14,
+      paddingVertical: 10,
+      paddingHorizontal: 12,
     },
     supportIcon: {
-      width: 48,
-      height: 48,
-      borderRadius: 16,
+      width: 40,
+      height: 40,
+      borderRadius: 12,
       backgroundColor: colors.terracotta,
       alignItems: 'center',
       justifyContent: 'center',
@@ -573,7 +576,6 @@ function createStyles(colors: AppColors) {
       flexDirection: 'row',
       alignItems: 'center',
       justifyContent: 'space-between',
-      marginTop: 4,
     },
     sectionTitle: { color: colors.text, fontSize: 16, ...displayFont('700') },
     sectionMeta: { color: colors.muted, fontSize: 13, fontWeight: '600' },
@@ -585,20 +587,20 @@ function createStyles(colors: AppColors) {
     row: {
       flexDirection: 'row',
       alignItems: 'center',
-      gap: 12,
-      paddingHorizontal: 14,
-      paddingVertical: 13,
+      gap: 10,
+      paddingHorizontal: 12,
+      paddingVertical: 10,
       borderBottomWidth: StyleSheet.hairlineWidth,
       borderBottomColor: colors.border,
     },
     rowUnread: { backgroundColor: colors.cream },
     rowPressed: { backgroundColor: colors.bg },
     avatarWrap: { position: 'relative' },
-    avatar: { width: 48, height: 48, borderRadius: 24 },
+    avatar: { width: 40, height: 40, borderRadius: 20 },
     avatarFallback: {
-      width: 48,
-      height: 48,
-      borderRadius: 24,
+      width: 40,
+      height: 40,
+      borderRadius: 20,
       backgroundColor: colors.cream,
       alignItems: 'center',
       justifyContent: 'center',
@@ -639,10 +641,10 @@ function createStyles(colors: AppColors) {
     unreadText: { color: '#ffffff', fontSize: 11, fontWeight: '800' },
     emptyCard: {
       alignItems: 'center',
-      gap: 8,
+      gap: 6,
       backgroundColor: colors.white,
-      borderRadius: 18,
-      paddingVertical: 28,
+      borderRadius: 14,
+      paddingVertical: 16,
       paddingHorizontal: spacing.screen,
     },
     emptyTitle: { color: colors.text, fontSize: 15, fontWeight: '700' },
@@ -653,23 +655,24 @@ function createStyles(colors: AppColors) {
       gap: 10,
       backgroundColor: colors.white,
       borderRadius: 16,
-      paddingHorizontal: 14,
-      paddingVertical: 14,
+      paddingHorizontal: 12,
+      paddingVertical: 10,
     },
     ordersLinkText: { flex: 1, color: colors.text, fontSize: 14, fontWeight: '700' },
     tip: {
       flexDirection: 'row',
       alignItems: 'center',
-      gap: 10,
+      gap: 8,
       backgroundColor: colors.cream,
-      borderRadius: 14,
-      padding: 12,
-    },
-    tipAvatar: { width: 36, height: 36, borderRadius: 18 },
-    tipIcon: {
-      width: 36,
-      height: 36,
       borderRadius: 12,
+      paddingVertical: 8,
+      paddingHorizontal: 10,
+    },
+    tipAvatar: { width: 28, height: 28, borderRadius: 14 },
+    tipIcon: {
+      width: 28,
+      height: 28,
+      borderRadius: 10,
       backgroundColor: colors.white,
       alignItems: 'center',
       justifyContent: 'center',

@@ -1,8 +1,9 @@
-import { IconCircle, Screen, Page } from '@/components/ui';
-import { displayFont, type AppColors, spacing } from '@/constants/theme';
+import { ScreenHeader } from '@/components/ScreenHeader';
+import { Screen, Page } from '@/components/ui';
+import { type AppColors, spacing } from '@/constants/theme';
 import { useNotifications } from '@/context/NotificationsContext';
 import { useColors } from '@/context/ThemeContext';
-import { goBack, navigateTab } from '@/lib/navigation';
+import { navigateTab } from '@/lib/navigation';
 import { Feather } from '@expo/vector-icons';
 import { Href, router } from 'expo-router';
 import { useMemo } from 'react';
@@ -24,30 +25,25 @@ export default function NotificationsScreen() {
   return (
     <Screen>
       <Page style={styles.flex}>
-        <View style={styles.header}>
-          <IconCircle name="chevron-left" onPress={() => goBack()} />
-          <View style={styles.headerCenter}>
-            <Text style={styles.title}>Notifications</Text>
-            {unreadCount > 0 ? (
-              <Text style={styles.sub}>
-                {unreadCount} non lue{unreadCount > 1 ? 's' : ''}
-              </Text>
-            ) : (
-              <Text style={styles.sub}>Tout est à jour</Text>
-            )}
-          </View>
-          {unreadCount > 0 ? (
-            <Pressable
-              onPress={markAllAsRead}
-              hitSlop={12}
-              accessibilityRole="button"
-              accessibilityLabel="Tout marquer comme lu">
-              <Text style={styles.markAll}>Tout lire</Text>
-            </Pressable>
-          ) : (
-            <View style={styles.headerSpacer} />
-          )}
-        </View>
+        <ScreenHeader
+          title="Notifications"
+          subtitle={
+            unreadCount > 0
+              ? `${unreadCount} non lue${unreadCount > 1 ? 's' : ''}`
+              : 'Tout est à jour'
+          }
+          right={
+            unreadCount > 0 ? (
+              <Pressable
+                onPress={markAllAsRead}
+                hitSlop={12}
+                accessibilityRole="button"
+                accessibilityLabel="Tout marquer comme lu">
+                <Text style={styles.markAll}>Tout lire</Text>
+              </Pressable>
+            ) : undefined
+          }
+        />
 
         <ScrollView contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
           {items.length === 0 ? (
@@ -114,19 +110,7 @@ export default function NotificationsScreen() {
 function createStyles(colors: AppColors) {
   return StyleSheet.create({
     flex: { flex: 1 },
-    header: {
-      flexDirection: 'row',
-      alignItems: 'center',
-      justifyContent: 'space-between',
-      paddingHorizontal: spacing.screen,
-      paddingVertical: 12,
-      gap: 8,
-    },
-    headerCenter: { flex: 1, alignItems: 'center', gap: 2 },
-    headerSpacer: { width: 64 },
     markAll: { color: colors.gold, fontSize: 13, fontWeight: '700', width: 64, textAlign: 'right' },
-    title: { color: colors.text, fontSize: 18, ...displayFont('700') },
-    sub: { color: colors.muted, fontSize: 12 },
     content: { padding: 20, gap: 10, paddingBottom: 32 },
     row: {
       flexDirection: 'row',

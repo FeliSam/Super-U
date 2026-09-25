@@ -99,6 +99,7 @@ export function CallProvider({ children }: { children: React.ReactNode }) {
   const phaseRef = useRef<CallPhase>('idle');
   const remoteRef = useRef<CommsCall | null>(null);
   const mediaFor = useRef<string | null>(null);
+  const pendingThreadRef = useRef<string | null>(null);
   remoteRef.current = remote;
   phaseRef.current = phase;
 
@@ -111,11 +112,13 @@ export function CallProvider({ children }: { children: React.ReactNode }) {
     stopCallMedia();
     stopRingtone();
     mediaFor.current = null;
+    pendingThreadRef.current = null;
     clearMiss();
     if (!opts?.keepRemote) {
       setRemote(null);
       setControls(IDLE_CONTROLS);
       setPhase('idle');
+      setPeerName('');
     }
   }, []);
 
@@ -225,12 +228,14 @@ export function CallProvider({ children }: { children: React.ReactNode }) {
   }, [controls.muted, controls.onHold, controls.speakerOn, phase]);
 
   const startOutgoing = useCallback((conversationId: string, peerNameValue: string) => {
-    if (phase !== 'idle' || conversationId === 'support') return;
+    if (phaseRef.current !== 'idle' || conversationId === 'support') return;
+    unlockAudio();
     primeCallAudio();
     startingRef.current = true;
     setControls(IDLE_CONTROLS);
     setElapsedSec(0);
     setPeerName(peerNameValue);
+    pendingThreadRef.current = conversationId;
     setPhase('outgoing');
     void (async () => {
       try {
@@ -245,6 +250,7 @@ export function CallProvider({ children }: { children: React.ReactNode }) {
           void hangupCall(res.call.id).catch(() => undefined);
           setPhase('idle');
           setRemote(null);
+          pendingThreadRef.current = null;
         }, 45000);
       } catch (e) {
         showToast({
@@ -254,11 +260,12 @@ export function CallProvider({ children }: { children: React.ReactNode }) {
         });
         setPhase('idle');
         setRemote(null);
+        pendingThreadRef.current = null;
       } finally {
         startingRef.current = false;
       }
     })();
-  }, [phase, resetCall]);
+  }, [resetCall]);
 
   const startIncoming = useCallback((_conversationId: string, _peerName: string) => {
     /* Les appels entrants viennent de /comms/ringing (CourseGO). */
@@ -307,7 +314,10 @@ export function CallProvider({ children }: { children: React.ReactNode }) {
 
   const hangup = useCallback(() => {
     const id = remoteRef.current?.id;
-    if (!id) return;
+    if (!id) {
+      resetCall();
+      return;
+    }
     const outgoing = phaseRef.current === 'outgoing';
     void postCallSignal(id, 'hangup', {}).catch(() => undefined);
     if (outgoing) void cancelCall(id).catch(() => hangupCall(id));
@@ -315,15 +325,16 @@ export function CallProvider({ children }: { children: React.ReactNode }) {
     resetCall();
   }, [resetCall]);
 
-  const call: SimCall | null = remote
-    ? {
-        conversationId: remote.thread_id,
-        peerName,
-        direction: phase === 'incoming' ? 'in' : 'out',
-        startedAt: Date.now(),
-        connectedAt: remote.answered_at ? new Date(remote.answered_at).getTime() : undefined,
-      }
-    : null;
+  const call: SimCall | null =
+    phase !== 'idle'
+      ? {
+          conversationId: remote?.thread_id ?? pendingThreadRef.current ?? '',
+          peerName: peerName || remote?.peer_name || 'Correspondant',
+          direction: phase === 'incoming' ? 'in' : 'out',
+          startedAt: Date.now(),
+          connectedAt: remote?.answered_at ? new Date(remote.answered_at).getTime() : undefined,
+        }
+      : null;
 
   const value = useMemo(
     () => ({

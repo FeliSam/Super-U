@@ -9,7 +9,7 @@ import { StarRating } from '@/components/StarRating';
 import { CtaButton, IconCircle, Screen } from '@/components/ui';
 import { PressScale } from '@/components/motion';
 import { cotonouMap, mapStyles, type LngLat } from '@/constants/map';
-import { displayFont, type AppColors, spacing } from '@/constants/theme';
+import { displayFont, mapHud, type AppColors, spacing } from '@/constants/theme';
 import { useCall } from '@/context/CallContext';
 import { useCart } from '@/context/CartContext';
 import { useReviews } from '@/context/ReviewsContext';
@@ -42,6 +42,8 @@ import {
   opsProgressPercent,
   remainingEnRouteSeconds } from '@/lib/orderOps';
 import { goBack, navigateTab, tabPaths } from '@/lib/navigation';
+import { keyboardScrollProps, useKeyboardAvoidProps } from '@/lib/keyboardAvoid';
+import { pollWhileForeground } from '@/lib/foreground';
 import { softShadow } from '@/lib/shadow';
 import { statusTone } from '@/lib/statusTone';
 import { Feather } from '@expo/vector-icons';
@@ -50,6 +52,7 @@ import { useCallback, useEffect, useMemo, useRef, useState, type ComponentProps 
 import {
   Alert,
   Dimensions,
+  KeyboardAvoidingView,
   Modal,
   NativeScrollEvent,
   NativeSyntheticEvent,
@@ -119,15 +122,26 @@ function buildSteps(order: Order, now: number): TimelineStep[] {
   const del = order.deliveryStatus;
   const phase = fulfillmentPhase(order);
   const accepted = phase !== 'wait' && phase !== 'cancelled' && phase !== 'failed';
-  const assembled = pick === 'packed' || isCourseStarted(order);
-  const onRoad = isCourseStarted(order) && del !== 'delivered';
+  const assembled =
+    pick === 'packed' ||
+    phase === 'assembled' ||
+    phase === 'course' ||
+    phase === 'arrived' ||
+    phase === 'delivered';
+  const enRoute = del === 'picked_up' || del === 'en_route' || del === 'arrived' || del === 'delivered';
+  const arrived = del === 'arrived' || del === 'delivered';
   const delivered = order.status === 'delivered' || del === 'delivered';
   const store = order.storeName || 'Super U';
   const who = order.pickerName || order.courierName;
   const roadEta = formatDurationMin(order.routeDurationSeconds || 0);
   const roadDist = formatDistanceKm(order.routeDistanceMeters || 0);
-  const remSec = onRoad ? remainingEnRouteSeconds(order, now) : null;
+  const remSec =
+    del === 'picked_up' || del === 'en_route' ? remainingEnRouteSeconds(order, now) : null;
   const slot = [order.dayLabel, order.slotLabel].filter(Boolean).join(' · ');
+  const evTime = (type: string) => {
+    const hit = order.opsEvents?.find((e) => e.eventType === type);
+    return hit ? formatClock(new Date(hit.createdAt)) : '';
+  };
 
   const defs: Omit<TimelineStep, 'state' | 'time'>[] = [
     { label: 'Commande reçue', hint: paymentHint(order), icon: 'check' },
@@ -156,17 +170,26 @@ function buildSteps(order: Order, now: number): TimelineStep[] {
       icon: 'package',
     },
     {
-      label: 'Course',
-      hint: delivered
-        ? 'Course terminée'
-        : del === 'arrived'
-          ? 'Livreur à votre adresse'
-          : onRoad && remSec
-            ? `${roadDist} · encore ~${formatDurationMin(remSec)}`
+      label: 'En route',
+      hint: delivered || arrived
+        ? 'Trajet vers vous terminé'
+        : del === 'en_route' && remSec
+          ? `${roadDist} · encore ~${formatDurationMin(remSec)}`
+          : del === 'picked_up'
+            ? 'Course démarrée · départ magasin'
             : assembled
               ? 'En attente du départ en course'
               : `${roadDist} · ~${roadEta} une fois en route`,
       icon: 'truck',
+    },
+    {
+      label: 'Arrivé',
+      hint: delivered
+        ? 'Livreur passé chez vous'
+        : del === 'arrived'
+          ? 'Livreur à votre adresse · remise du colis'
+          : 'Le livreur signale son arrivée',
+      icon: 'map-pin',
     },
     {
       label: 'Livrée',
@@ -188,22 +211,30 @@ function buildSteps(order: Order, now: number): TimelineStep[] {
     ];
   }
 
-  const acceptState: StepState = assembled || onRoad || delivered ? 'done' : accepted ? 'active' : 'pending';
-  const packState: StepState = onRoad || delivered ? 'done' : assembled ? 'active' : 'pending';
-  const courseState: StepState = delivered ? 'done' : onRoad ? 'active' : 'pending';
+  const acceptState: StepState = assembled || enRoute || delivered ? 'done' : accepted ? 'active' : 'pending';
+  const packState: StepState = enRoute || delivered ? 'done' : assembled ? 'active' : 'pending';
+  const roadState: StepState =
+    arrived || delivered ? 'done' : del === 'picked_up' || del === 'en_route' ? 'active' : 'pending';
+  const arrivedState: StepState = delivered ? 'done' : del === 'arrived' ? 'active' : 'pending';
   const doneState: StepState = delivered ? 'done' : 'pending';
   const times = [
     formatClock(t),
-    accepted ? formatClock(t) : '',
-    order.packedAt ? formatClock(new Date(order.packedAt)) : '',
-    '',
-    delivered ? formatClock(new Date()) : '',
+    accepted ? evTime('pick.claimed') || evTime('pick.started') || formatClock(t) : '',
+    order.packedAt ? formatClock(new Date(order.packedAt)) : evTime('pick.packed'),
+    order.enRouteAt
+      ? formatClock(new Date(order.enRouteAt))
+      : order.pickedUpAt
+        ? formatClock(new Date(order.pickedUpAt))
+        : evTime('delivery.en_route') || evTime('delivery.picked_up'),
+    evTime('delivery.arrived'),
+    delivered ? evTime('delivery.delivered') || formatClock(new Date()) : '',
   ];
+  const states: StepState[] = ['done', acceptState, packState, roadState, arrivedState, doneState];
 
   return defs.map((d, i) => ({
     ...d,
     time: times[i],
-    state: i === 0 ? 'done' : i === 1 ? acceptState : i === 2 ? packState : i === 3 ? courseState : doneState,
+    state: states[i],
   }));
 }
 
@@ -292,6 +323,7 @@ function TrackingOrderPane({
   styles: ReturnType<typeof createStyles>;
   colors: AppColors;
 }) {
+  const kav = useKeyboardAvoidProps();
   const { startOutgoing, phase } = useCall();
   const { addCourierReview, courierReviewForOrder, hasUserReviewedProduct } = useReviews();
   const existingCourierReview = courierReviewForOrder(order.id);
@@ -357,15 +389,15 @@ function TrackingOrderPane({
   };
 
   return (
-    <View style={styles.sheetPane}>
+    <KeyboardAvoidingView style={styles.sheetPane} {...kav}>
       <ScrollView
         showsVerticalScrollIndicator={false}
         style={styles.sheetScroll}
         contentContainerStyle={styles.sheetContent}
         bounces
         nestedScrollEnabled
-        keyboardShouldPersistTaps="handled"
-        directionalLockEnabled>
+        directionalLockEnabled
+        {...keyboardScrollProps()}>
         <Text style={[styles.sheetEyebrow, { color: colors.muted }]}>
           {failed
             ? 'Incident de livraison'
@@ -679,13 +711,29 @@ function TrackingOrderPane({
           <Text style={styles.helpText}>Besoin d’aide ? Contacter le support</Text>
         </PressScale>
       </ScrollView>
-    </View>
+    </KeyboardAvoidingView>
   );
 }
 
 export default function TrackingScreen() {
   const { scheme } = useTheme();
   const colors = useColors();
+  const mapHudSurface = useMemo(
+    () =>
+      ({
+        backgroundColor: mapHud.surface,
+        borderWidth: 1,
+        borderColor: mapHud.border,
+        ...(Platform.OS === 'web'
+          ? {
+              backdropFilter: mapHud.webFilter,
+              WebkitBackdropFilter: mapHud.webFilter,
+              boxShadow: mapHud.webShadow,
+            }
+          : {}),
+      }) as const,
+    [],
+  );
   const styles = useMemo(() => createStyles(colors), [colors]);
   const insets = useSafeAreaInsets();
   const { width: windowWidth } = useWindowDimensions();
@@ -727,6 +775,13 @@ export default function TrackingScreen() {
   const [mapReady, setMapReady] = useState(false);
   const [mapError, setMapError] = useState(false);
 
+  // Mirror LibreMap ready fallback so "Calcul de l'itinéraire…" cannot stick forever.
+  useEffect(() => {
+    if (mapReady) return;
+    const timer = setTimeout(() => setMapReady(true), 2500);
+    return () => clearTimeout(timer);
+  }, [mapReady]);
+
   const sheetH = useSharedValue(SHEET_MIN);
   const dragStartH = useSharedValue(SHEET_MIN);
 
@@ -742,8 +797,7 @@ export default function TrackingScreen() {
 
   useEffect(() => {
     if (!order || order.status === 'delivered' || order.status === 'cancelled' || fulfillmentPhase(order) === 'failed') return;
-    const timer = setInterval(() => setNow(Date.now()), isCourseStarted(order) ? 250 : 2000);
-    return () => clearInterval(timer);
+    return pollWhileForeground(() => setNow(Date.now()), isCourseStarted(order) ? 250 : 2000);
   }, [order?.id, order?.status]);
 
   useEffect(() => {
@@ -978,16 +1032,30 @@ export default function TrackingScreen() {
           <View
             style={[styles.topBar, { paddingTop: Math.max(10, insets.top + 4) }]}
             pointerEvents="box-none">
-            <IconCircle name="chevron-left" onPress={() => goBack()} variant="hero" />
-            <View style={styles.titlePill}>
+            <IconCircle
+              name="chevron-left"
+              onPress={() => goBack()}
+              variant="ghost"
+              bg={mapHud.surface}
+              color={mapHud.ink}
+              borderColor={mapHud.border}
+            />
+            <View style={[styles.titlePill, mapHudSurface]}>
               <Text style={styles.titlePillMain}>Suivi · {formatOrderId(order.id)}</Text>
               <Text style={styles.titlePillSub}>{mapBadgeText(order)}</Text>
             </View>
-            <IconCircle name="more-vertical" onPress={() => setMenuOpen(true)} variant="hero" />
+            <IconCircle
+              name="more-vertical"
+              onPress={() => setMenuOpen(true)}
+              variant="ghost"
+              bg={mapHud.surface}
+              color={mapHud.ink}
+              borderColor={mapHud.border}
+            />
           </View>
 
           <View
-            style={[styles.livePill, { top: Math.max(96, insets.top + 78) }]}
+            style={[styles.livePill, mapHudSurface, { top: Math.max(96, insets.top + 78) }]}
             pointerEvents="none">
             <PulseDot color={tone.dot} />
             <Text style={styles.livePillText}>{mapBadgeText(order)}</Text>
@@ -1142,16 +1210,12 @@ function createStyles(colors: AppColors) {
       zIndex: 5 },
     titlePill: {
       flex: 1,
-      backgroundColor: colors.white,
       borderRadius: 14,
       paddingHorizontal: 14,
       paddingVertical: 8,
-      opacity: 0.96,
-      ...Platform.select({
-        web: { boxShadow: '0 4px 16px rgba(0,0,0,0.08)' },
-        default: {} }) },
-    titlePillMain: { color: colors.text, fontSize: 14, fontWeight: '800' },
-    titlePillSub: { color: colors.muted, fontSize: 11, marginTop: 1, fontWeight: '600' },
+    },
+    titlePillMain: { color: mapHud.ink, fontSize: 14, fontWeight: '800' },
+    titlePillSub: { color: mapHud.muted, fontSize: 11, marginTop: 1, fontWeight: '600' },
     livePill: {
       position: 'absolute',
       left: 14,
@@ -1159,12 +1223,11 @@ function createStyles(colors: AppColors) {
       flexDirection: 'row',
       alignItems: 'center',
       gap: 10,
-      backgroundColor: 'rgba(20,17,15,0.78)',
       borderRadius: 14,
       paddingHorizontal: 12,
       paddingVertical: 10,
       zIndex: 4 },
-    livePillText: { flex: 1, color: '#ffffff', fontSize: 12, fontWeight: '700' },
+    livePillText: { flex: 1, color: mapHud.ink, fontSize: 12, fontWeight: '700' },
     sheet: {
       position: 'absolute',
       left: 0,

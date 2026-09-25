@@ -1,6 +1,6 @@
-import { IconCircle, Page, Screen } from '@/components/ui';
-import { goBack } from '@/lib/navigation';
-import { displayFont, type AppColors, spacing } from '@/constants/theme';
+import { ScreenHeader } from '@/components/ScreenHeader';
+import { Page, Screen } from '@/components/ui';
+import { type AppColors, spacing } from '@/constants/theme';
 import { useColors } from '@/context/ThemeContext';
 import { contactChannels } from '@/data/help';
 import { Feather } from '@expo/vector-icons';
@@ -23,11 +23,7 @@ export default function ContactScreen() {
   return (
     <Screen>
       <Page style={styles.flex}>
-        <View style={styles.header}>
-          <IconCircle name="chevron-left" onPress={() => goBack()} />
-          <Text style={styles.title}>Nous contacter</Text>
-          <View style={styles.headerSpacer} />
-        </View>
+        <ScreenHeader title="Nous contacter" />
 
         <ScrollView contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
           <View style={styles.hero}>
@@ -66,14 +62,6 @@ export default function ContactScreen() {
 function createStyles(colors: AppColors) {
   return StyleSheet.create({
   flex: { flex: 1 },
-  header: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    paddingHorizontal: spacing.screen,
-    paddingVertical: 12 },
-  headerSpacer: { width: 40 },
-  title: { color: colors.text, fontSize: 17, ...displayFont('700') },
   content: { padding: 20, gap: 16, paddingBottom: 40 },
   hero: {
     backgroundColor: colors.cream,

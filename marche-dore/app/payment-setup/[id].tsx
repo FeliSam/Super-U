@@ -1,4 +1,5 @@
-import { CtaButton, IconCircle, Screen, Page } from '@/components/ui';
+import { CtaButton, Screen, Page } from '@/components/ui';
+import { ScreenHeader } from '@/components/ScreenHeader';
 import { goBack } from '@/lib/navigation';
 import { MotionView } from '@/components/motion';
 import { type AppColors, spacing } from '@/constants/theme';
@@ -16,13 +17,13 @@ import {
   formatBeninPhoneInput,
   isValidBeninPhone,
 } from '@/lib/beninPhone';
+import { keyboardScrollProps, useKeyboardAvoidProps } from '@/lib/keyboardAvoid';
 import { Feather } from '@expo/vector-icons';
-import { router, useLocalSearchParams } from 'expo-router';
+import { useLocalSearchParams } from 'expo-router';
 import { useMemo, useState } from 'react';
 import {
   Alert,
   KeyboardAvoidingView,
-  Platform,
   Pressable,
   ScrollView,
   StyleSheet,
@@ -30,6 +31,7 @@ import {
   TextInput,
   View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { iosKeyboardAccessoryProps } from '@/components/KeyboardDismissBar';
 
 function buildMethods(colors: AppColors): Record<
   PaymentId,
@@ -108,6 +110,7 @@ function Field({
         maxLength={maxLength}
         secureTextEntry={secureTextEntry}
         autoComplete={autoComplete}
+        {...iosKeyboardAccessoryProps()}
       />
     </View>
   );
@@ -122,6 +125,7 @@ export default function PaymentSetupScreen() {
   const methodId = (['om', 'wave', 'card', 'cod'].includes(id ?? '') ? id : 'om') as PaymentId;
   const meta = methods[methodId];
   const insets = useSafeAreaInsets();
+  const kav = useKeyboardAvoidProps();
   const { setup, setSetup } = useCheckoutPayment();
   const { saveMobileNumber, saveCard, methodById } = usePayments();
   const { profile } = useProfile();
@@ -207,20 +211,13 @@ export default function PaymentSetupScreen() {
   return (
     <Screen>
       <Page style={styles.flex}>
-        <View style={[styles.header, { paddingTop: Math.max(8, insets.top ? 4 : 8) }]}>
-          <IconCircle name="chevron-left" onPress={() => goBack()} />
-          <Text style={styles.headerTitle}>Configurer le paiement</Text>
-          <View style={styles.headerSpacer} />
-        </View>
+        <ScreenHeader title="Configurer le paiement" onBack={() => goBack()} />
 
-        <KeyboardAvoidingView
-          style={styles.flex}
-          behavior={Platform.OS === 'ios' ? 'padding' : undefined}
-          keyboardVerticalOffset={12}>
+        <KeyboardAvoidingView style={styles.flex} {...kav}>
           <ScrollView
             contentContainerStyle={[styles.content, { paddingBottom: Math.max(24, insets.bottom + 20) }]}
-            keyboardShouldPersistTaps="handled"
-            showsVerticalScrollIndicator={false}>
+            showsVerticalScrollIndicator={false}
+            {...keyboardScrollProps()}>
             <MotionView preset="down" delay={40}>
               <View style={[styles.hero, { backgroundColor: meta.soft, borderColor: meta.accent }]}>
                 <View style={[styles.heroIcon, { backgroundColor: meta.accent }]}>
@@ -380,15 +377,6 @@ export default function PaymentSetupScreen() {
 function createStyles(colors: AppColors) {
   return StyleSheet.create({
   flex: { flex: 1 },
-  header: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    paddingHorizontal: spacing.screen,
-    paddingBottom: 8,
-    gap: 10 },
-  headerTitle: { flex: 1, textAlign: 'center', color: colors.text, fontSize: 17, fontWeight: '800' },
-  headerSpacer: { width: 40 },
   content: { paddingHorizontal: spacing.screen, gap: 16 },
   hero: {
     borderRadius: 22,

@@ -1,5 +1,11 @@
 import { type UserProfile } from '@/data/account';
-import { apiGetAccountState, apiPatchAccountState, loadAccountJson, saveAccountJson } from '@/lib/accountSync';
+import {
+  apiGetAccountState,
+  apiPatchAccountState,
+  loadAccountJson,
+  saveAccountJson,
+  subscribeAccountPull,
+} from '@/lib/accountSync';
 import { getAuthToken } from '@/lib/api/http';
 import { useAuth } from '@/context/AuthContext';
 import React, { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
@@ -91,16 +97,23 @@ export function ProfileProvider({ children }: { children: React.ReactNode }) {
         setReady(true);
         return;
       }
+      setProfileState(fromSession(session, session.birthDate ?? '', ''));
       const local = await loadAccountJson<UserProfile>(STORAGE_KEY, accountId);
       let birthDate = local?.birthDate ?? session.birthDate ?? '';
       let photoUri = typeof local?.photoUri === 'string' ? local.photoUri : '';
       if (getAuthToken()) {
         const state = await apiGetAccountState();
-        if (typeof state?.birthDate === 'string') birthDate = state.birthDate;
-        if (typeof state?.photoUri === 'string') photoUri = state.photoUri;
+        if (typeof state?.birthDate === 'string' && state.birthDate.trim()) birthDate = state.birthDate;
+        if (typeof state?.photoUri === 'string' && state.photoUri.trim()) photoUri = state.photoUri;
       }
       if (!active) return;
-      setProfileState(fromSession(session, birthDate, photoUri));
+      setProfileState({
+        ...fromSession(session, birthDate, photoUri),
+        firstName: (local?.firstName || session.firstName).trim(),
+        lastName: (local?.lastName || session.lastName).trim(),
+        email: (local?.email || session.email).trim(),
+        phone: (local?.phone || session.phone).trim(),
+      });
       hydrated.current = true;
       setReady(true);
       skipSave.current = false;
@@ -111,6 +124,29 @@ export function ProfileProvider({ children }: { children: React.ReactNode }) {
     // Identity fields come from the session snapshot at account switch.
     // eslint-disable-next-line react-hooks/exhaustive-deps -- only reload per account
   }, [authReady, accountId]);
+
+  useEffect(() => {
+    if (!authReady || !accountId || !getAuthToken()) return;
+    return subscribeAccountPull(async () => {
+      if (!hydrated.current || !session) return;
+      const state = await apiGetAccountState();
+      if (!state) return;
+      const birthDate = typeof state.birthDate === 'string' ? state.birthDate : '';
+      const photoUri = typeof state.photoUri === 'string' ? state.photoUri : '';
+      skipSave.current = true;
+      setProfileState((prev) => {
+        const next = {
+          ...prev,
+          birthDate: birthDate.trim() || prev.birthDate,
+          photoUri: photoUri.trim() || prev.photoUri,
+        };
+        if (profilesEqual(prev, next)) return prev;
+        void saveAccountJson(STORAGE_KEY, accountId, next);
+        return next;
+      });
+      skipSave.current = false;
+    });
+  }, [authReady, accountId, session]);
 
   useEffect(() => {
     if (!hydrated.current || skipSave.current || !accountId) return;

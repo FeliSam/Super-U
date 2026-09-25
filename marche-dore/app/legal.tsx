@@ -1,9 +1,8 @@
-import { IconCircle, Page, Screen } from '@/components/ui';
-import { goBack } from '@/lib/navigation';
+import { ScreenHeader } from '@/components/ScreenHeader';
+import { Page, Screen } from '@/components/ui';
 import { type AppColors, spacing } from '@/constants/theme';
 import { useColors } from '@/context/ThemeContext';
 import { legalSections } from '@/data/help';
-import { router } from 'expo-router';
 import { useMemo } from 'react';
 import { ScrollView, StyleSheet, Text, View } from 'react-native';
 
@@ -14,11 +13,7 @@ export default function LegalScreen() {
   return (
     <Screen>
       <Page style={styles.flex}>
-        <View style={styles.header}>
-          <IconCircle name="chevron-left" onPress={() => goBack()} />
-          <Text style={styles.title}>Conditions & confidentialité</Text>
-          <View style={styles.headerSpacer} />
-        </View>
+        <ScreenHeader title="Conditions & confidentialité" />
 
         <ScrollView contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
           <Text style={styles.lead}>
@@ -39,14 +34,6 @@ export default function LegalScreen() {
 function createStyles(colors: AppColors) {
   return StyleSheet.create({
   flex: { flex: 1 },
-  header: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    paddingHorizontal: spacing.screen,
-    paddingVertical: 12 },
-  headerSpacer: { width: 40 },
-  title: { color: colors.text, fontSize: 16, fontWeight: '700', maxWidth: 220, textAlign: 'center' },
   content: { padding: 20, gap: 12, paddingBottom: 40 },
   lead: { color: colors.muted, fontSize: 13, lineHeight: 19, marginBottom: 4 },
   card: {

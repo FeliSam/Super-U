@@ -1,3 +1,8 @@
+/**
+ * Boot helpers. Prefers static Expo imports (after `import 'expo'` in index.js).
+ * Avoid Metro `import()` lazy chunks for expo-* — they break with
+ * "Requiring unknown module NNN" on web after cache churn.
+ */
 import {
   avatar,
   exploreCategories,
@@ -8,63 +13,29 @@ import {
   promoBanner,
   searchCategories,
 } from '@/data/catalog';
+import { BRAND_MARK } from '@/constants/brand';
 import { getLocalDb } from '@/lib/db/client';
 import { loadBrandFonts } from '@/lib/fonts';
-import { Feather, Ionicons } from '@expo/vector-icons';
+import { downloadCategoryLocalArt, pinExploreCategoriesLocalArt } from '@/lib/categoryLocalArt';
 import { Asset } from 'expo-asset';
 import { Image as ExpoImage } from 'expo-image';
-import * as Font from 'expo-font';
 import * as SplashScreen from 'expo-splash-screen';
 import type { ImageSourcePropType } from 'react-native';
-import { Image as RNImage, Platform, StatusBar as RNStatusBar } from 'react-native';
-import { StatusBar as ExpoStatusBar } from 'expo-status-bar';
+import { Image as RNImage, Platform } from 'react-native';
 
-SplashScreen.preventAutoHideAsync().catch(() => undefined);
+let splashPrevented = false;
 
-ExpoStatusBar.setHidden(true, 'none');
-if (Platform.OS !== 'web') {
-  RNStatusBar.setHidden(true, 'none');
-}
-
-const ioniconsModule = require('../assets/fonts/Ionicons.ttf') as number;
-const featherModule = require('../assets/fonts/Feather.ttf') as number;
-
-function injectWebIconFontPreload() {
-  if (Platform.OS !== 'web' || typeof document === 'undefined') return;
-  const hrefs = [Asset.fromModule(ioniconsModule).uri, Asset.fromModule(featherModule).uri].filter(Boolean);
-  for (const href of hrefs) {
-    if (document.querySelector(`link[rel="preload"][href="${href}"]`)) continue;
-    const link = document.createElement('link');
-    link.rel = 'preload';
-    link.as = 'font';
-    link.type = 'font/ttf';
-    link.crossOrigin = 'anonymous';
-    link.href = href as string;
-    document.head.appendChild(link);
+export async function prepareNativeSplash(): Promise<void> {
+  if (splashPrevented) return;
+  splashPrevented = true;
+  try {
+    await SplashScreen.preventAutoHideAsync();
+  } catch {
+    /* Expo Go / web */
   }
 }
 
-injectWebIconFontPreload();
-
-async function loadIconFonts(): Promise<void> {
-  const display = Font.FontDisplay.BLOCK;
-  await Font.loadAsync({
-    ...Feather.font,
-    ...Ionicons.font,
-    ionicons: { uri: ioniconsModule, display },
-    feather: { uri: featherModule, display },
-  });
-  if (Platform.OS === 'web' && typeof document !== 'undefined' && document.fonts?.load) {
-    await Promise.all([
-      document.fonts.load('13px ionicons'),
-      document.fonts.load('16px feather'),
-    ]).catch(() => undefined);
-  }
-}
-
-const iconFontsReady = loadIconFonts().catch(() => undefined);
-
-const brandMark = require('../assets/images/brand-mark.png') as number;
+void prepareNativeSplash();
 
 function uniqueModules(sources: ImageSourcePropType[]): number[] {
   const seen = new Set<number>();
@@ -93,8 +64,12 @@ function bundledUris(sources: ImageSourcePropType[]): string[] {
 }
 
 function assetUri(mod: number): string | null {
-  const asset = Asset.fromModule(mod);
-  return asset.localUri ?? asset.uri ?? null;
+  try {
+    const asset = Asset.fromModule(mod);
+    return asset.localUri ?? asset.uri ?? null;
+  } catch {
+    return null;
+  }
 }
 
 async function decodeUris(uris: string[], concurrency = 4) {
@@ -116,23 +91,21 @@ async function decodeUris(uris: string[], concurrency = 4) {
     await Promise.all(Array.from({ length: Math.min(concurrency, uris.length || 1) }, worker));
     return;
   }
-
   await Promise.all(uris.map((uri) => RNImage.prefetch(uri).catch(() => false)));
 }
 
 async function preloadModules(modules: number[], extraUris: string[], concurrency = 4) {
-  if (modules.length) {
-    await Asset.loadAsync(modules).catch(() => undefined);
+  try {
+    if (modules.length) await Asset.loadAsync(modules).catch(() => undefined);
+    const uris = [...modules.map(assetUri).filter((u): u is string => Boolean(u)), ...extraUris];
+    if (!uris.length) return;
+    await Promise.all([
+      ExpoImage.prefetch(uris, 'memory-disk').catch(() => undefined),
+      decodeUris(uris, concurrency),
+    ]);
+  } catch {
+    /* ignore */
   }
-  const uris = [
-    ...modules.map(assetUri).filter((u): u is string => Boolean(u)),
-    ...extraUris,
-  ];
-  if (!uris.length) return;
-  await Promise.all([
-    ExpoImage.prefetch(uris, 'memory-disk').catch(() => undefined),
-    decodeUris(uris, concurrency),
-  ]);
 }
 
 async function preloadSources(sources: ImageSourcePropType[], concurrency: number) {
@@ -141,7 +114,7 @@ async function preloadSources(sources: ImageSourcePropType[], concurrency: numbe
 
 function homeImageSources(): ImageSourcePropType[] {
   return [
-    brandMark,
+    BRAND_MARK,
     mangoHero,
     promoBanner,
     ...homeCategories.map((c) => c.image),
@@ -152,7 +125,7 @@ function homeImageSources(): ImageSourcePropType[] {
 
 function allImageSources(): ImageSourcePropType[] {
   return [
-    brandMark,
+    BRAND_MARK,
     avatar,
     mangoHero,
     promoBanner,
@@ -167,19 +140,12 @@ function allImageSources(): ImageSourcePropType[] {
 let homeImagesReady = false;
 let imagesReady = false;
 
-/** Logo only — needed for the branded splash. */
-async function preloadSplashMark() {
-  await Asset.loadAsync(brandMark).catch(() => undefined);
-}
-
-/** First-screen images; does not wait for the full catalog. */
 export async function preloadHomeImages(): Promise<void> {
   if (homeImagesReady) return;
   await preloadSources(homeImageSources(), 4);
   homeImagesReady = true;
 }
 
-/** Full catalog decode — run after first paint. */
 export async function preloadCatalogImages(): Promise<void> {
   if (imagesReady) return;
   await preloadSources(allImageSources(), Platform.OS === 'web' ? 2 : 6);
@@ -197,34 +163,25 @@ function scheduleIdle(task: () => void) {
   setTimeout(task, 400);
 }
 
-/** Open/migrate SQLite without blocking first paint. CatalogProvider owns sync. */
-function warmLocalData() {
-  void getLocalDb();
-}
-
 let readyPromise: Promise<void> | null = null;
 
-/**
- * First paint: fonts + splash mark only. Catalog, SQLite and the rest of the
- * images warm in the background.
- */
 export function prepareApp(): Promise<void> {
   if (!readyPromise) {
     readyPromise = (async () => {
-      warmLocalData();
-      await iconFontsReady;
-      const rest = Promise.all([loadBrandFonts(), preloadSplashMark()]).then(() => undefined);
+      void getLocalDb().catch(() => undefined);
       await Promise.race([
-        rest,
-        new Promise<void>((resolve) => setTimeout(resolve, 900)),
+        loadBrandFonts().catch(() => undefined),
+        new Promise<void>((r) => setTimeout(r, 800)),
       ]);
+      await Asset.loadAsync(BRAND_MARK).catch(() => undefined);
+      pinExploreCategoriesLocalArt(exploreCategories);
+      void downloadCategoryLocalArt();
       void preloadHomeImages();
     })().catch(() => undefined);
   }
   return readyPromise;
 }
 
-/** After splash: home images now, full catalog when the thread is idle. */
 export function warmRemainingAssets(): void {
   void preloadHomeImages();
   scheduleIdle(() => {
@@ -232,6 +189,10 @@ export function warmRemainingAssets(): void {
   });
 }
 
-export function hideSplash(): Promise<void> {
-  return SplashScreen.hideAsync().catch(() => undefined);
+export async function hideSplash(): Promise<void> {
+  try {
+    await SplashScreen.hideAsync();
+  } catch {
+    /* already hidden */
+  }
 }

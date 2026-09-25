@@ -1,3 +1,4 @@
+import { hitBoxNone } from '@/lib/hit';
 import { showToast, subscribeToasts, type ToastPayload, type ToastTone } from '@/lib/toastBus';
 import { router } from 'expo-router';
 import { useCallback, useEffect, useRef, useState } from 'react';
@@ -98,7 +99,7 @@ export function ToastHost() {
   const bottom = Math.max(insets.bottom, 8) + 80;
 
   return (
-    <View pointerEvents="box-none" style={[styles.wrap, { bottom }]}>
+    <View style={[styles.wrap, { bottom }, hitBoxNone]}>
       {items.map((item) => (
         <ToastCard key={item.id} item={item} onGone={item.exiting ? gone : dismiss} />
       ))}

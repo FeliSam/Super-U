@@ -1,4 +1,5 @@
 import { IconCircle, Page, Screen, SmartNavbar } from '@/components/ui';
+import { MobileModalFrame } from '@/components/MobileModalFrame';
 import { PressScale } from '@/components/motion';
 import { displayFont, heroChrome, tabBarClearance, type AppColors, spacing } from '@/constants/theme';
 import { useAddresses } from '@/context/AddressesContext';
@@ -15,13 +16,14 @@ import { profilePhotoSource } from '@/lib/profilePhoto';
 import { useExpandableSheet } from '@/lib/expandableSheet';
 import { useLiveLoyalty } from '@/lib/loyalty';
 import { navigateTab, tabPaths } from '@/lib/navigation';
+import { softShadow } from '@/lib/shadow';
 import { Feather } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
 import { Href, router } from 'expo-router';
-import { useMemo, memo, type ComponentProps } from 'react';
+import { useMemo, memo, useState, type ComponentProps } from 'react';
 import {
-  Alert,
   Image,
+  Modal,
   Platform,
   Pressable,
   ScrollView,
@@ -107,27 +109,20 @@ function ProfileScreen() {
   const { unreadCount } = useNotifications();
   const { profile } = useProfile();
   const { signOut, session } = useAuth();
+  const [logoutOpen, setLogoutOpen] = useState(false);
   const loyalty = useLiveLoyalty();
 
   const unreadNotifications = unreadCount;
   const loyaltyProgress = Math.min(1, loyalty.points / Math.max(1, loyalty.nextRewardAt || LOYALTY_TARGET));
 
-  const confirmSignOut = () => {
-    const run = () => {
-      void signOut();
-    };
-    if (Platform.OS === 'web') {
-      const ok =
-        typeof window !== 'undefined' &&
-        typeof window.confirm === 'function' &&
-        window.confirm('Se déconnecter de Marché Doré ?');
-      if (ok) void run();
-      return;
-    }
-    Alert.alert('Déconnexion', 'Se déconnecter de Marché Doré ?', [
-      { text: 'Annuler', style: 'cancel' },
-      { text: 'Se déconnecter', style: 'destructive', onPress: () => void run() },
-    ]);
+  const confirmSignOut = () => setLogoutOpen(true);
+
+  const runSignOut = () => {
+    setLogoutOpen(false);
+    void (async () => {
+      await signOut();
+      router.replace('/(auth)');
+    })();
   };
 
   const openPromos = () => {
@@ -341,7 +336,7 @@ function ProfileScreen() {
               styles.sheet,
               { height: sheetMax },
               sheetAnimStyle,
-              { paddingBottom: Math.max(8, insets.bottom) },
+              { paddingBottom: Math.max(8, insets.bottom) + 4 },
             ]}>
             <GestureDetector gesture={sheetHandleGesture}>
               <Animated.View
@@ -414,7 +409,7 @@ function ProfileScreen() {
               <Pressable style={styles.loyalty} onPress={() => router.push('/account/loyalty')}>
                 <View style={styles.loyaltyTop}>
                   <View style={styles.loyaltyIcon}>
-                    <Feather name="gift" size={20} color={colors.gold} />
+                    <Feather name="gift" size={16} color={colors.gold} />
                   </View>
                   <View style={styles.loyaltyText}>
                     <Text style={styles.loyaltyTitle}>Programme fidélité · {loyalty.tier.name}</Text>
@@ -436,11 +431,11 @@ function ProfileScreen() {
 
               <View style={styles.quickRow}>
                 <Pressable style={styles.quickAction} onPress={() => router.push('/tracking' as Href)}>
-                  <Feather name="truck" size={18} color={colors.gold} />
+                  <Feather name="truck" size={16} color={colors.gold} />
                   <Text style={styles.quickLabel}>Livraison</Text>
                 </Pressable>
                 <Pressable style={styles.quickAction} onPress={() => router.push('/notifications')}>
-                  <Feather name="bell" size={18} color={colors.gold} />
+                  <Feather name="bell" size={16} color={colors.gold} />
                   <Text style={styles.quickLabel}>Alertes</Text>
                   {unreadNotifications > 0 ? (
                     <View style={styles.quickBadge}>
@@ -449,11 +444,11 @@ function ProfileScreen() {
                   ) : null}
                 </Pressable>
                 <Pressable style={styles.quickAction} onPress={() => navigateTab(tabPaths.chat)}>
-                  <Feather name="message-circle" size={18} color={colors.gold} />
+                  <Feather name="message-circle" size={16} color={colors.gold} />
                   <Text style={styles.quickLabel}>Messages</Text>
                 </Pressable>
                 <Pressable style={styles.quickAction} onPress={() => navigateTab(tabPaths.search)}>
-                  <Feather name="search" size={18} color={colors.gold} />
+                  <Feather name="search" size={16} color={colors.gold} />
                   <Text style={styles.quickLabel}>Recherche</Text>
                 </Pressable>
               </View>
@@ -484,6 +479,25 @@ function ProfileScreen() {
             </GestureDetector>
           </Animated.View>
         </GestureRoot>
+        <Modal visible={logoutOpen} transparent animationType="fade" onRequestClose={() => setLogoutOpen(false)}>
+          <MobileModalFrame align="center" onDismiss={() => setLogoutOpen(false)}>
+            <View style={styles.logoutCard}>
+              <View style={styles.logoutIconWrap}>
+                <Feather name="log-out" size={22} color={colors.terracotta} />
+              </View>
+              <Text style={styles.logoutTitle}>Se déconnecter ?</Text>
+              <Text style={styles.logoutCopy}>
+                Vous pourrez vous reconnecter à tout moment avec le même compte Marché Doré.
+              </Text>
+              <Pressable style={styles.logoutConfirm} onPress={runSignOut}>
+                <Text style={styles.logoutConfirmText}>Se déconnecter</Text>
+              </Pressable>
+              <Pressable style={styles.logoutCancel} onPress={() => setLogoutOpen(false)}>
+                <Text style={styles.logoutCancelText}>Annuler</Text>
+              </Pressable>
+            </View>
+          </MobileModalFrame>
+        </Modal>
       </Page>
     </Screen>
   );
@@ -492,6 +506,11 @@ function ProfileScreen() {
 export default memo(ProfileScreen);
 
 function createStyles(colors: AppColors) {
+  const cardFill = {
+    backgroundColor: colors.white,
+    borderWidth: 1,
+    borderColor: colors.border,
+  };
   return StyleSheet.create({
     flex: { flex: 1 },
     hero: {
@@ -531,11 +550,7 @@ function createStyles(colors: AppColors) {
     avatarRing: {
       padding: 4,
       borderRadius: 999,
-      shadowColor: '#1c1613',
-      shadowOffset: { width: 0, height: 6 },
-      shadowOpacity: 0.12,
-      shadowRadius: 12,
-      elevation: 4,
+      ...softShadow({ y: 6, blur: 12, opacity: 0.12, elevation: 4 }),
     },
     avatarHero: { width: 80, height: 80, borderRadius: 40 },
     heroName: { fontSize: 22, ...displayFont('800') },
@@ -559,7 +574,7 @@ function createStyles(colors: AppColors) {
       backgroundColor: colors.bg,
       borderTopLeftRadius: 28,
       borderTopRightRadius: 28,
-      paddingTop: 4,
+      padding: 0,
       zIndex: 5,
       overflow: 'hidden',
       flexDirection: 'column',
@@ -602,8 +617,8 @@ function createStyles(colors: AppColors) {
     },
     sheetScrollContent: {
       flexGrow: 1,
-      paddingHorizontal: spacing.screen,
-      gap: 16,
+      paddingHorizontal: 0,
+      gap: 10,
     },
     activeOrder: {
       flexDirection: 'row',
@@ -612,6 +627,7 @@ function createStyles(colors: AppColors) {
       backgroundColor: colors.white,
       borderRadius: 18,
       padding: 14,
+      marginHorizontal: 14,
     },
     activeOrderIcon: {
       width: 44,
@@ -643,56 +659,68 @@ function createStyles(colors: AppColors) {
     activeOrderSub: { color: colors.muted, fontSize: 12 },
     stats: {
       flexDirection: 'row',
-      backgroundColor: colors.white,
-      borderRadius: 20,
-      paddingVertical: 16,
-      shadowColor: colors.text,
-      shadowOffset: { width: 0, height: 4 },
-      shadowOpacity: 0.06,
-      shadowRadius: 10,
-      elevation: 2,
+      borderRadius: 16,
+      paddingVertical: 8,
+      minHeight: 52,
+      marginHorizontal: 14,
+      ...cardFill,
     },
-    stat: { flex: 1, alignItems: 'center', gap: 5 },
-    statValue: { color: colors.text, fontSize: 22, fontWeight: '800' },
-    statLabel: { color: colors.muted, fontSize: 12, fontWeight: '600' },
-    statDivider: { width: 1, backgroundColor: colors.border, marginVertical: 4 },
+    stat: { flex: 1, alignItems: 'center', justifyContent: 'center', gap: 2 },
+    statValue: { color: colors.text, fontSize: 18, fontWeight: '800' },
+    statLabel: {
+      color: colors.muted,
+      fontSize: 10,
+      fontWeight: '700',
+      textTransform: 'uppercase',
+      letterSpacing: 0.3,
+    },
+    statDivider: { width: 1, backgroundColor: colors.border, marginVertical: 8 },
     loyalty: {
-      backgroundColor: colors.cream,
-      borderRadius: 18,
-      padding: 14,
-      gap: 10,
+      borderRadius: 16,
+      paddingVertical: 10,
+      paddingHorizontal: 12,
+      gap: 8,
+      marginHorizontal: 14,
+      ...cardFill,
     },
-    loyaltyTop: { flexDirection: 'row', alignItems: 'center', gap: 12 },
+    loyaltyTop: { flexDirection: 'row', alignItems: 'center', gap: 10 },
     loyaltyIcon: {
-      width: 44,
-      height: 44,
-      borderRadius: 14,
-      backgroundColor: colors.white,
+      width: 32,
+      height: 32,
+      borderRadius: 10,
+      backgroundColor: colors.cream,
       alignItems: 'center',
       justifyContent: 'center',
     },
     loyaltyText: { flex: 1, gap: 2 },
-    loyaltyTitle: { color: colors.text, fontSize: 14, fontWeight: '700' },
-    loyaltySub: { color: colors.muted, fontSize: 12, fontWeight: '600' },
+    loyaltyTitle: { color: colors.text, fontSize: 13, fontWeight: '700' },
+    loyaltySub: { color: colors.muted, fontSize: 11, fontWeight: '600' },
     progressTrack: {
-      height: 6,
-      borderRadius: 3,
+      height: 4,
+      borderRadius: 2,
       backgroundColor: colors.border,
       overflow: 'hidden',
     },
-    progressFill: { height: '100%', borderRadius: 3, backgroundColor: colors.gold },
-    loyaltyHint: { color: colors.muted, fontSize: 11, fontWeight: '500' },
-    quickRow: { flexDirection: 'row', gap: 10 },
+    progressFill: { height: '100%', borderRadius: 2, backgroundColor: colors.gold },
+    loyaltyHint: { color: colors.muted, fontSize: 10, fontWeight: '500' },
+    quickRow: { flexDirection: 'row', gap: 8, marginHorizontal: 14 },
     quickAction: {
       flex: 1,
       alignItems: 'center',
-      gap: 6,
-      backgroundColor: colors.white,
-      borderRadius: 16,
-      paddingVertical: 12,
+      gap: 4,
+      borderRadius: 14,
+      paddingVertical: 8,
+      minHeight: 52,
       position: 'relative',
+      ...cardFill,
     },
-    quickLabel: { color: colors.muted, fontSize: 11, fontWeight: '600' },
+    quickLabel: {
+      color: colors.muted,
+      fontSize: 10,
+      fontWeight: '700',
+      textTransform: 'uppercase',
+      letterSpacing: 0.2,
+    },
     quickBadge: {
       position: 'absolute',
       top: 8,
@@ -706,17 +734,20 @@ function createStyles(colors: AppColors) {
       paddingHorizontal: 4,
     },
     quickBadgeText: { color: colors.white, fontSize: 10, fontWeight: '700' },
-    section: { gap: 10 },
+    section: { gap: 8 },
     sectionTitle: {
       color: colors.muted,
       fontSize: 13,
       fontWeight: '700',
       textTransform: 'uppercase',
+      paddingHorizontal: 14,
+      letterSpacing: 0.4,
     },
     sectionCard: {
       backgroundColor: colors.white,
       borderRadius: 18,
       overflow: 'hidden',
+      marginHorizontal: 14,
     },
     row: {
       flexDirection: 'row',
@@ -760,8 +791,55 @@ function createStyles(colors: AppColors) {
       backgroundColor: colors.white,
       borderRadius: 16,
       paddingVertical: 14,
+      marginHorizontal: 14,
     },
     logoutText: { color: colors.terracotta, fontSize: 15, fontWeight: '700' },
+    logoutCard: {
+      marginHorizontal: 18,
+      backgroundColor: colors.white,
+      borderRadius: 24,
+      paddingHorizontal: 22,
+      paddingTop: 24,
+      paddingBottom: 18,
+      gap: 10,
+      alignItems: 'center',
+    },
+    logoutIconWrap: {
+      width: 48,
+      height: 48,
+      borderRadius: 16,
+      backgroundColor: colors.blush,
+      alignItems: 'center',
+      justifyContent: 'center',
+      marginBottom: 4,
+    },
+    logoutTitle: {
+      color: colors.text,
+      fontSize: 20,
+      textAlign: 'center',
+      ...displayFont('800'),
+    },
+    logoutCopy: {
+      color: colors.muted,
+      fontSize: 14,
+      lineHeight: 20,
+      textAlign: 'center',
+      marginBottom: 8,
+    },
+    logoutConfirm: {
+      alignSelf: 'stretch',
+      backgroundColor: colors.terracotta,
+      borderRadius: 16,
+      paddingVertical: 14,
+      alignItems: 'center',
+    },
+    logoutConfirmText: { color: colors.white, fontSize: 15, fontWeight: '800' },
+    logoutCancel: {
+      alignSelf: 'stretch',
+      paddingVertical: 12,
+      alignItems: 'center',
+    },
+    logoutCancelText: { color: colors.muted, fontSize: 14, fontWeight: '700' },
     footer: {
       textAlign: 'center',
       color: colors.placeholder,

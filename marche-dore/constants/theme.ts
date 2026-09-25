@@ -109,6 +109,16 @@ export function heroChrome(scheme: ColorScheme) {
   };
 }
 
+/** Chrome overlay sur carte OSM — glace liquide, encore lisible. */
+export const mapHud = {
+  surface: 'rgba(186, 228, 242, 0.78)',
+  border: 'rgba(255, 255, 255, 0.92)',
+  ink: '#1c1613',
+  muted: '#3d4a4e',
+  webFilter: 'blur(22px) saturate(180%)',
+  webShadow: 'inset 0 1px 0 rgba(255,255,255,0.95), 0 10px 26px rgba(20, 70, 95, 0.26)',
+} as const;
+
 /** Pastille « glace liquide » (adresse, cloche). */
 export function liquidIce(scheme: ColorScheme) {
   if (scheme === 'dark') {
@@ -152,6 +162,9 @@ export function floatingAboveTabBar(insetsBottom: number, gap = 14) {
 /** Space to keep tab content scrollable above the floating tab bar (+ FAB room). */
 export const tabBarClearance = 148;
 
+/** Photo height for the home feed, rayon grid, and product « À découvrir ». */
+export const PRODUCT_FEED_IMAGE_H = 173;
+
 /** Largeur max du cadre boutique (mobile-first, prévisualisation web). */
 export const MOBILE_FRAME_MAX = 430;
 
@@ -163,12 +176,10 @@ export function screenEdge(px: number) {
 }
 
 export const spacing = {
-  /** Outer page / list / sheet inset (was 20). */
-  screen: screenEdge(20),
-  /** Outer inset from former 16px screen/sheet edges. */
-  screenMd: screenEdge(16),
-  /** Outer inset from former 24px screen edges. */
-  screenLg: screenEdge(24),
+  /** Page chrome (greeting, search, titres) — pas le padding interne des ProductCard. */
+  screen: 14,
+  screenMd: 14,
+  screenLg: 16,
 } as const;
 
 export { bodyFont, displayFont, fontFamilies, type } from '@/constants/typography';

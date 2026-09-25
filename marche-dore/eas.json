@@ -17,7 +17,7 @@
         "buildType": "apk"
       },
       "env": {
-        "EXPO_PUBLIC_API_URL": "https://giveaway-rack-obtrusive.ngrok-free.dev"
+        "EXPO_PUBLIC_API_URL": "https://api.moxtapp.ru"
       }
     },
     "testflight": {
@@ -27,7 +27,7 @@
         "resourceClass": "m-medium"
       },
       "env": {
-        "EXPO_PUBLIC_API_URL": "https://giveaway-rack-obtrusive.ngrok-free.dev"
+        "EXPO_PUBLIC_API_URL": "https://api.moxtapp.ru"
       }
     },
     "production": {
@@ -39,7 +39,7 @@
         "resourceClass": "m-medium"
       },
       "env": {
-        "EXPO_PUBLIC_API_URL": "https://giveaway-rack-obtrusive.ngrok-free.dev"
+        "EXPO_PUBLIC_API_URL": "https://api.moxtapp.ru"
       }
     }
   },

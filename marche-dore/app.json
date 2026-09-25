@@ -36,7 +36,10 @@
         "android.permission.POST_NOTIFICATIONS",
         "android.permission.ACCESS_COARSE_LOCATION",
         "android.permission.ACCESS_FINE_LOCATION",
-        "android.permission.CAMERA"
+        "android.permission.CAMERA",
+        "android.permission.MODIFY_AUDIO_SETTINGS",
+        "android.permission.BLUETOOTH",
+        "android.permission.ACCESS_NETWORK_STATE"
       ],
       "adaptiveIcon": {
         "backgroundColor": "#e2931d",
@@ -94,7 +97,14 @@
       "expo-sqlite",
       "@react-native-community/datetimepicker",
       "react-native-maps",
-      "@maplibre/maplibre-react-native"
+      "@maplibre/maplibre-react-native",
+      [
+        "@config-plugins/react-native-webrtc",
+        {
+          "cameraPermission": "Marché Doré utilise la caméra pour vos photos d’avis et de profil.",
+          "microphonePermission": "Marché Doré utilise le micro pour les appels avec votre coursier."
+        }
+      ]
     ],
     "extra": {
       "privacyPolicyUrl": "https://marchedore.bj/privacy",

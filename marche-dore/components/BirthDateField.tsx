@@ -1,4 +1,5 @@
 import { type BirthDateFieldProps } from '@/components/BirthDateField.types';
+import { MobileModalFrame } from '@/components/MobileModalFrame';
 import { type AppColors } from '@/constants/theme';
 import { useColors } from '@/context/ThemeContext';
 import { defaultPickerDate, formatBirthDate, parseBirthDate } from '@/lib/birthDate';
@@ -47,7 +48,7 @@ export function BirthDateField({ label, value, onChange }: BirthDateFieldProps) 
       ) : null}
       {Platform.OS === 'ios' ? (
         <Modal visible={open} transparent animationType="fade" onRequestClose={() => setOpen(false)}>
-          <Pressable style={styles.backdrop} onPress={() => setOpen(false)}>
+          <MobileModalFrame onDismiss={() => setOpen(false)}>
             <Pressable style={styles.sheet} onPress={() => undefined}>
               <DateTimePicker
                 value={current}
@@ -62,7 +63,7 @@ export function BirthDateField({ label, value, onChange }: BirthDateFieldProps) 
                 <Text style={styles.doneText}>OK</Text>
               </Pressable>
             </Pressable>
-          </Pressable>
+          </MobileModalFrame>
         </Modal>
       ) : null}
     </View>
@@ -85,11 +86,6 @@ function createStyles(colors: AppColors) {
     },
     value: { color: colors.text, fontSize: 16, fontWeight: '500' },
     placeholder: { color: colors.placeholder, fontWeight: '500' },
-    backdrop: {
-      flex: 1,
-      backgroundColor: 'rgba(0,0,0,0.35)',
-      justifyContent: 'flex-end',
-    },
     sheet: {
       backgroundColor: colors.white,
       borderTopLeftRadius: 18,

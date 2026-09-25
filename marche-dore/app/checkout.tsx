@@ -17,7 +17,8 @@ import { SUPER_U_BRAND } from '@/data/superU';
 import { formatDistanceKm, formatDurationMin } from '@/lib/deliveryRouting';
 import { formatFcfa } from '@/lib/format';
 import { noZoomInputStyle } from '@/lib/noZoomInput';
-import { ApiError } from '@/lib/api/http';
+import { userFacingApiMessage } from '@/lib/api/http';
+import { getProduct } from '@/data/catalog';
 import { useDeliveryEstimate } from '@/lib/useDeliveryEstimate';
 import { Feather } from '@expo/vector-icons';
 import { Href, router } from 'expo-router';
@@ -295,18 +296,17 @@ export default function CheckoutScreen() {
     });
     } catch (error) {
       leavingRef.current = false;
-      const message =
-        error instanceof ApiError
-          ? error.message
-          : 'Connectez-vous et vérifiez que l’API SuperU tourne (port 8787).';
-      alertUser('Commande non envoyée', message);
+      alertUser(
+        'Commande non envoyée',
+        userFacingApiMessage(error, (id) => getProduct(id)?.name),
+      );
       return false;
     }
     if (!order) {
       leavingRef.current = false;
       alertUser(
         'Commande non envoyée',
-        'Connectez-vous et vérifiez que l’API SuperU tourne (port 8787). Sur téléphone, ouvrez l’app via l’IP du PC (pas localhost) et laissez l’API allumée.',
+        'La commande n’a pas pu être enregistrée. Vérifiez votre connexion et réessayez.',
       );
       return false;
     }

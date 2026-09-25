@@ -1,12 +1,27 @@
-import { IconCircle, Screen, Page } from '@/components/ui';
-import { goBack } from '@/lib/navigation';
-import { displayFont, type AppColors, spacing } from '@/constants/theme';
+import { Screen, Page } from '@/components/ui';
+import { ScreenHeader } from '@/components/ScreenHeader';
+import { ApiHostEditor } from '@/components/ApiHostEditor';
+import { requestLocationPermission } from '@/lib/geolocation';
+import { type AppColors } from '@/constants/theme';
 import { useColors, useTheme, type ThemePreference } from '@/context/ThemeContext';
 import { useUiState } from '@/context/UiStateContext';
+import { usePushNotifications } from '@/context/PushNotificationsContext';
 import { Feather } from '@expo/vector-icons';
 import { router } from 'expo-router';
-import { useMemo, type ComponentProps } from 'react';
-import { Pressable, ScrollView, StyleSheet, Switch, Text, View } from 'react-native';
+import { useMemo, useState, type ComponentProps } from 'react';
+import {
+  Alert,
+  KeyboardAvoidingView,
+  Platform,
+  Pressable,
+  ScrollView,
+  StyleSheet,
+  Switch,
+  Text,
+  View,
+} from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { keyboardScrollProps, useKeyboardAvoidProps } from '@/lib/keyboardAvoid';
 
 type FeatherIcon = ComponentProps<typeof Feather>['name'];
 
@@ -61,14 +76,6 @@ function SettingToggle({
 function createStyles(colors: AppColors) {
   return StyleSheet.create({
     flex: { flex: 1 },
-    header: {
-      flexDirection: 'row',
-      alignItems: 'center',
-      justifyContent: 'space-between',
-      paddingHorizontal: spacing.screen,
-      paddingVertical: 12 },
-    headerSpacer: { width: 40 },
-    title: { color: colors.text, fontSize: 17, ...displayFont('700') },
     content: { padding: 20, gap: 22, paddingBottom: 40 },
     section: { gap: 8 },
     sectionTitle: {
@@ -131,6 +138,8 @@ export default function SettingsScreen() {
   const colors = useColors();
   const { preference, setPreference, scheme } = useTheme();
   const styles = useMemo(() => createStyles(colors), [colors]);
+  const insets = useSafeAreaInsets();
+  const kav = useKeyboardAvoidProps();
   const {
     pushEnabled,
     setPushEnabled,
@@ -140,7 +149,10 @@ export default function SettingsScreen() {
     setEmailEnabled,
     promoEnabled,
     setPromoEnabled,
+    liveIslandEnabled,
+    setLiveIslandEnabled,
   } = useUiState();
+  const { registerDevice } = usePushNotifications();
 
   const notificationToggles: ToggleRow[] = [
     {
@@ -148,7 +160,11 @@ export default function SettingsScreen() {
       label: 'Notifications push',
       subtitle: 'Alertes de livraison et commandes',
       value: pushEnabled,
-      onToggle: setPushEnabled },
+      onToggle: (next) => {
+        setPushEnabled(next);
+        if (next) void registerDevice();
+      },
+    },
     {
       icon: 'message-circle',
       label: 'Offres par SMS',
@@ -169,16 +185,33 @@ export default function SettingsScreen() {
       onToggle: setPromoEnabled },
   ];
 
+  const [locBusy, setLocBusy] = useState(false);
+
+  const askLocation = async () => {
+    setLocBusy(true);
+    try {
+      const ok = await requestLocationPermission();
+      Alert.alert(
+        'Localisation',
+        ok
+          ? 'Position autorisée. Vous pourrez placer votre adresse avec « Ma position ».'
+          : 'Autorisation refusée. Vous pourrez toujours placer le pin à la main sur la carte.',
+      );
+    } finally {
+      setLocBusy(false);
+    }
+  };
+
   return (
     <Screen>
       <Page style={styles.flex}>
-        <View style={styles.header}>
-          <IconCircle name="chevron-left" onPress={() => goBack()} />
-          <Text style={styles.title}>Réglages</Text>
-          <View style={styles.headerSpacer} />
-        </View>
+        <ScreenHeader title="Réglages" />
 
-        <ScrollView contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
+        <KeyboardAvoidingView style={styles.flex} {...kav}>
+          <ScrollView
+            contentContainerStyle={styles.content}
+            showsVerticalScrollIndicator={false}
+            {...keyboardScrollProps()}>
           <View style={styles.section}>
             <Text style={styles.sectionTitle}>Apparence</Text>
             <Text style={styles.sectionHint}>
@@ -233,6 +266,42 @@ export default function SettingsScreen() {
           </View>
 
           <View style={styles.section}>
+            <Text style={styles.sectionTitle}>Suivi & confidentialité</Text>
+            <Text style={styles.sectionHint}>Contrôlez l’île live et l’accès à votre position.</Text>
+            <View style={styles.card}>
+              <SettingToggle
+                item={{
+                  icon: 'activity',
+                  label: 'Île de suivi',
+                  subtitle: 'Pastille en haut pendant une livraison',
+                  value: liveIslandEnabled,
+                  onToggle: setLiveIslandEnabled,
+                }}
+                colors={colors}
+                styles={styles}
+              />
+              <View style={styles.separator} />
+              <Pressable
+                style={({ pressed }) => [styles.option, pressed && styles.rowPressed]}
+                onPress={() => void askLocation()}
+                disabled={locBusy}>
+                <View style={styles.rowLeft}>
+                  <View style={styles.icon}>
+                    <Feather name="map-pin" size={18} color={colors.gold} />
+                  </View>
+                  <View style={styles.rowText}>
+                    <Text style={styles.rowLabel}>Autoriser la localisation</Text>
+                    <Text style={styles.rowSub}>
+                      {locBusy ? 'Demande en cours…' : 'Pour placer votre adresse de livraison'}
+                    </Text>
+                  </View>
+                </View>
+                <Feather name="chevron-right" size={18} color={colors.muted} />
+              </Pressable>
+            </View>
+          </View>
+
+          <View style={styles.section}>
             <Text style={styles.sectionTitle}>Langue</Text>
             <View style={styles.card}>
               <View style={styles.option}>
@@ -246,6 +315,16 @@ export default function SettingsScreen() {
                   </View>
                 </View>
                 <Feather name="check-circle" size={20} color={colors.gold} />
+              </View>
+            </View>
+          </View>
+
+          <View style={styles.section}>
+            <Text style={styles.sectionTitle}>API SuperU (dev)</Text>
+            <Text style={styles.sectionHint}>Sur téléphone, utilisez l’IP Wi‑Fi du PC (pas 127.0.0.1).</Text>
+            <View style={styles.card}>
+              <View style={{ padding: 14 }}>
+                <ApiHostEditor />
               </View>
             </View>
           </View>
@@ -290,6 +369,7 @@ export default function SettingsScreen() {
             </Text>
           </View>
         </ScrollView>
+        </KeyboardAvoidingView>
       </Page>
     </Screen>
   );
