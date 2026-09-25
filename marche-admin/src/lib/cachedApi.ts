@@ -20,6 +20,10 @@ let pulse: Pulse | null = null;
 const pulseListeners = new Set<(force: boolean) => void>();
 let pollId = 0;
 let started = false;
+/** Vrai quand le flux SSE /admin/stream est ouvert : le polling /admin/pulse est alors suspendu. */
+let liveConnected = false;
+/** Filet de sécurité : pulse toutes les 30 s, uniquement quand le flux temps réel est coupé. */
+const FALLBACK_POLL_MS = 30_000;
 
 function domainStamp(p: Pulse, domain: CacheDomain) {
   if (domain === 'overview') return `${p.catalog}|${p.orders}`;
@@ -44,11 +48,35 @@ export function getPulse() {
   return pulse;
 }
 
+export function setLiveConnected(value: boolean) {
+  liveConnected = value;
+}
+
+/**
+ * Invalidation ciblée par le flux temps réel : change le tampon des domaines touchés, ce qui fait
+ * recharger (une fois, via useCachedResource / useLiveSync) les listes et fiches concernées.
+ */
+export function bumpDomains(domains: CacheDomain[], tag: string) {
+  if (!domains.length) return;
+  if (!pulse) {
+    void fetchPulse(true).catch(() => undefined);
+    return;
+  }
+  const next: Pulse = { ...pulse };
+  for (const d of domains) {
+    if (d !== 'overview') next[d] = `live:${tag}:${d}`;
+  }
+  next.stamp = [next.catalog, next.orders, next.floor, next.staff, next.clients].join('|');
+  pulse = next;
+  pulseListeners.forEach((fn) => fn(false));
+}
+
 export function startAdminCache() {
   if (started) return;
   started = true;
 
   const tick = () => {
+    if (liveConnected) return;
     void fetchPulse().catch(() => undefined);
   };
 
@@ -72,8 +100,8 @@ export function startAdminCache() {
     /* ignore */
   }
 
-  tick();
-  pollId = window.setInterval(tick, 4000);
+  void fetchPulse().catch(() => undefined);
+  pollId = window.setInterval(tick, FALLBACK_POLL_MS);
 
   window.addEventListener('beforeunload', () => {
     window.clearInterval(pollId);

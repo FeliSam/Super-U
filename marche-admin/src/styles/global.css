@@ -864,3 +864,36 @@ tr.row-active td { background: var(--gold-soft); }
   .stock-page.with-drawer { grid-template-columns: minmax(0, 1fr); }
   .stock-drawer { position: sticky; top: 8px; z-index: 2; }
 }
+
+/* ---------- Temps réel : badge Live et notifications ---------- */
+.main-bar { display: flex; justify-content: flex-end; align-items: center; gap: 10px; margin: -6px 0 10px; min-height: 28px; }
+.live-badge {
+  display: inline-flex; align-items: center; gap: 7px; padding: 4px 11px; border-radius: 999px;
+  font-size: 12px; font-weight: 600; letter-spacing: 0.02em; border: 1px solid var(--line);
+  background: var(--bg-elev); color: var(--muted); user-select: none;
+}
+.live-dot { width: 8px; height: 8px; border-radius: 50%; background: currentColor; flex: none; }
+.live-badge.live-live { color: var(--ok); border-color: color-mix(in srgb, var(--ok) 35%, transparent); }
+.live-badge.live-live .live-dot { animation: live-pulse 1.8s ease-in-out infinite; }
+.live-badge.live-connecting,
+.live-badge.live-reconnecting { color: var(--gold); border-color: color-mix(in srgb, var(--gold) 40%, transparent); }
+.live-badge.live-reconnecting .live-dot { animation: live-pulse 0.9s ease-in-out infinite; }
+.live-badge.live-offline { color: var(--danger); border-color: color-mix(in srgb, var(--danger) 35%, transparent); }
+@keyframes live-pulse { 0%, 100% { opacity: 1; transform: scale(1); } 50% { opacity: 0.35; transform: scale(0.8); } }
+.live-toasts {
+  position: fixed; right: 18px; bottom: 18px; z-index: 60; display: flex; flex-direction: column; gap: 8px;
+  width: min(340px, calc(100vw - 36px));
+}
+.live-toast {
+  display: flex; flex-direction: column; gap: 3px; text-align: left; padding: 11px 14px; border-radius: 14px;
+  background: var(--bg-elev); color: var(--ink); border: 1px solid var(--line); border-left: 4px solid var(--gold);
+  box-shadow: var(--shadow); cursor: pointer; font: inherit; animation: live-toast-in 0.22s ease-out;
+}
+.live-toast strong { font-size: 13px; }
+.live-toast span { font-size: 12.5px; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.live-toast.tone-warn { border-left-color: var(--terra); }
+.live-toast.tone-danger { border-left-color: var(--danger); }
+@keyframes live-toast-in { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: none; } }
+@media (prefers-reduced-motion: reduce) {
+  .live-badge .live-dot, .live-toast { animation: none !important; }
+}

@@ -3,6 +3,7 @@ import { Link } from 'react-router-dom';
 import { ArrowDown, ArrowUp, ArrowUpDown, Bike, MessageSquare, Star, Wallet, X } from 'lucide-react';
 import { api, formatFcfa } from '@/lib/api';
 import { useCachedResource } from '@/lib/cachedApi';
+import { getCourierPositions, subscribeCourierPositions } from '@/lib/adminStream';
 import { DELIVERY_STATUS, PICK_STATUS, formatWhen } from '@/lib/orderLabels';
 import { roleLabel } from '@/lib/staffLabels';
 
@@ -174,6 +175,9 @@ export function TerrainPage() {
   const [boardErr, setBoardErr] = useState('');
   const [win, setWin] = useState<WindowId>('day');
   const err = '';
+  // Pings GPS temps réel (flux SSE courier_pos, fusionnés côté serveur toutes les ~1 s) : « vu à l'instant ».
+  const [posTick, setPosTick] = useState(0);
+  useEffect(() => subscribeCourierPositions(() => setPosTick((n) => n + 1)), []);
 
   const loadBoard = useCallback((id: string, windowId: WindowId) => {
     setBoardErr('');
@@ -202,7 +206,13 @@ export function TerrainPage() {
   }, [data]);
 
   const visible = useMemo(() => {
-    let list = data?.staff ?? [];
+    const live = getCourierPositions();
+    let list = (data?.staff ?? []).map((s) => {
+      const p = live.get(s.id);
+      const at = p ? Date.parse(p.t) : NaN;
+      if (!p || !Number.isFinite(at) || (s.lastSeenAt && Date.parse(s.lastSeenAt) >= at)) return s;
+      return { ...s, lastSeenAt: new Date(at).toISOString() };
+    });
     if (filter === 'live') list = list.filter((s) => s.presence === 'online' || s.pick || s.delivery);
     if (filter === 'paused') list = list.filter((s) => s.presence === 'paused');
     if (filter === 'offline') list = list.filter((s) => s.presence === 'offline');
@@ -221,7 +231,7 @@ export function TerrainPage() {
       }
       return delta * dir;
     });
-  }, [data, filter, sortKey, sortDir]);
+  }, [data, filter, sortKey, sortDir, posTick]);
 
   const toggleSort = (key: SortKey) => {
     if (sortKey === key) setSortDir((d) => (d === 'asc' ? 'desc' : 'asc'));

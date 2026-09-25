@@ -22,7 +22,7 @@ export function RecrutementPage() {
   useEffect(() => {
     load();
   }, [load]);
-  useLiveSync(load);
+  useLiveSync(load, true, 'staff');
 
   const activate = async (s: HrStaff) => {
     setErr('');

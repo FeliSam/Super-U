@@ -96,7 +96,7 @@ export function OrderDetailPage() {
   useEffect(() => {
     load();
   }, [load]);
-  useLiveSync(load, Boolean(id));
+  useLiveSync(load, Boolean(id), 'orders');
 
   if (!order) return <p style={{ padding: 24 }}>{err || 'Chargement…'}</p>;
 

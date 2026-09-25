@@ -25,6 +25,9 @@ import { useAppDispatch, useAppSelector } from '@/app/hooks';
 import { useEffect, useMemo, useState } from 'react';
 import { roleLabel } from '@/lib/staffLabels';
 import { startAdminCache, warmAdminCache } from '@/lib/cachedApi';
+import { startAdminStream, stopAdminStream } from '@/lib/adminStream';
+import { LiveBadge } from '@/components/LiveBadge';
+import { LiveToasts } from '@/components/LiveToasts';
 
 const SIDE_KEY = 'marche-admin-sidebar';
 
@@ -51,6 +54,12 @@ export function Shell() {
   const catalog = Boolean(staff?.canEditStock);
   const hr = Boolean(staff?.canReadHr || staff?.canHr);
   const [collapsed, setCollapsed] = useState(readCollapsed);
+
+  useEffect(() => {
+    // Flux temps réel (SSE) : remplace le polling /admin/pulse tant qu'il est connecté.
+    startAdminStream();
+    return () => stopAdminStream();
+  }, []);
 
   useEffect(() => {
     startAdminCache();
@@ -185,6 +194,10 @@ export function Shell() {
         </div>
       </aside>
       <main className="main">
+        <div className="main-bar">
+          <LiveBadge />
+        </div>
+        <LiveToasts />
         <motion.div initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.28 }}>
           <Outlet />
         </motion.div>
