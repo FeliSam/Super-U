@@ -15,12 +15,17 @@
     "dev:course": "npm run web --prefix CourseGO",
     "dev:admin": "npm run dev --prefix marche-admin",
     "tunnel:api": "node scripts/tunnel-api.mjs",
+    "tunnel:ngrok": "node scripts/tunnel-ngrok-sdk.mjs",
     "api:url": "node scripts/set-api-url.mjs",
     "ngrok": "node scripts/run-ngrok.mjs",
+    "ovh:status": "node scripts/ovh-status.mjs",
+    "ovh:create-instance": "node scripts/ovh-create-instance.mjs",
     "db:up": "docker compose up -d",
     "catalog:map": "node scripts/gen-catalog-images.mjs"
   },
   "devDependencies": {
-    "concurrently": "^9.2.4"
+    "@ngrok/ngrok": "^1.7.0",
+    "concurrently": "^9.2.4",
+    "ovh": "^2.0.3"
   }
 }

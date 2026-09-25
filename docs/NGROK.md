@@ -1,55 +1,47 @@
 # Tunnel public — API SuperU
 
-Expose l’API locale (`server`, port **8787**) pour les **builds installés** (APK / TestFlight) et les autres Wi‑Fi.
+## Domaine ngrok fixe (recommandé)
 
-## Build (marche-dore + CourseGO)
+Domaine réservé : `https://giveaway-rack-obtrusive.ngrok-free.dev`
 
-L’URL est figée au moment du build via `EXPO_PUBLIC_API_URL` :
+Le dashboard reste sur **“Waiting…”** tant que le tunnel local n’est pas lancé.
 
-1. `.env` de chaque app
-2. `eas.json` → `build.*.env.EXPO_PUBLIC_API_URL`
-
-URL actuelle (Cloudflare, ngrok bloqué sur cette machine) :
-
-```text
-https://YOUR-TUNNEL.trycloudflare.com
-```
-
-Quand le tunnel redémarre et que l’URL change :
-
-1. Mets à jour `marche-dore/.env`, `CourseGO/.env`, `server/.env` (`PUBLIC_API_URL`)
-2. Mets à jour `eas.json` (les deux apps)
-3. **Rebuild** (`eas build`) — un build déjà installé garde l’ancienne URL
+1. API : `npm run dev:api` (port **8787**, pas 8085)
+2. Tunnel : `npm run tunnel:ngrok` — **laisse ce terminal ouvert**
 
 ```powershell
-# Exemple rebuild preview Android
-cd marche-dore
-eas build -p android --profile preview
-cd ../CourseGO
-eas build -p android --profile preview
+npm run tunnel:ngrok
 ```
 
-Pendant le test : PC allumé + `npm run dev:api` + `npm run tunnel:api`.
+Quand c’est bon : health `https://giveaway-rack-obtrusive.ngrok-free.dev/health` → `{"ok":true,...}`  
+et le dashboard passe à **online**.
 
-## Runtime
+Sur **tous** les téléphones : Réglages → Adresse API →  
+`https://giveaway-rack-obtrusive.ngrok-free.dev`
+
+Cette URL **ne change pas** à chaque restart.
+
+Authtoken : fichier `%LOCALAPPDATA%\ngrok\ngrok.yml`, ou :
 
 ```powershell
-npm run dev:api
+$env:NGROK_AUTHTOKEN="ton_token"
+npm run tunnel:ngrok
+```
+
+## Pourquoi l’exemple ngrok parlait de 8085 ?
+
+Leur démo pointe `localhost:8085`. Chez SuperU l’API est sur **8787** — c’est ce que `tunnel:ngrok` utilise.
+
+## Cloudflare (fallback)
+
+```powershell
 npm run tunnel:api
 ```
 
-## Brancher sans rebuild
+URL `*.trycloudflare.com` **change** à chaque lancement.
 
-Réglages → *Adresse API SuperU* → coller la nouvelle URL https → Enregistrer  
-(utile si le tunnel a changé sans refaire un build)
-
-## ngrok
-
-Sur cette machine, Windows Smart App Control bloque ngrok ≥ 3.20 → `tunnel:api` bascule sur Cloudflare.  
-Authtoken (si ngrok redevient utilisable) :
+## Build EAS
 
 ```powershell
-.\ngrok.cmd config add-authtoken VOTRE_TOKEN
+npm run api:url -- https://giveaway-rack-obtrusive.ngrok-free.dev
 ```
-
-Forcer Cloudflare : `$env:SUPERU_TUNNEL='cloudflare'; npm run tunnel:api`
