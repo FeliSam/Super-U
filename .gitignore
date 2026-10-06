@@ -42,3 +42,5 @@ box-secrets.json
 !**/.env.example
 # Editor/backup leftovers
 *.bak-*
+*.apk
+server/downloads/

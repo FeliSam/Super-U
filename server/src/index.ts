@@ -28,6 +28,7 @@ import { registerAdminActionRoutes } from './adminActions.ts';
 import { registerAlertRoutes, startAlertEvaluator } from './alerts.ts';
 import { registerMobileLiveRoutes, startMobileLive } from './mobileLive.ts';
 import { registerHealthRoutes } from './health.ts';
+import { registerDownloadRoutes } from './downloads.ts';
 import { purgeExpiredStaffSessions } from './sessions.ts';
 import { isCancellable, OrderRequestError, priceOrder, restockCancelledOrder } from './orders.ts';
 import { keepCodUnpaid } from './cod.ts';
@@ -1464,6 +1465,7 @@ await startAdminLive().catch((error) => console.warn('[live] démarrage impossib
 startMobileLive();
 startAlertEvaluator();
 await seedAll();
+registerDownloadRoutes(app);
 registerPanelRoutes(app);
 
 serve({ fetch: app.fetch, port, hostname: '0.0.0.0' }, () => {

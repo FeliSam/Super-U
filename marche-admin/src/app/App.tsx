@@ -27,6 +27,21 @@ import { ClientDetailPage } from '@/pages/ClientDetail';
 import { SupportPage } from '@/pages/Support';
 import { CallsPage } from '@/pages/Calls';
 import { PaymentsPage } from '@/pages/Payments';
+import { DownloadsPage } from '@/pages/Downloads';
+
+function DownloadsRoute() {
+  const staff = useAppSelector((s) => s.auth.staff);
+  const token = getToken();
+
+  if (token && staff) {
+    return (
+      <Shell>
+        <DownloadsPage />
+      </Shell>
+    );
+  }
+  return <DownloadsPage />;
+}
 
 function Guard({ children }: { children: ReactNode }) {
   const staff = useAppSelector((s) => s.auth.staff);
@@ -65,6 +80,9 @@ export function App() {
   return (
     <Routes>
       <Route path="/login" element={<LoginPage />} />
+      <Route path="/telechargements" element={<DownloadsRoute />} />
+      <Route path="/apps" element={<DownloadsRoute />} />
+      <Route path="/downloads" element={<DownloadsRoute />} />
       <Route
         path="/"
         element={
@@ -162,6 +180,8 @@ export function App() {
             </RoleGuard>
           }
         />
+        <Route path="telechargements" element={<DownloadsPage />} />
+        <Route path="apps" element={<DownloadsPage />} />
         <Route path="clients" element={<ClientsPage />} />
         <Route path="clients/:id" element={<ClientDetailPage />} />
         <Route

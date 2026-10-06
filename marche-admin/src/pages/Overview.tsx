@@ -11,6 +11,7 @@ import {
   AlertTriangle,
   Plus,
   ArrowUpDown,
+  Smartphone,
 } from 'lucide-react';
 import { formatFcfa } from '@/lib/api';
 import { useCachedResource } from '@/lib/cachedApi';
@@ -258,6 +259,13 @@ export function OverviewPage() {
             </span>
           </Link>
         ) : null}
+        <Link to="/telechargements" className="quick-action">
+          <Smartphone size={18} />
+          <span>
+            <strong>Applications Mobiles</strong>
+            <small>Télécharger les builds APK Android</small>
+          </span>
+        </Link>
       </div>
 
       {catalog && stats ? (

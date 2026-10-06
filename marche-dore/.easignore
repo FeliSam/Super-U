@@ -1,9 +1,16 @@
-/android
-/ios
-/.expo
-/dist
-/node_modules
+# Keep EAS upload small (EAS uses this instead of .gitignore when present)
+android/
+android
+ios/
+ios
+.expo/
+.expo
+dist/
+dist
+node_modules/
+node_modules
 *.log
+.env
 .env.*
 .DS_Store
 *.jks

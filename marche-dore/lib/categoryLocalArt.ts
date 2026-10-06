@@ -10,7 +10,7 @@ import { Asset } from 'expo-asset';
  * saturent souvent le décodeur iOS / Expo Go.
  */
 export const CATEGORY_LOCAL_ART: Record<string, ImageSourcePropType> = {
-  'fruits-legumes': require('../assets/images/catalog/cat-fruits.jpg'),
+  'fruits-legumes': require('../assets/images/catalog/cat-fruits.png'),
   viandes: require('../assets/images/catalog/cat-viandes.png'),
   charcuterie: require('../assets/images/catalog/cat-viandes.png'),
   poissons: require('../assets/images/catalog/cat-poissons.png'),
@@ -28,8 +28,8 @@ export const CATEGORY_LOCAL_ART: Record<string, ImageSourcePropType> = {
   snacking: require('../assets/images/catalog/plantains.png'),
   boissons: require('../assets/images/catalog/cat-boissons.png'),
   alcools: require('../assets/images/catalog/cat-boissons.png'),
-  bio: require('../assets/images/catalog/cat-fruits.jpg'),
-  cuisine: require('../assets/images/catalog/cat-cuisine.jpg'),
+  bio: require('../assets/images/catalog/cat-fruits.png'),
+  cuisine: require('../assets/images/catalog/cat-cuisine.png'),
   glaces: require('../assets/images/catalog/cat-glaces.png'),
   hygiene: require('../assets/images/catalog/cat-hygiene.png'),
   maison: require('../assets/images/catalog/cat-maison.png'),

@@ -1,3 +1,4 @@
+import type { ReactNode } from 'react';
 import { NavLink, Outlet, useNavigate } from 'react-router-dom';
 import { motion } from 'framer-motion';
 import {
@@ -21,6 +22,7 @@ import {
   MessageSquare,
   PhoneCall,
   Wallet,
+  Smartphone,
 } from 'lucide-react';
 import { logout } from '@/features/auth/authSlice';
 import { applyTheme, toggleTheme } from '@/features/ui/uiSlice';
@@ -50,7 +52,7 @@ function initials(first?: string, last?: string) {
   return s || '?';
 }
 
-export function Shell() {
+export function Shell({ children }: { children?: ReactNode } = {}) {
   const dispatch = useAppDispatch();
   const nav = useNavigate();
   const staff = useAppSelector((s) => s.auth.staff);
@@ -126,6 +128,7 @@ export function Shell() {
         { to: '/personnel/roles', label: 'Rôles', icon: Shield },
       );
     }
+    items.push({ to: '/telechargements', label: 'Applications & APK', icon: Smartphone });
     return items;
   }, [catalog, hr, staff?.role, staff?.canEditPrices]);
 
@@ -208,7 +211,7 @@ export function Shell() {
         </div>
         <LiveToasts />
         <motion.div initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.28 }}>
-          <Outlet />
+          {children ?? <Outlet />}
         </motion.div>
       </main>
     </div>

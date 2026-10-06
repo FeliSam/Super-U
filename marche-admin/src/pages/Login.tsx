@@ -37,6 +37,19 @@ export function LoginPage() {
         <p style={{ fontSize: 12, color: 'var(--muted)', marginTop: 14 }}>
           Accès réservé au personnel : vos identifiants vous sont remis par un administrateur. Le login client boutique ne fonctionne pas ici.
         </p>
+
+        <div style={{ marginTop: 20, paddingTop: 16, borderTop: '1px solid var(--line)', textAlign: 'center' }}>
+          <p style={{ margin: '0 0 10px', fontSize: 13, color: 'var(--muted)' }}>
+            Besoin d'installer les applications mobiles ?
+          </p>
+          <button
+            type="button"
+            className="btn ghost sm"
+            style={{ width: '100%', justifyContent: 'center', gap: 8 }}
+            onClick={() => nav('/telechargements')}>
+            📥 Télécharger les APKs Android (Marché Doré & CourseGO)
+          </button>
+        </div>
       </form>
     </div>
   );

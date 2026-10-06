@@ -21,6 +21,7 @@ export default defineConfig(({ command }) => ({
       '/catalog': { target: 'http://127.0.0.1:8787', changeOrigin: true },
       '/health': { target: 'http://127.0.0.1:8787', changeOrigin: true },
       '/stores': { target: 'http://127.0.0.1:8787', changeOrigin: true },
+      '/downloads': { target: 'http://127.0.0.1:8787', changeOrigin: true },
     },
   },
 }));

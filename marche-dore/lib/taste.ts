@@ -15,7 +15,7 @@ export const TASTE_OPTIONS: TasteOption[] = [
     label: 'Fruits & légumes',
     categoryIds: ['fruits-legumes'],
     chipId: 'fruits',
-    image: require('../assets/images/catalog/cat-fruits.jpg'),
+    image: require('../assets/images/catalog/cat-fruits.png'),
   },
   {
     id: 'cuisine',

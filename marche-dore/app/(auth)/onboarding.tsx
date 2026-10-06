@@ -44,7 +44,7 @@ const STEPS: Step[] = [
     title: 'Express ou\ncréneau au choix',
     body: 'Suivez le livreur en direct. Une alerte à chaque étape du trajet.',
     icon: 'map-pin',
-    image: require('../../assets/images/catalog/wa-fruits-legumes-070.jpg'),
+    image: require('../../assets/images/catalog/wa-fruits-legumes-070.png'),
     imageLabel: 'Prêt à livrer',
   },
   {
